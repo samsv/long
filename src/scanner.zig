@@ -210,7 +210,7 @@ pub const Scanner = struct {
         else if (std.mem.eql(u8, str, "for"))
             .{ .special_fns = .@"for" }
         else if (std.mem.eql(u8, str, "if"))
-            .{ .special_fns = .@"for" }
+            .{ .special_fns = .@"if" }
         else if (std.mem.eql(u8, str, "in"))
             .in
         else if (std.mem.eql(u8, str, "import"))
@@ -221,7 +221,7 @@ pub const Scanner = struct {
             .end
         else if (std.mem.eql(u8, str, "map"))
             .{ .special_fns = .map }
-        else if (std.mem.eql(u8, str, "map"))
+        else if (std.mem.eql(u8, str, "mapf"))
             .{ .special_fns = .mapf }
         else if (std.mem.eql(u8, str, "match"))
             .{ .special_fns = .match }
@@ -265,6 +265,7 @@ pub const Scanner = struct {
         }
 
         const v = std.fmt.parseFloat(f64, s.chars[initial_i..s.curr_index]) catch unreachable;
+        s.curr_index -= 1;
         return .{ .kind = .{ .literal = .{ .number = v } }, .line = s.line };
     }
 
