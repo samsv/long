@@ -27,6 +27,7 @@ pub fn main(init: std.process.Init) !void {
 
     try stdout_writer.flush(); // Don't forget to flush!
 
-    var scanner = Scanner.init("hello, world");
-    _ = try scanner.next();
+    var scanner = Scanner.init("\"hello, world\"");
+    const next = try scanner.next();
+    std.debug.print("{s}\n", .{next.?.kind.literal.string});
 }
