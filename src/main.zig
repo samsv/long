@@ -23,11 +23,15 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
 
-    try zsv.printAnotherMessage(stdout_writer);
+    var scanner = Scanner.init("= ==( \"hello, world\") 1.25[5] , . |> \n_hello[man");
+    while (scanner.next() catch |err| {
+        std.debug.print("{s}\n", .{scanner.err_ctx.?.reason});
+        std.debug.print("line: {}\n", .{scanner.err_ctx.?.line});
+        return err;
+    }) |next| {
+        try next.kind.print(stdout_writer);
+        try stdout_writer.print("\n", .{});
+    }
 
     try stdout_writer.flush(); // Don't forget to flush!
-
-    var scanner = Scanner.init("\"hello, world\"");
-    const next = try scanner.next();
-    std.debug.print("{s}\n", .{next.?.kind.literal.string});
 }

@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const Operator = enum {
     dot,
     minus,
@@ -41,9 +43,9 @@ pub const Literal = union(enum) {
 
 pub const TokenKind = union(enum) {
     right_paren,
-    left_brace,
     right_brace,
     right_bracket,
+    left_brace,
     semicolon,
     hash,
 
@@ -60,9 +62,44 @@ pub const TokenKind = union(enum) {
     @"or",
     self,
     true,
-    then,
 
     eof,
+
+    pub fn print(t: TokenKind, writer: *std.Io.Writer) !void {
+        switch (t) {
+            .right_paren => try writer.writeAll(")"),
+            .right_brace => try writer.writeAll("}"),
+            .right_bracket => try writer.writeAll("]"),
+            .left_brace => try writer.writeAll("{"),
+            .semicolon => try writer.writeAll(";"),
+            .hash => try writer.writeAll("#"),
+            .operator => |op| try writer.writeAll(switch (op) {
+                .dot => ".",
+                .minus => "-",
+                .plus => "+",
+                .pipe => "|",
+                .star => "*",
+                .slash => "/",
+                .comma => ",",
+                .left_paren => "(",
+                .left_bracket => "[",
+                .bang_equal => "!=",
+                .equal => "=",
+                .equal_equal => "==",
+                .greater => ">",
+                .greater_equal => ">=",
+                .less => "<",
+                .less_equal => "<=",
+            }),
+            .special_fns => |fns| try writer.writeAll(@tagName(fns)),
+            .literal => |lit| switch (lit) {
+                .identifier => |s| try writer.writeAll(s),
+                .string => |s| try writer.print("\"{s}\"", .{s}),
+                .number => |n| try writer.print("{d}", .{n}),
+            },
+            .@"and", .@"else", .end, .false, .in, .nil, .@"or", .self, .true, .eof => try writer.writeAll(@tagName(t)),
+        }
+    }
 };
 
 pub const Token = struct {
@@ -77,7 +114,8 @@ pub const ErrorCtx = struct {
 
 pub const Error = error{
     UnclosedString,
-    UnknownCharacter,
+    InvalidNumber,
+    UnknownToken,
 };
 
 pub const Scanner = struct {
@@ -86,6 +124,7 @@ pub const Scanner = struct {
     chars: []const u8,
     next_token: ?Token,
     err_ctx: ?ErrorCtx,
+    err_buffer: [256]u8,
 
     pub fn init(chars: []const u8) Scanner {
         return .{
@@ -94,6 +133,7 @@ pub const Scanner = struct {
             .curr_index = 0,
             .next_token = null,
             .err_ctx = null,
+            .err_buffer = undefined,
         };
     }
 
@@ -117,9 +157,16 @@ pub const Scanner = struct {
         return true;
     }
 
-    fn unknown_char_err(s: *Scanner, reason: []const u8) Error {
-        s.err_ctx = .{ .reason = reason, .line = s.line };
-        return Error.UnknownCharacter;
+    fn unknown_token_err(s: *Scanner, token: []const u8) Error {
+        s.err_ctx = .{
+            .reason = std.fmt.bufPrint(
+                &s.err_buffer,
+                "Unknown token: {s}",
+                .{token},
+            ) catch unreachable,
+            .line = s.line,
+        };
+        return Error.UnknownToken;
     }
 
     fn curr_char(s: Scanner) u8 {
@@ -139,7 +186,86 @@ pub const Scanner = struct {
             s.err_ctx = .{ .reason = "Unclosed string", .line = s.line };
             return Error.UnclosedString;
         }
-        return Token { .kind = .{ .literal = .{ .string = s.chars[initial_i..s.curr_index] } }, .line = s.line };
+        return Token{ .kind = .{ .literal = .{ .string = s.chars[initial_i..s.curr_index] } }, .line = s.line };
+    }
+
+    fn literal(s: *Scanner) Token {
+        const initial_i = s.curr_index;
+        while (s.curr_index < s.chars.len and (std.ascii.isAlphanumeric(s.curr_char()) or s.curr_char() == '_')) {
+            s.curr_index += 1;
+        }
+        s.curr_index -= 1;
+
+        const str = s.chars[initial_i .. s.curr_index + 1];
+        const kind: TokenKind = if (std.mem.eql(u8, str, "and"))
+            .@"and"
+        else if (std.mem.eql(u8, str, "class"))
+            .{ .special_fns = .class }
+        else if (std.mem.eql(u8, str, "do"))
+            .{ .special_fns = .do }
+        else if (std.mem.eql(u8, str, "def"))
+            .{ .special_fns = .def }
+        else if (std.mem.eql(u8, str, "false"))
+            .false
+        else if (std.mem.eql(u8, str, "for"))
+            .{ .special_fns = .@"for" }
+        else if (std.mem.eql(u8, str, "if"))
+            .{ .special_fns = .@"for" }
+        else if (std.mem.eql(u8, str, "in"))
+            .in
+        else if (std.mem.eql(u8, str, "import"))
+            .{ .special_fns = .import }
+        else if (std.mem.eql(u8, str, "else"))
+            .@"else"
+        else if (std.mem.eql(u8, str, "end"))
+            .end
+        else if (std.mem.eql(u8, str, "map"))
+            .{ .special_fns = .map }
+        else if (std.mem.eql(u8, str, "map"))
+            .{ .special_fns = .mapf }
+        else if (std.mem.eql(u8, str, "match"))
+            .{ .special_fns = .match }
+        else if (std.mem.eql(u8, str, "nil"))
+            .nil
+        else if (std.mem.eql(u8, str, "or"))
+            .@"or"
+        else if (std.mem.eql(u8, str, "reduce"))
+            .{ .special_fns = .reduce }
+        else if (std.mem.eql(u8, str, "true"))
+            .true
+        else if (std.mem.eql(u8, str, "self"))
+            .self
+        else if (std.mem.eql(u8, str, "while"))
+            .{ .special_fns = .@"while" }
+        else
+            .{ .literal = .{ .identifier = str } };
+
+        return .{ .kind = kind, .line = s.line };
+    }
+
+    fn number(s: *Scanner) !Token {
+        const initial_i = s.curr_index;
+        var has_dot = false;
+        while (s.curr_index < s.chars.len and (std.ascii.isDigit(s.curr_char()) or s.curr_char() == '.')) : (s.curr_index += 1) {
+            if (s.curr_char() == '.') {
+                if (has_dot) {
+                    s.err_ctx = ErrorCtx{
+                        .reason = try std.fmt.bufPrint(
+                            &s.err_buffer,
+                            "Invalid number literal {s}",
+                            .{s.chars[initial_i..s.curr_index]},
+                        ),
+                        .line = s.line,
+                    };
+                    return Error.InvalidNumber;
+                }
+
+                has_dot = true;
+            }
+        }
+
+        const v = std.fmt.parseFloat(f64, s.chars[initial_i..s.curr_index]) catch unreachable;
+        return .{ .kind = .{ .literal = .{ .number = v } }, .line = s.line };
     }
 
     pub fn next(s: *Scanner) !?Token {
@@ -169,11 +295,11 @@ pub const Scanner = struct {
             '|' => if (s.next_char_if_eq('>'))
                 .{ .kind = .{ .operator = .pipe }, .line = s.line }
             else
-                return s.unknown_char_err("Unknown characted" ++ .{ '|', s.chars[s.curr_index] }),
+                return s.unknown_token_err(s.chars[s.curr_index .. s.curr_index + 2]),
             '!' => if (s.next_char_if_eq('='))
                 .{ .kind = .{ .operator = .bang_equal }, .line = s.line }
             else
-                return s.unknown_char_err("Unknown characted" ++ .{ '|', s.chars[s.curr_index] }),
+                return s.unknown_token_err(s.chars[s.curr_index .. s.curr_index + 2]),
             '>' => if (s.next_char_if_eq('='))
                 .{ .kind = .{ .operator = .greater_equal }, .line = s.line }
             else
@@ -187,7 +313,19 @@ pub const Scanner = struct {
             else
                 .{ .kind = .{ .operator = .equal }, .line = s.line },
             '"' => try s.string(),
-            else => unreachable,
+            else => blk: {
+                const c = s.curr_char();
+                break :blk if (std.ascii.isDigit(c))
+                    try s.number()
+                else if (std.ascii.isWhitespace(c)) {
+                    if (c == '\n') s.line += 1;
+                    s.curr_index += 1;
+                    return s.next();
+                } else if (std.ascii.isAlphabetic(c) or c == '_')
+                    s.literal()
+                else
+                    return s.unknown_token_err(s.chars[s.curr_index .. s.curr_index + 1]);
+            },
         };
 
         s.curr_index += 1;
