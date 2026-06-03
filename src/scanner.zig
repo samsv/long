@@ -3,111 +3,116 @@ const Utf8View = std.unicode.Utf8View;
 const Utf8Iterator = std.unicode.Utf8Iterator;
 const alphabetic_ranges = @import("unicode_alphabetic_table.zig").alphabetic_ranges;
 
-pub const Operator = enum {
-    dot,
-    minus,
-    plus,
-    pipe,
-    star,
-    slash,
-
-    comma,
-    left_paren,
-    left_bracket,
-
-    bang_equal,
-    equal,
-    equal_equal,
-    greater,
-    greater_equal,
-    less,
-    less_equal,
-};
-
-pub const SpecialFns = enum {
-    class,
-    def,
-    do,
-    @"for",
-    @"if",
-    map,
-    mapf,
-    match,
-    reduce,
-    @"while",
-    import,
-};
-
-pub const Literal = union(enum) {
-    identifier: []const u8,
-    string: []const u8,
-    number: f64,
-};
-
-pub const TokenKind = union(enum) {
-    right_paren,
-    right_brace,
-    right_bracket,
-    left_brace,
-    semicolon,
-    hash,
-
-    operator: Operator,
-    special_fns: SpecialFns,
-    literal: Literal,
-
-    @"and",
-    @"else",
-    end,
-    false,
-    in,
-    nil,
-    @"or",
-    self,
-    true,
-
-    eof,
-
-    pub fn print(t: TokenKind, writer: *std.Io.Writer) !void {
-        switch (t) {
-            .right_paren => try writer.writeAll(")"),
-            .right_brace => try writer.writeAll("}"),
-            .right_bracket => try writer.writeAll("]"),
-            .left_brace => try writer.writeAll("{"),
-            .semicolon => try writer.writeAll(";"),
-            .hash => try writer.writeAll("#"),
-            .operator => |op| try writer.writeAll(switch (op) {
-                .dot => ".",
-                .minus => "-",
-                .plus => "+",
-                .pipe => "|>",
-                .star => "*",
-                .slash => "/",
-                .comma => ",",
-                .left_paren => "(",
-                .left_bracket => "[",
-                .bang_equal => "!=",
-                .equal => "=",
-                .equal_equal => "==",
-                .greater => ">",
-                .greater_equal => ">=",
-                .less => "<",
-                .less_equal => "<=",
-            }),
-            .special_fns => |fns| try writer.writeAll(@tagName(fns)),
-            .literal => |lit| switch (lit) {
-                .identifier => |s| try writer.writeAll(s),
-                .string => |s| try writer.print("\"{s}\"", .{s}),
-                .number => |n| try writer.print("{d}", .{n}),
-            },
-            .@"and", .@"else", .end, .false, .in, .nil, .@"or", .self, .true, .eof => try writer.writeAll(@tagName(t)),
-        }
-    }
-};
-
 pub const Token = struct {
-    kind: TokenKind,
+    kind: Kind,
     line: usize,
+
+    pub const Operator = enum {
+        dot,
+        minus,
+        plus,
+        pipe,
+        star,
+        slash,
+
+        comma,
+        left_paren,
+        left_bracket,
+
+        bang_equal,
+        equal,
+        equal_equal,
+        greater,
+        greater_equal,
+        less,
+        less_equal,
+    };
+
+    pub const SpecialFns = enum {
+        class,
+        def,
+        @"for",
+        @"if",
+        map,
+        mapf,
+        match,
+        reduce,
+        @"while",
+        import,
+    };
+
+    pub const Keywords = enum {
+        @"and",
+        @"else",
+        do,
+        end,
+        false,
+        in,
+        nil,
+        @"or",
+        self,
+        true,
+    };
+
+    pub const Literal = union(enum) {
+        identifier: []const u8,
+        string: []const u8,
+        number: f64,
+    };
+
+    pub const Kind = union(enum) {
+        right_paren,
+        right_brace,
+        right_bracket,
+        left_brace,
+        semicolon,
+        hash,
+
+        operator: Operator,
+        special_fns: SpecialFns,
+        literal: Literal,
+
+        keywords: Keywords,
+
+        eof,
+
+        pub fn print(t: Kind, writer: *std.Io.Writer) !void {
+            switch (t) {
+                .right_paren => try writer.writeAll(")"),
+                .right_brace => try writer.writeAll("}"),
+                .right_bracket => try writer.writeAll("]"),
+                .left_brace => try writer.writeAll("{"),
+                .semicolon => try writer.writeAll(";"),
+                .hash => try writer.writeAll("#"),
+                .eof => try writer.writeAll("<EOF>"),
+                .operator => |op| try writer.writeAll(switch (op) {
+                    .dot => ".",
+                    .minus => "-",
+                    .plus => "+",
+                    .pipe => "|>",
+                    .star => "*",
+                    .slash => "/",
+                    .comma => ",",
+                    .left_paren => "(",
+                    .left_bracket => "[",
+                    .bang_equal => "!=",
+                    .equal => "=",
+                    .equal_equal => "==",
+                    .greater => ">",
+                    .greater_equal => ">=",
+                    .less => "<",
+                    .less_equal => "<=",
+                }),
+                .keywords => |fns| try writer.writeAll(@tagName(fns)),
+                .special_fns => |fns| try writer.writeAll(@tagName(fns)),
+                .literal => |lit| switch (lit) {
+                    .identifier => |s| try writer.writeAll(s),
+                    .string => |s| try writer.print("\"{s}\"", .{s}),
+                    .number => |n| try writer.print("{d}", .{n}),
+                },
+            }
+        }
+    };
 };
 
 pub const ErrorCtx = struct {
@@ -214,46 +219,10 @@ pub const Scanner = struct {
         s.view.i = last_i;
 
         const str = s.view.bytes[initial_i..last_i];
-        const kind: TokenKind = if (std.mem.eql(u8, str, "and"))
-            .@"and"
-        else if (std.mem.eql(u8, str, "class"))
-            .{ .special_fns = .class }
-        else if (std.mem.eql(u8, str, "do"))
-            .{ .special_fns = .do }
-        else if (std.mem.eql(u8, str, "def"))
-            .{ .special_fns = .def }
-        else if (std.mem.eql(u8, str, "false"))
-            .false
-        else if (std.mem.eql(u8, str, "for"))
-            .{ .special_fns = .@"for" }
-        else if (std.mem.eql(u8, str, "if"))
-            .{ .special_fns = .@"if" }
-        else if (std.mem.eql(u8, str, "in"))
-            .in
-        else if (std.mem.eql(u8, str, "import"))
-            .{ .special_fns = .import }
-        else if (std.mem.eql(u8, str, "else"))
-            .@"else"
-        else if (std.mem.eql(u8, str, "end"))
-            .end
-        else if (std.mem.eql(u8, str, "map"))
-            .{ .special_fns = .map }
-        else if (std.mem.eql(u8, str, "mapf"))
-            .{ .special_fns = .mapf }
-        else if (std.mem.eql(u8, str, "match"))
-            .{ .special_fns = .match }
-        else if (std.mem.eql(u8, str, "nil"))
-            .nil
-        else if (std.mem.eql(u8, str, "or"))
-            .@"or"
-        else if (std.mem.eql(u8, str, "reduce"))
-            .{ .special_fns = .reduce }
-        else if (std.mem.eql(u8, str, "true"))
-            .true
-        else if (std.mem.eql(u8, str, "self"))
-            .self
-        else if (std.mem.eql(u8, str, "while"))
-            .{ .special_fns = .@"while" }
+        const kind: Token.Kind = if (std.meta.stringToEnum(Token.Keywords, str)) |k|
+            .{ .keywords = k }
+        else if (std.meta.stringToEnum(Token.SpecialFns, str)) |fn_|
+            .{ .special_fns = fn_ }
         else
             .{ .literal = .{ .identifier = str } };
 
@@ -352,6 +321,7 @@ pub const Scanner = struct {
                 return s.unknownTokenErr(s.view.bytes[initial_i..s.view.i]),
         };
 
+        s.next_token = null;
         return token;
     }
 };

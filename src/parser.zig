@@ -1,0 +1,179 @@
+const std = @import("std");
+const scanner = @import("scanner.zig");
+const Token = scanner.Token;
+const Scanner = scanner.Scanner;
+const Operator = Token.Operator;
+const SExpr = @import("sexpr.zig").SExpr;
+
+const Precedence = struct {
+    left: u8,
+    right: ?u8,
+};
+
+pub const Error = error{
+    UnexpectedToken,
+    EOF,
+};
+
+fn expect_close(s: *Scanner, open: Token, kind: Token.Kind) !void {
+    expect(s, kind) catch |err| {
+        const token = try s.peek() orelse Token{ .kind = .eof, .line = s.line };
+        std.log.err("Unclosed token: {any}. Expected token {any}, got {any}", .{ open, kind, token });
+        return err;
+    };
+}
+
+fn expect(s: *Scanner, kind: Token.Kind) !void {
+    const token = try s.next() orelse return Error.EOF;
+
+    if (std.meta.activeTag(token.kind) == std.meta.activeTag(kind)) {
+        return;
+    }
+
+    std.log.err("Unexpected token: {any}. Expected token {any}", .{ token, kind });
+    return Error.UnexpectedToken;
+}
+
+fn check(s: *Scanner, kind: Token.Kind) !?Token {
+    const token = try s.peek() orelse return null;
+
+    if (std.meta.activeTag(token.kind) != std.meta.activeTag(kind)) return null;
+
+    _ = s.next() catch unreachable;
+    return token;
+}
+
+fn parse_bracket(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token, lhs: SExpr) !SExpr {
+    const rhs = try expr(gpa, s, 0);
+    try expect_close(s, left_bracket, .right_bracket);
+
+    var list: std.ArrayList(SExpr) = .empty;
+    try list.appendSlice(gpa, &.{ .{ .atom = left_bracket }, lhs, rhs });
+
+    return .{ .cons = list };
+}
+
+fn parse_parens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExpr) !SExpr {
+    var list: std.ArrayList(SExpr) = .empty;
+    try list.append(gpa, lhs);
+
+    if (try s.peek()) |t| if (t.kind == .right_paren) {
+        _ = s.next() catch unreachable;
+        return .{ .cons = list };
+    };
+
+    while (true) {
+        try list.append(gpa, try expr(gpa, s, 5));
+        if (try check(s, .{ .operator = .comma })) |_|
+            continue;
+        break;
+    }
+
+    try expect_close(s, left_paren, .right_paren);
+    return .{ .cons = list };
+}
+
+fn parse_if(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
+    const min_prec = 5;
+
+    const cond = try expr(gpa, s, min_prec);
+    try expect(s, .{ .keywords = .do });
+
+    const true_branch = try expr(gpa, s, min_prec);
+    var list: std.ArrayList(SExpr) = .empty;
+    try list.appendSlice(gpa, &.{ .{ .atom = token }, cond, true_branch });
+
+    if (try check(s, .{ .keywords = .@"else" })) |_| {
+        const false_branch = try expr(gpa, s, min_prec);
+        try list.append(gpa, false_branch);
+    } else {
+        try expect(s, .{ .keywords = .end });
+    }
+
+    return .{ .cons = list };
+}
+
+fn parse_operator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_prec: u8) !SExpr {
+    var lhs: SExpr = switch (start_token.kind) {
+        .operator => |op| switch (op) {
+            .left_paren => paren: {
+                const ret = try expr(gpa, s, 0);
+                try expect(s, .right_paren);
+                break :paren ret;
+            },
+            else => blk: {
+                const prec = try prefix_operator(op);
+                const rhs = try expr(gpa, s, prec.left);
+                var list: std.ArrayList(SExpr) = .empty;
+                try list.appendSlice(gpa, &.{ .{ .atom = start_token }, rhs });
+                break :blk .{ .cons = list };
+            },
+        },
+        .literal => .{ .atom = start_token },
+        else => return Error.UnexpectedToken,
+    };
+
+    while (try s.peek()) |token| {
+        const op = switch (token.kind) {
+            .operator => |op| op,
+            .literal, .special_fns => {
+                std.log.err("Line {}: Unexpected token {any}\n", .{ s.line, start_token });
+                return Error.UnexpectedToken;
+            },
+            else => break,
+        };
+
+        const prec = try infix_prec(op);
+        if (prec.left < min_prec)
+            break;
+
+        _ = s.next() catch unreachable;
+        lhs = if (prec.right) |right| blk: {
+            const rhs = try expr(gpa, s, right);
+            var list: std.ArrayList(SExpr) = .empty;
+            try list.appendSlice(gpa, &.{ .{ .atom = token }, lhs, rhs });
+            break :blk .{ .cons = list };
+        } else switch (op) {
+            .left_paren => try parse_parens(gpa, s, token, lhs),
+            .left_bracket => try parse_bracket(gpa, s, token, lhs),
+            else => unreachable,
+        };
+    }
+
+    return lhs;
+}
+
+pub fn expr(gpa: std.mem.Allocator, s: *Scanner, min_prec: u8) !SExpr {
+    const token = try s.next() orelse {
+        std.log.err("Line {}: Expected Token, got <EOF>", .{s.line});
+        return Error.UnexpectedToken;
+    };
+
+    return switch (token.kind) {
+        .special_fns => |fn_| switch (fn_) {
+            .@"if" => parse_if(gpa, s, token),
+            else => error.NotImplemented,
+        },
+        else => parse_operator(gpa, s, token, min_prec),
+    };
+}
+
+fn prefix_operator(op: Operator) !Precedence {
+    return switch (op) {
+        .minus => .{ .left = 11, .right = null },
+        else => error.OperatorNotPrefix,
+    };
+}
+
+fn infix_prec(op: Operator) !Precedence {
+    return switch (op) {
+        .equal => .{ .left = 1, .right = 2 },
+        .comma => .{ .left = 3, .right = 4 },
+        .pipe => .{ .left = 6, .right = 5 },
+        .plus, .minus => .{ .left = 7, .right = 8 },
+        .star, .slash => .{ .left = 9, .right = 10 },
+        .dot => .{ .left = 16, .right = 15 },
+        .left_paren, .left_bracket => .{ .left = 13, .right = null },
+        else => error.OperatorNotInfix,
+    };
+}
