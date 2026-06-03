@@ -23,7 +23,7 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
 
-    var scanner = Scanner.init("= ==( \"hello, world\") 1.25[5] , . |> \n_hello[man");
+    var scanner = try Scanner.init("= ==( \"hello, world\") 1.25[5] , . |> \n_hello[man 你好");
     while (scanner.next() catch |err| {
         std.debug.print("{s}\n", .{scanner.err_ctx.?.reason});
         std.debug.print("line: {}\n", .{scanner.err_ctx.?.line});
@@ -31,7 +31,6 @@ pub fn main(init: std.process.Init) !void {
     }) |next| {
         try next.kind.print(stdout_writer);
         try stdout_writer.print("\n", .{});
+        try stdout_writer.flush();
     }
-
-    try stdout_writer.flush(); // Don't forget to flush!
 }
