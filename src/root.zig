@@ -1,6 +1,8 @@
 //! By convention, root.zig is the root source file when making a package.
 const std = @import("std");
 const Io = std.Io;
+pub const parser = @import("parser.zig");
+pub const scanner = @import("scanner.zig");
 
 /// This is a documentation comment to explain the `printAnotherMessage` function below.
 ///
@@ -15,4 +17,9 @@ pub fn add(a: i32, b: i32) i32 {
 
 test "basic add functionality" {
     try std.testing.expect(add(3, 7) == 10);
+}
+
+test {
+    _ = @import("parser.zig");
+    _ = @import("scanner.zig");
 }

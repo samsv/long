@@ -1,18 +1,12 @@
 const std = @import("std");
-const Io = std.Io;
-const Scanner = @import("scanner.zig").Scanner;
-const parser = @import("parser.zig");
-
 const zsv = @import("zsv");
 
-pub fn main(init: std.process.Init) !void {
-    const arena: std.mem.Allocator = init.arena.allocator();
+const Io = std.Io;
+const Scanner = zsv.scanner.Scanner;
+const parser = zsv.parser;
 
-    // Accessing command line arguments:
-    const args = try init.minimal.args.toSlice(arena);
-    for (args) |arg| {
-        std.log.info("arg: {s}", .{arg});
-    }
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
 
     // In order to do I/O operations need an `Io` instance.
     const io = init.io;
@@ -37,6 +31,13 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    var scanner = try Scanner.init("1 + 2");
-    _ = try parser.expr(arena, &scanner, 0);
+    var scanner = try Scanner.init("if x + 5 do y + 1 else z + 1 end");
+    var sexpr = try parser.expr(gpa, &scanner, 0);
+    defer sexpr.deinit(gpa);
+
+    var a: std.Io.Writer.Allocating = .init(gpa);
+    defer a.deinit();
+    try sexpr.print(&a.writer);
+
+    std.debug.print("{s}\n", .{a.written()});
 }

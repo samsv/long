@@ -26,7 +26,7 @@ fn expect_close(s: *Scanner, open: Token, kind: Token.Kind) !void {
 fn expect(s: *Scanner, kind: Token.Kind) !void {
     const token = try s.next() orelse return Error.EOF;
 
-    if (std.meta.activeTag(token.kind) == std.meta.activeTag(kind)) {
+    if (std.meta.eql(token.kind, kind)) {
         return;
     }
 
@@ -37,7 +37,7 @@ fn expect(s: *Scanner, kind: Token.Kind) !void {
 fn check(s: *Scanner, kind: Token.Kind) !?Token {
     const token = try s.peek() orelse return null;
 
-    if (std.meta.activeTag(token.kind) != std.meta.activeTag(kind)) return null;
+    if (!std.meta.eql(token.kind, kind)) return null;
 
     _ = s.next() catch unreachable;
     return token;
@@ -176,4 +176,34 @@ fn infix_prec(op: Operator) !Precedence {
         .left_paren, .left_bracket => .{ .left = 13, .right = null },
         else => error.OperatorNotInfix,
     };
+}
+
+test "ok exprs" {
+    const gpa = std.testing.allocator;
+    const tests = [12]struct { []const u8, []const u8 }{
+        .{ "1 * 2 + 3", "(+ (* 1 2) 3)" },
+        .{ "0", "0" },
+        .{ "(((0)))", "0" },
+        .{ "- 1 * (2 + 3)", "(* (- 1) (+ 2 3))" },
+        .{ "x.hwllo |> world()", "(|> (. x hwllo) (world))" },
+        .{ "x[0][1]", "([ ([ x 0) 1)" },
+        .{ "x, y = 1, 2", "(= (, x y) (, 1 2))" },
+        .{ "world(1, 2, 3)", "(world 1 2 3)" },
+        .{ "if x + 5 do y + 1 end", "(if (+ x 5) (+ y 1))" },
+        .{ "if x + 5 do y + 1 else z + 1 end", "(if (+ x 5) (+ y 1) (+ z 1))" },
+        .{ "if x + 5 do 1 else z + 1 end", "(if (+ x 5) 1 (+ z 1))" },
+        .{ "if x + 5 do 1 else if x + 6 do z + 1 else k + 9 end", "(if (+ x 5) 1 (if (+ x 6) (+ z 1) (+ k 9)))" },
+    };
+
+    for (tests) |t| {
+        var test_scanner = try Scanner.init(t[0]);
+        var sexpr = try expr(gpa, &test_scanner, 0);
+        defer sexpr.deinit(gpa);
+
+        var a: std.Io.Writer.Allocating = .init(gpa);
+        defer a.deinit();
+        try sexpr.print(&a.writer);
+
+        try std.testing.expectEqualDeep(t[1], a.written());
+    }
 }
