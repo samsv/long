@@ -46,12 +46,12 @@ pub const Token = struct {
         @"else",
         do,
         end,
-        false,
+        @"false",
         in,
         nil,
         @"or",
         self,
-        true,
+        @"true",
     };
 
     pub const Literal = union(enum) {

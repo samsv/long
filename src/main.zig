@@ -4,6 +4,8 @@ const zsv = @import("zsv");
 const Io = std.Io;
 const Scanner = zsv.scanner.Scanner;
 const parser = zsv.parser;
+const compiler = zsv.compiler;
+const vm_ = zsv.vm;
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
@@ -31,13 +33,26 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    var scanner = try Scanner.init("if x + 5 do y + 1 else z + 1 end");
-    var sexpr = try parser.expr(gpa, &scanner, 0);
-    defer sexpr.deinit(gpa);
+    {
+        var scanner = try Scanner.init("if x + 5 do y + 1 else z + 1 end");
+        var sexpr = try parser.expr(gpa, &scanner, 0);
+        defer sexpr.deinit(gpa);
 
-    var a: std.Io.Writer.Allocating = .init(gpa);
-    defer a.deinit();
-    try sexpr.print(&a.writer);
+        var a: std.Io.Writer.Allocating = .init(gpa);
+        defer a.deinit();
+        try sexpr.print(&a.writer);
 
-    std.debug.print("{s}\n", .{a.written()});
+        std.debug.print("{s}\n", .{a.written()});
+    }
+
+    {
+        var scanner = try Scanner.init("1 + 2");
+        var sexpr = try parser.expr(gpa, &scanner, 0);
+        defer sexpr.deinit(gpa);
+
+        var vm = vm_.VM.init();
+        defer vm.deint(gpa);
+
+        try compiler.Compiler.compile(gpa, sexpr, &vm);
+    }
 }
