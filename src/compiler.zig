@@ -21,7 +21,7 @@ pub const Compiler = struct {
     fn compileOperator(gpa: std.mem.Allocator, op: Operator, args: []const SExpr, vm: *VM, line: usize) !void {
         const instruction = switch (op) {
             .plus => VM.Instructions.add,
-            .minus => if (args.len == 1) VM.Instructions.negate else VM.Instructions.sub ,
+            .minus => if (args.len == 1) VM.Instructions.negate else VM.Instructions.sub,
             .slash => VM.Instructions.div,
             .star => VM.Instructions.mul,
             else => unreachable,
