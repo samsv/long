@@ -1,37 +1,63 @@
 const std = @import("std");
 const Value = @import("value.zig").Value;
 
-pub const VM = struct {
+pub const Chunk = struct {
     bytecode: std.ArrayList(u8),
-    stack: std.ArrayList(Value),
     lines: std.ArrayList(usize),
+    constants: std.ArrayList(Value),
+
+    pub const empty: Chunk = .{
+        .bytecode = .empty,
+        .lines = .empty,
+        .constants = .empty,
+    };
+
+    pub fn deinit(chunk: *Chunk, gpa: std.mem.Allocator) void {
+        chunk.bytecode.deinit(gpa);
+        chunk.constants.deinit(gpa);
+        chunk.lines.deinit(gpa);
+    }
+};
+
+pub const VM = struct {
+    chunk: Chunk,
+    stack: std.ArrayList(Value),
     ip: usize,
 
     pub fn init() VM {
         return .{
-            .bytecode = .empty,
+            .chunk = .empty,
             .stack = .empty,
-            .lines = .empty,
             .ip = 0,
         };
     }
 
     pub fn deint(vm: *VM, gpa: std.mem.Allocator) void {
-        vm.bytecode.deinit(gpa);
         vm.stack.deinit(gpa);
-        vm.lines.deinit(gpa);
+        vm.chunk.deinit(gpa);
     }
 
     pub fn addByte(vm: *VM, gpa: std.mem.Allocator, b: u8, line: usize) !void {
-        try vm.bytecode.append(gpa, b);
-        try vm.lines.append(gpa, line);
+        try vm.chunk.bytecode.append(gpa, b);
+        try vm.chunk.lines.append(gpa, line);
     }
 
     pub fn addBytes(vm: *VM, gpa: std.mem.Allocator, b1: u8, b2: u8, line: usize) !void {
-        try vm.bytecode.append(gpa, b1);
-        try vm.bytecode.append(gpa, b2);
-        try vm.lines.append(gpa, line);
-        try vm.lines.append(gpa, line);
+        try vm.chunk.bytecode.append(gpa, b1);
+        try vm.chunk.bytecode.append(gpa, b2);
+        try vm.chunk.lines.append(gpa, line);
+        try vm.chunk.lines.append(gpa, line);
+    }
+
+    pub fn addConstant(vm: *VM, gpa: std.mem.Allocator, c: Value) !u8 {
+        try vm.chunk.constants.append(gpa, c);
+        return @intCast(vm.chunk.constants.items.len - 1);
+    }
+
+    pub fn loadConstant(vm: *VM, gpa: std.mem.Allocator) !void {
+        const i = try vm.stack.pop().?.asInt(u8);
+        const v = vm.chunk.constants.items[i];
+        try vm.stack.append(gpa, v);
     }
 
     pub fn printStack(vm: VM, writer: *std.Io.Writer) !void {
@@ -48,8 +74,8 @@ pub const VM = struct {
     pub fn printInstructions(vm: VM, writer: *std.Io.Writer) !void {
         try writer.writeAll("===== Instructions =====\n");
         var i: usize = 0;
-        while (i < vm.bytecode.items.len) {
-            const instruction: Instructions = @enumFromInt(vm.bytecode.items[i]);
+        while (i < vm.chunk.bytecode.items.len) {
+            const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[i]);
             switch (instruction) {
                 .add, .sub, .mul, .div, .negate => {
                     try writer.print("{} [ {s} ]\n", .{i, @tagName(instruction)});
@@ -57,11 +83,17 @@ pub const VM = struct {
                 },
                 .jump, .jump_if_false => {
                     try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
-                    const low: u16 = @intCast(vm.bytecode.items[i + 1]);
-                    const high = @as(u16, @intCast(vm.bytecode.items[i + 2])) << 8;
+                    const low: u16 = @intCast(vm.chunk.bytecode.items[i + 1]);
+                    const high = @as(u16, @intCast(vm.chunk.bytecode.items[i + 2])) << 8;
                     const offset: u16 = low + high;
                     try writer.print(" offset {}\n", .{offset});
                     i += 3;
+                },
+                .load_constant => {
+                    try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
+                    const index = vm.chunk.bytecode.items[i + 1];
+                    try writer.print(" index {}\n", .{index});
+                    i += 2;
                 }
             }
         }
@@ -89,28 +121,28 @@ pub const VM = struct {
     }
 
     pub fn patchJump(vm: *VM, index: usize, value: u16) void {
-        vm.bytecode.items[index] = @truncate(value);
-        vm.bytecode.items[index+1] = @truncate(value >> 8);
+        vm.chunk.bytecode.items[index] = @truncate(value);
+        vm.chunk.bytecode.items[index+1] = @truncate(value >> 8);
     }
 
     pub fn addJump(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
         try vm.addByte(gpa, @intFromEnum(Instructions.jump), line);
         try vm.addBytes(gpa, 255, 255, line);
-        return vm.bytecode.items.len - 2;
+        return vm.chunk.bytecode.items.len - 2;
     }
 
     pub fn addJumpIfFalse(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
         try vm.addByte(gpa, @intFromEnum(Instructions.jump_if_false), line);
         try vm.addBytes(gpa, 255, 255, line);
-        return vm.bytecode.items.len - 2;
+        return vm.chunk.bytecode.items.len - 2;
     }
 
     pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {
-        _ = gpa;
-        while (vm.ip < vm.bytecode.items.len) {
-            const instruction: Instructions = @enumFromInt(vm.bytecode.items[vm.ip]);
+        while (vm.ip < vm.chunk.bytecode.items.len) {
+            const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
             switch (instruction) {
                 .add, .sub, .mul, .div => try vm.mathOp(instruction),
+                .load_constant => try vm.loadConstant(gpa),
                 else => return error.NotImplemented,
             }
             vm.ip += 1;
@@ -123,6 +155,7 @@ pub const VM = struct {
         sub,
         mul,
         div,
+        load_constant,
         negate,
         jump,
         jump_if_false,

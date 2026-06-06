@@ -15,7 +15,8 @@ pub const Compiler = struct {
             .identifier => unreachable,
         };
 
-        try vm.stack.append(gpa, value);
+        const i = try vm.addConstant(gpa, value);
+        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.load_constant), i, 0);
     }
 
     fn compileOperator(gpa: std.mem.Allocator, op: Operator, args: []const SExpr, vm: *VM, line: usize) !void {
@@ -27,12 +28,12 @@ pub const Compiler = struct {
             else => unreachable,
         };
 
-        try vm.addByte(gpa, @intFromEnum(instruction), line);
         for (args) |a| try compile(gpa, a, vm);
+        try vm.addByte(gpa, @intFromEnum(instruction), line);
     }
 
     fn patchJump(ji: usize, vm: *VM) !void {
-        const offset = vm.bytecode.items.len - ji;
+        const offset = vm.chunk.bytecode.items.len - ji;
         if (offset > std.math.maxInt(u16)) return error.JumpTooLong;
         vm.patchJump(ji, @intCast(offset));
     }
