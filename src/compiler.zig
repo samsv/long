@@ -31,6 +31,35 @@ pub const Compiler = struct {
         for (args) |a| try compile(gpa, a, vm);
     }
 
+    fn patchJump(ji: usize, vm: *VM) !void {
+        const offset = vm.bytecode.items.len - ji;
+        if (offset > std.math.maxInt(u16)) return error.JumpTooLong;
+        vm.patchJump(ji, @intCast(offset));
+    }
+
+    fn compileIf(gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
+        // cond
+        try compile(gpa, args[0], vm);
+
+        // true branch
+        const j1 = try vm.addJumpIfFalse(gpa, 0);
+
+        // true branch
+        try compile(gpa, args[1], vm);
+
+        // false branch
+        if (args.len == 3) {
+            const j2 = try vm.addJump(gpa, 0);
+            try patchJump(j1, vm);
+
+            try compile(gpa, args[2], vm);
+            try patchJump(j2, vm);
+        } else {
+            try patchJump(j1, vm);
+            try vm.stack.append(gpa, .nil);
+        }
+    }
+
     fn compileAtom(gpa: std.mem.Allocator, token: Token, vm: *VM) !void {
         switch (token.kind) {
             .literal => |literal| try compileLiteral(gpa, literal, vm),
@@ -46,17 +75,20 @@ pub const Compiler = struct {
 
     fn compileCons(gpa: std.mem.Allocator, cons: []const SExpr, vm: *VM) !void {
         if (cons.len == 0) return;
-        switch (cons[0]) {
+        try switch (cons[0]) {
             .atom => |a| switch (a.kind) {
-                .operator => |op| try compileOperator(gpa, op, cons[1..], vm, a.line),
-                .special_fns => return error.NotImplemented,
+                .operator => |op| compileOperator(gpa, op, cons[1..], vm, a.line),
+                .special_fns => |fn_| switch (fn_) {
+                    .@"if" => compileIf(gpa, cons[1..], vm),
+                    else => return error.NotImplemented,
+                },
                 else => unreachable,
             },
             .cons => |cs| {
                 try compileCons(gpa, cs.items, vm);
                 for (cons) |c| try compile(gpa, c, vm);
             }
-        }
+        };
     }
 
     pub fn compile(gpa: std.mem.Allocator, sexpr: SExpr, vm: *VM) anyerror!void {

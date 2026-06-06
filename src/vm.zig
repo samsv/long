@@ -27,7 +27,15 @@ pub const VM = struct {
         try vm.lines.append(gpa, line);
     }
 
+    pub fn addBytes(vm: *VM, gpa: std.mem.Allocator, b1: u8, b2: u8, line: usize) !void {
+        try vm.bytecode.append(gpa, b1);
+        try vm.bytecode.append(gpa, b2);
+        try vm.lines.append(gpa, line);
+        try vm.lines.append(gpa, line);
+    }
+
     pub fn printStack(vm: VM, writer: *std.Io.Writer) !void {
+        try writer.writeAll("===== Stack =====\n");
         try writer.writeByte('[');
         for (vm.stack.items, 0..) |value, i| {
             try value.print(writer);
@@ -35,6 +43,28 @@ pub const VM = struct {
                 try writer.writeAll(", ");
         }
         try writer.writeByte(']');
+    }
+
+    pub fn printInstructions(vm: VM, writer: *std.Io.Writer) !void {
+        try writer.writeAll("===== Instructions =====\n");
+        var i: usize = 0;
+        while (i < vm.bytecode.items.len) {
+            const instruction: Instructions = @enumFromInt(vm.bytecode.items[i]);
+            switch (instruction) {
+                .add, .sub, .mul, .div, .negate => {
+                    try writer.print("{} [ {s} ]\n", .{i, @tagName(instruction)});
+                    i += 1;
+                },
+                .jump, .jump_if_false => {
+                    try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
+                    const low: u16 = @intCast(vm.bytecode.items[i + 1]);
+                    const high = @as(u16, @intCast(vm.bytecode.items[i + 2])) << 8;
+                    const offset: u16 = low + high;
+                    try writer.print(" offset {}\n", .{offset});
+                    i += 3;
+                }
+            }
+        }
     }
 
     fn mathOp(vm: *VM, op: Instructions) !void {
@@ -58,6 +88,23 @@ pub const VM = struct {
         vm.stack.appendAssumeCapacity(v);
     }
 
+    pub fn patchJump(vm: *VM, index: usize, value: u16) void {
+        vm.bytecode.items[index] = @truncate(value);
+        vm.bytecode.items[index+1] = @truncate(value >> 8);
+    }
+
+    pub fn addJump(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
+        try vm.addByte(gpa, @intFromEnum(Instructions.jump), line);
+        try vm.addBytes(gpa, 255, 255, line);
+        return vm.bytecode.items.len - 2;
+    }
+
+    pub fn addJumpIfFalse(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
+        try vm.addByte(gpa, @intFromEnum(Instructions.jump_if_false), line);
+        try vm.addBytes(gpa, 255, 255, line);
+        return vm.bytecode.items.len - 2;
+    }
+
     pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {
         _ = gpa;
         while (vm.ip < vm.bytecode.items.len) {
@@ -72,12 +119,13 @@ pub const VM = struct {
 
 
     pub const Instructions = enum {
-        @"if",
         add,
         sub,
         mul,
         div,
         negate,
+        jump,
+        jump_if_false,
     };
 };
 
