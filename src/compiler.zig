@@ -15,8 +15,7 @@ pub const Compiler = struct {
             .identifier => unreachable,
         };
 
-        const i = try vm.addConstant(gpa, value);
-        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.load_constant), i, 0);
+        _ = try vm.addConstant(gpa, value);
     }
 
     fn compileOperator(gpa: std.mem.Allocator, op: Operator, args: []const SExpr, vm: *VM, line: usize) !void {
@@ -57,7 +56,7 @@ pub const Compiler = struct {
             try patchJump(j2, vm);
         } else {
             try patchJump(j1, vm);
-            try vm.stack.append(gpa, .nil);
+            _ = try vm.addConstant(gpa, .nil);
         }
     }
 

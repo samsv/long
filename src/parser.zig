@@ -110,6 +110,10 @@ fn parse_operator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_p
             },
         },
         .literal => .{ .atom = start_token },
+        .keywords => |k| switch (k) {
+            .@"true", .@"false", .nil => .{ .atom = start_token },
+            else => return Error.UnexpectedToken,
+        },
         else => return Error.UnexpectedToken,
     };
 

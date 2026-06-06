@@ -15,6 +15,14 @@ pub const Value = union(enum) {
         };
     }
 
+    pub fn isTruthy(v: Value) bool {
+        return switch (v) {
+            .nil => false,
+            .boolean => |b| b,
+            else => true,
+        };
+    }
+
     pub fn print(value: Value, writer: *std.Io.Writer) !void {
         switch (value) {
             .nil => try writer.writeAll("nil"),

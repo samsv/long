@@ -54,16 +54,17 @@ pub fn main(init: std.process.Init) !void {
         defer vm.deint(gpa);
 
         try compiler.Compiler.compile(gpa, sexpr, &vm);
-        // try vm.run(gpa);
 
         var a: std.Io.Writer.Allocating = .init(gpa);
         defer a.deinit();
 
-        try vm.printStack(&a.writer);
+        try vm.printInstructions(&a.writer);
         std.debug.print("{s}\n", .{a.written()});
 
+        try vm.run(gpa);
+
         _ = a.writer.consumeAll();
-        try vm.printInstructions(&a.writer);
+        try vm.printStack(&a.writer);
         std.debug.print("{s}\n", .{a.written()});
     }
 }

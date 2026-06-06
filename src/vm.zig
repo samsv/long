@@ -51,13 +51,16 @@ pub const VM = struct {
 
     pub fn addConstant(vm: *VM, gpa: std.mem.Allocator, c: Value) !u8 {
         try vm.chunk.constants.append(gpa, c);
-        return @intCast(vm.chunk.constants.items.len - 1);
+        const i: u8 = @intCast(vm.chunk.constants.items.len - 1);
+        try vm.addBytes(gpa, @intFromEnum(Instructions.load_constant), i, 0);
+        return i;
     }
 
     pub fn loadConstant(vm: *VM, gpa: std.mem.Allocator) !void {
-        const i = try vm.stack.pop().?.asInt(u8);
+        const i = vm.chunk.bytecode.items[vm.ip + 1];
         const v = vm.chunk.constants.items[i];
         try vm.stack.append(gpa, v);
+        vm.ip += 1;
     }
 
     pub fn printStack(vm: VM, writer: *std.Io.Writer) !void {
@@ -83,9 +86,7 @@ pub const VM = struct {
                 },
                 .jump, .jump_if_false => {
                     try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
-                    const low: u16 = @intCast(vm.chunk.bytecode.items[i + 1]);
-                    const high = @as(u16, @intCast(vm.chunk.bytecode.items[i + 2])) << 8;
-                    const offset: u16 = low + high;
+                    const offset = vm.getOffset(i + 1);
                     try writer.print(" offset {}\n", .{offset});
                     i += 3;
                 },
@@ -100,8 +101,8 @@ pub const VM = struct {
     }
 
     fn mathOp(vm: *VM, op: Instructions) !void {
-        const v2 = vm.stack.pop() orelse unreachable;
-        const v1 = vm.stack.pop() orelse unreachable;
+        const v2 = vm.stack.pop().?;
+        const v1 = vm.stack.pop().?;
 
         const v: Value = switch (v1) {
             .number => |n1| switch (v2) {
@@ -118,6 +119,12 @@ pub const VM = struct {
         };
 
         vm.stack.appendAssumeCapacity(v);
+    }
+
+    fn getOffset(vm: VM, i: usize) u16 {
+        const low: u16 = @intCast(vm.chunk.bytecode.items[i]);
+        const high = @as(u16, @intCast(vm.chunk.bytecode.items[i + 1])) << 8;
+        return low + high;
     }
 
     pub fn patchJump(vm: *VM, index: usize, value: u16) void {
@@ -143,6 +150,21 @@ pub const VM = struct {
             switch (instruction) {
                 .add, .sub, .mul, .div => try vm.mathOp(instruction),
                 .load_constant => try vm.loadConstant(gpa),
+                .jump => {
+                    const offset = vm.getOffset(vm.ip + 1);
+                    vm.ip += offset;
+                },
+                .jump_if_false => {
+                    const v = vm.stack.pop().?;
+                    if (v.isTruthy()) {
+                        // don't jump
+                        vm.ip += 2;
+                    } else {
+                        // jump
+                        const offset = vm.getOffset(vm.ip + 1);
+                        vm.ip += offset;
+                    }
+                },
                 else => return error.NotImplemented,
             }
             vm.ip += 1;
