@@ -56,11 +56,10 @@ pub const VM = struct {
         return i;
     }
 
-    pub fn loadConstant(vm: *VM, gpa: std.mem.Allocator) !void {
-        const i = vm.chunk.bytecode.items[vm.ip + 1];
-        const v = vm.chunk.constants.items[i];
-        try vm.stack.append(gpa, v);
-        vm.ip += 1;
+    fn getOffset(vm: VM, i: usize) u16 {
+        const low: u16 = @intCast(vm.chunk.bytecode.items[i]);
+        const high = @as(u16, @intCast(vm.chunk.bytecode.items[i + 1])) << 8;
+        return low + high;
     }
 
     pub fn printStack(vm: VM, writer: *std.Io.Writer) !void {
@@ -100,6 +99,23 @@ pub const VM = struct {
         }
     }
 
+    pub fn patchJump(vm: *VM, index: usize, value: u16) void {
+        vm.chunk.bytecode.items[index] = @truncate(value);
+        vm.chunk.bytecode.items[index+1] = @truncate(value >> 8);
+    }
+
+    pub fn addJump(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
+        try vm.addByte(gpa, @intFromEnum(Instructions.jump), line);
+        try vm.addBytes(gpa, 255, 255, line);
+        return vm.chunk.bytecode.items.len - 2;
+    }
+
+    pub fn addJumpIfFalse(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
+        try vm.addByte(gpa, @intFromEnum(Instructions.jump_if_false), line);
+        try vm.addBytes(gpa, 255, 255, line);
+        return vm.chunk.bytecode.items.len - 2;
+    }
+
     fn mathOp(vm: *VM, op: Instructions) !void {
         const v2 = vm.stack.pop().?;
         const v1 = vm.stack.pop().?;
@@ -121,52 +137,40 @@ pub const VM = struct {
         vm.stack.appendAssumeCapacity(v);
     }
 
-    fn getOffset(vm: VM, i: usize) u16 {
-        const low: u16 = @intCast(vm.chunk.bytecode.items[i]);
-        const high = @as(u16, @intCast(vm.chunk.bytecode.items[i + 1])) << 8;
-        return low + high;
+    fn loadConstant(vm: *VM, gpa: std.mem.Allocator) !void {
+        const i = vm.chunk.bytecode.items[vm.ip + 1];
+        const v = vm.chunk.constants.items[i];
+        try vm.stack.append(gpa, v);
+        vm.ip += 1;
     }
 
-    pub fn patchJump(vm: *VM, index: usize, value: u16) void {
-        vm.chunk.bytecode.items[index] = @truncate(value);
-        vm.chunk.bytecode.items[index+1] = @truncate(value >> 8);
+    fn jump(vm: *VM) !void {
+        const offset = vm.getOffset(vm.ip + 1);
+        vm.ip += offset;
     }
 
-    pub fn addJump(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
-        try vm.addByte(gpa, @intFromEnum(Instructions.jump), line);
-        try vm.addBytes(gpa, 255, 255, line);
-        return vm.chunk.bytecode.items.len - 2;
-    }
-
-    pub fn addJumpIfFalse(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
-        try vm.addByte(gpa, @intFromEnum(Instructions.jump_if_false), line);
-        try vm.addBytes(gpa, 255, 255, line);
-        return vm.chunk.bytecode.items.len - 2;
+    fn jumpIfFalse(vm: *VM) void {
+        const v = vm.stack.pop().?;
+        if (v.isTruthy()) {
+            // don't jump
+            vm.ip += 2;
+        } else {
+            // jump
+            const offset = vm.getOffset(vm.ip + 1);
+            vm.ip += offset;
+        }
     }
 
     pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {
         while (vm.ip < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
-            switch (instruction) {
-                .add, .sub, .mul, .div => try vm.mathOp(instruction),
-                .load_constant => try vm.loadConstant(gpa),
-                .jump => {
-                    const offset = vm.getOffset(vm.ip + 1);
-                    vm.ip += offset;
-                },
-                .jump_if_false => {
-                    const v = vm.stack.pop().?;
-                    if (v.isTruthy()) {
-                        // don't jump
-                        vm.ip += 2;
-                    } else {
-                        // jump
-                        const offset = vm.getOffset(vm.ip + 1);
-                        vm.ip += offset;
-                    }
-                },
+            try switch (instruction) {
+                .add, .sub, .mul, .div => vm.mathOp(instruction),
+                .load_constant => vm.loadConstant(gpa),
+                .jump => vm.jump(),
+                .jump_if_false => vm.jumpIfFalse(),
                 else => return error.NotImplemented,
-            }
+            };
             vm.ip += 1;
         }
     }
