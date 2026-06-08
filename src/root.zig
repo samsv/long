@@ -24,4 +24,5 @@ test "basic add functionality" {
 test {
     _ = @import("parser.zig");
     _ = @import("scanner.zig");
+    _ = @import("compiler.zig");
 }

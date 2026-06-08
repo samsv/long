@@ -7,59 +7,6 @@ pub const Token = struct {
     kind: Kind,
     line: usize,
 
-    pub const Operator = enum {
-        dot,
-        minus,
-        plus,
-        pipe,
-        star,
-        slash,
-
-        comma,
-        left_paren,
-        left_bracket,
-
-        bang_equal,
-        equal,
-        equal_equal,
-        greater,
-        greater_equal,
-        less,
-        less_equal,
-    };
-
-    pub const SpecialFns = enum {
-        class,
-        def,
-        @"for",
-        @"if",
-        map,
-        mapf,
-        match,
-        reduce,
-        @"while",
-        import,
-    };
-
-    pub const Keywords = enum {
-        @"and",
-        @"else",
-        do,
-        end,
-        @"false",
-        in,
-        nil,
-        @"or",
-        self,
-        @"true",
-    };
-
-    pub const Literal = union(enum) {
-        identifier: []const u8,
-        string: []const u8,
-        number: f64,
-    };
-
     pub const Kind = union(enum) {
         right_paren,
         right_brace,
@@ -109,9 +56,67 @@ pub const Token = struct {
                     .identifier => |s| try writer.writeAll(s),
                     .string => |s| try writer.print("\"{s}\"", .{s}),
                     .number => |n| try writer.print("{d}", .{n}),
+                    .constant => |c| try writer.writeAll(@tagName(c)),
                 },
             }
         }
+    };
+
+    pub const Operator = enum {
+        dot,
+        minus,
+        plus,
+        pipe,
+        star,
+        slash,
+
+        comma,
+        left_paren,
+        left_bracket,
+
+        bang_equal,
+        equal,
+        equal_equal,
+        greater,
+        greater_equal,
+        less,
+        less_equal,
+    };
+
+    pub const SpecialFns = enum {
+        class,
+        def,
+        @"for",
+        @"if",
+        map,
+        mapf,
+        match,
+        reduce,
+        @"while",
+        import,
+    };
+
+    pub const Keywords = enum {
+        @"and",
+        @"else",
+        do,
+        end,
+        in,
+        @"or",
+        self,
+    };
+
+    pub const Literal = union(enum) {
+        identifier: []const u8,
+        string: []const u8,
+        number: f64,
+        constant: Constant,
+
+        pub const Constant = enum {
+            nil,
+            @"false",
+            @"true",
+        };
     };
 };
 
@@ -223,6 +228,8 @@ pub const Scanner = struct {
             .{ .keywords = k }
         else if (std.meta.stringToEnum(Token.SpecialFns, str)) |fn_|
             .{ .special_fns = fn_ }
+        else if (std.meta.stringToEnum(Token.Literal.Constant, str)) |c|
+            .{ .literal = .{ .constant = c } }
         else
             .{ .literal = .{ .identifier = str } };
 

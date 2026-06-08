@@ -13,6 +13,11 @@ pub const Compiler = struct {
             .number => |n| .{ .number = n },
             .string => unreachable,
             .identifier => unreachable,
+            .constant => |c| switch (c) {
+                .@"true" => Value.True,
+                .@"false" => Value.False,
+                .nil => .nil,
+            }
         };
 
         _ = try vm.addConstant(gpa, value);
@@ -63,12 +68,6 @@ pub const Compiler = struct {
     fn compileAtom(gpa: std.mem.Allocator, token: Token, vm: *VM) !void {
         switch (token.kind) {
             .literal => |literal| try compileLiteral(gpa, literal, vm),
-            .keywords => |keyword| switch (keyword) {
-                .@"true" => try vm.stack.append(gpa, Value.True),
-                .@"false" => try vm.stack.append(gpa, Value.False),
-                .nil => try vm.stack.append(gpa, .nil),
-                else => unreachable,
-            },
             else => unreachable,
         }
     }
@@ -98,3 +97,31 @@ pub const Compiler = struct {
         };
     }
 };
+
+test "if" {
+    const parser = @import("parser.zig");
+    const Scanner = @import("scanner.zig").Scanner;
+
+    const gpa = std.testing.allocator;
+
+    const test_cases = [_]struct{ []const u8, Value }{
+        .{"if 1 + 2 do 3 - 4 else 5 - 7", .{ .number = -1 }},
+        .{"if nil do 3 - 4 else 5 - 7", .{ .number = -2 }},
+        .{"if false do 3 - 4", .nil},
+    };
+
+    for (test_cases) |cs| {
+        var scanner = try Scanner.init(cs[0]);
+        var sexpr = try parser.expr(gpa, &scanner, 0);
+        defer sexpr.deinit(gpa);
+
+        var vm = VM.init();
+        defer vm.deint(gpa);
+
+        try Compiler.compile(gpa, sexpr, &vm);
+        try vm.run(gpa);
+
+        try std.testing.expectEqual(1, vm.stack.items.len);
+        try std.testing.expectEqual(cs[1], vm.stack.items[0]);
+    }
+}

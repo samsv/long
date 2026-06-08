@@ -15,7 +15,7 @@ pub const Error = error{
     EOF,
 };
 
-fn expect_close(s: *Scanner, open: Token, kind: Token.Kind) !void {
+fn expectClose(s: *Scanner, open: Token, kind: Token.Kind) !void {
     expect(s, kind) catch |err| {
         const token = try s.peek() orelse Token{ .kind = .eof, .line = s.line };
         std.log.err("Unclosed token: {any}. Expected token {any}, got {any}", .{ open, kind, token });
@@ -43,9 +43,9 @@ fn check(s: *Scanner, kind: Token.Kind) !?Token {
     return token;
 }
 
-fn parse_bracket(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token, lhs: SExpr) !SExpr {
+fn parseBracket(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token, lhs: SExpr) !SExpr {
     const rhs = try expr(gpa, s, 0);
-    try expect_close(s, left_bracket, .right_bracket);
+    try expectClose(s, left_bracket, .right_bracket);
 
     var list: std.ArrayList(SExpr) = .empty;
     try list.appendSlice(gpa, &.{ .{ .atom = left_bracket }, lhs, rhs });
@@ -53,7 +53,7 @@ fn parse_bracket(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token, lhs: 
     return .{ .cons = list };
 }
 
-fn parse_parens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExpr) !SExpr {
+fn parseParens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExpr) !SExpr {
     var list: std.ArrayList(SExpr) = .empty;
     try list.append(gpa, lhs);
 
@@ -69,11 +69,11 @@ fn parse_parens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SEx
         break;
     }
 
-    try expect_close(s, left_paren, .right_paren);
+    try expectClose(s, left_paren, .right_paren);
     return .{ .cons = list };
 }
 
-fn parse_if(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
+fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
     const min_prec = 5;
 
     const cond = try expr(gpa, s, min_prec);
@@ -86,14 +86,12 @@ fn parse_if(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
     if (try check(s, .{ .keywords = .@"else" })) |_| {
         const false_branch = try expr(gpa, s, min_prec);
         try list.append(gpa, false_branch);
-    } else {
-        try expect(s, .{ .keywords = .end });
     }
 
     return .{ .cons = list };
 }
 
-fn parse_operator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_prec: u8) !SExpr {
+fn parseOperator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_prec: u8) !SExpr {
     var lhs: SExpr = switch (start_token.kind) {
         .operator => |op| switch (op) {
             .left_paren => paren: {
@@ -102,7 +100,7 @@ fn parse_operator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_p
                 break :paren ret;
             },
             else => blk: {
-                const prec = try prefix_operator(op);
+                const prec = try prefixPrec(op);
                 const rhs = try expr(gpa, s, prec.left);
                 var list: std.ArrayList(SExpr) = .empty;
                 try list.appendSlice(gpa, &.{ .{ .atom = start_token }, rhs });
@@ -110,10 +108,6 @@ fn parse_operator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_p
             },
         },
         .literal => .{ .atom = start_token },
-        .keywords => |k| switch (k) {
-            .@"true", .@"false", .nil => .{ .atom = start_token },
-            else => return Error.UnexpectedToken,
-        },
         else => return Error.UnexpectedToken,
     };
 
@@ -127,7 +121,7 @@ fn parse_operator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_p
             else => break,
         };
 
-        const prec = try infix_prec(op);
+        const prec = try infixPrec(op);
         if (prec.left < min_prec)
             break;
 
@@ -138,8 +132,8 @@ fn parse_operator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_p
             try list.appendSlice(gpa, &.{ .{ .atom = token }, lhs, rhs });
             break :blk .{ .cons = list };
         } else switch (op) {
-            .left_paren => try parse_parens(gpa, s, token, lhs),
-            .left_bracket => try parse_bracket(gpa, s, token, lhs),
+            .left_paren => try parseParens(gpa, s, token, lhs),
+            .left_bracket => try parseBracket(gpa, s, token, lhs),
             else => unreachable,
         };
     }
@@ -155,21 +149,21 @@ pub fn expr(gpa: std.mem.Allocator, s: *Scanner, min_prec: u8) !SExpr {
 
     return switch (token.kind) {
         .special_fns => |fn_| switch (fn_) {
-            .@"if" => parse_if(gpa, s, token),
+            .@"if" => parseIf(gpa, s, token),
             else => error.NotImplemented,
         },
-        else => parse_operator(gpa, s, token, min_prec),
+        else => parseOperator(gpa, s, token, min_prec),
     };
 }
 
-fn prefix_operator(op: Operator) !Precedence {
+fn prefixPrec(op: Operator) !Precedence {
     return switch (op) {
         .minus => .{ .left = 11, .right = null },
         else => error.OperatorNotPrefix,
     };
 }
 
-fn infix_prec(op: Operator) !Precedence {
+fn infixPrec(op: Operator) !Precedence {
     return switch (op) {
         .equal => .{ .left = 1, .right = 2 },
         .comma => .{ .left = 3, .right = 4 },
@@ -193,10 +187,10 @@ test "ok exprs" {
         .{ "x[0][1]", "([ ([ x 0) 1)" },
         .{ "x, y = 1, 2", "(= (, x y) (, 1 2))" },
         .{ "world(1, 2, 3)", "(world 1 2 3)" },
-        .{ "if x + 5 do y + 1 end", "(if (+ x 5) (+ y 1))" },
-        .{ "if x + 5 do y + 1 else z + 1 end", "(if (+ x 5) (+ y 1) (+ z 1))" },
-        .{ "if x + 5 do 1 else z + 1 end", "(if (+ x 5) 1 (+ z 1))" },
-        .{ "if x + 5 do 1 else if x + 6 do z + 1 else k + 9 end", "(if (+ x 5) 1 (if (+ x 6) (+ z 1) (+ k 9)))" },
+        .{ "if x + 5 do y + 1", "(if (+ x 5) (+ y 1))" },
+        .{ "if x + 5 do y + 1 else z + 1", "(if (+ x 5) (+ y 1) (+ z 1))" },
+        .{ "if x + 5 do 1 else z + 1", "(if (+ x 5) 1 (+ z 1))" },
+        .{ "if x + 5 do 1 else if x + 6 do z + 1 else k + 9", "(if (+ x 5) 1 (if (+ x 6) (+ z 1) (+ k 9)))" },
     };
 
     for (tests) |t| {
