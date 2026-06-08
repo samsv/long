@@ -82,7 +82,7 @@ pub const VM = struct {
         while (i < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[i]);
             switch (instruction) {
-                .add, .sub, .mul, .div, .negate, .get_global, .set_global => {
+                .add, .sub, .mul, .div, .negate, .set_global => {
                     try writer.print("{} [ {s} ]\n", .{i, @tagName(instruction)});
                     i += 1;
                 },
@@ -92,7 +92,7 @@ pub const VM = struct {
                     try writer.print(" offset {}\n", .{offset});
                     i += 3;
                 },
-                .load_constant => {
+                .load_constant, .get_global => {
                     try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
                     const index = vm.chunk.bytecode.items[i + 1];
                     try writer.print(" index {}\n", .{index});
@@ -171,12 +171,13 @@ pub const VM = struct {
     }
 
     fn getGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
-        const i = vm.stack.pop().?.asIntUnsafe(usize);
+        const i = vm.chunk.bytecode.items[vm.ip + 1];
         if (i >= vm.globals.items.len)
             return error.UndefinedGlobal;
 
         const v = vm.globals.items[i];
         try vm.stack.append(gpa, v);
+        vm.ip += 1;
     }
 
     pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {

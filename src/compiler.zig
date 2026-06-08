@@ -47,8 +47,7 @@ pub const Compiler = struct {
 
     fn compileID(c: Compiler, gpa: std.mem.Allocator, id: []const u8, line: usize, vm: *VM) !void {
         const idx = try c.globals.get(id);
-        _ = try vm.addConstant(gpa, .{ .number = @floatFromInt(idx) });
-        try vm.addByte(gpa, @intFromEnum(VM.Instructions.get_global), line);
+        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.get_global), @intCast(idx), line);
     }
 
     fn compileLiteral(c: Compiler, gpa: std.mem.Allocator, literal: Literal, line: usize, vm: *VM) !void {
