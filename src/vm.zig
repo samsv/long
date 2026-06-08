@@ -21,6 +21,7 @@ pub const Chunk = struct {
 
 pub const VM = struct {
     chunk: Chunk,
+    globals: std.ArrayList(Value),
     stack: std.ArrayList(Value),
     ip: usize,
 
@@ -28,6 +29,7 @@ pub const VM = struct {
         return .{
             .chunk = .empty,
             .stack = .empty,
+            .globals = .empty,
             .ip = 0,
         };
     }
@@ -35,6 +37,7 @@ pub const VM = struct {
     pub fn deint(vm: *VM, gpa: std.mem.Allocator) void {
         vm.stack.deinit(gpa);
         vm.chunk.deinit(gpa);
+        vm.globals.deinit(gpa);
     }
 
     pub fn addByte(vm: *VM, gpa: std.mem.Allocator, b: u8, line: usize) !void {
@@ -79,7 +82,7 @@ pub const VM = struct {
         while (i < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[i]);
             switch (instruction) {
-                .add, .sub, .mul, .div, .negate => {
+                .add, .sub, .mul, .div, .negate, .get_global, .set_global => {
                     try writer.print("{} [ {s} ]\n", .{i, @tagName(instruction)});
                     i += 1;
                 },
@@ -161,11 +164,28 @@ pub const VM = struct {
         }
     }
 
+    fn setGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
+        const v = vm.stack.pop().?;
+        try vm.globals.append(gpa, v);
+        try vm.stack.append(gpa, v);
+    }
+
+    fn getGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
+        const i = vm.stack.pop().?.asIntUnsafe(usize);
+        if (i >= vm.globals.items.len)
+            return error.UndefinedGlobal;
+
+        const v = vm.globals.items[i];
+        try vm.stack.append(gpa, v);
+    }
+
     pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {
         while (vm.ip < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
             try switch (instruction) {
                 .add, .sub, .mul, .div => vm.mathOp(instruction),
+                .set_global => vm.setGlobal(gpa),
+                .get_global => vm.getGlobal(gpa),
                 .load_constant => vm.loadConstant(gpa),
                 .jump => vm.jump(),
                 .jump_if_false => vm.jumpIfFalse(),
@@ -181,6 +201,8 @@ pub const VM = struct {
         sub,
         mul,
         div,
+        set_global,
+        get_global,
         load_constant,
         negate,
         jump,

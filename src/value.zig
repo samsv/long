@@ -15,6 +15,10 @@ pub const Value = union(enum) {
         };
     }
 
+    pub fn asIntUnsafe(v: Value, comptime T: type) T {
+        return @intFromFloat(v.number);
+    }
+
     pub fn isTruthy(v: Value) bool {
         return switch (v) {
             .nil => false,

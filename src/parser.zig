@@ -74,7 +74,7 @@ fn parseParens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExp
 }
 
 fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
-    const min_prec = 5;
+    const min_prec = 0;
 
     const cond = try expr(gpa, s, min_prec);
     try expect(s, .{ .keywords = .do });

@@ -7,32 +7,103 @@ const Operator = Token.Operator;
 const Value = @import("value.zig").Value;
 const SExpr = @import("sexpr.zig").SExpr;
 
+pub const Globals = struct {
+    name_indexes: std.StringArrayHashMapUnmanaged(usize),
+
+    pub fn init() Globals {
+        return .{
+            .name_indexes = .empty,
+        };
+    }
+
+    pub fn deinit(g: *Globals, gpa: std.mem.Allocator) void {
+        g.name_indexes.deinit(gpa);
+    }
+
+    pub fn add(g: *Globals, gpa: std.mem.Allocator, id: []const u8) !void {
+        const idx = g.name_indexes.count();
+        const res = try g.name_indexes.getOrPutValue(gpa, id, idx);
+        if (res.found_existing)
+            return error.GlobalRedefined;
+    }
+
+    pub fn get(g: Globals, id: []const u8) !usize {
+        return g.name_indexes.get(id) orelse error.UndefinedVariable;
+    }
+};
+
 pub const Compiler = struct {
-    fn compileLiteral(gpa: std.mem.Allocator, literal: Literal, vm: *VM) !void {
+    globals: Globals,
+
+    pub fn init() Compiler {
+        return .{
+            .globals = Globals.init(),
+        };
+    }
+
+    pub fn deinit(c: *Compiler, gpa: std.mem.Allocator) void {
+        c.globals.deinit(gpa);
+    }
+
+    fn compileID(c: Compiler, gpa: std.mem.Allocator, id: []const u8, line: usize, vm: *VM) !void {
+        const idx = try c.globals.get(id);
+        _ = try vm.addConstant(gpa, .{ .number = @floatFromInt(idx) });
+        try vm.addByte(gpa, @intFromEnum(VM.Instructions.get_global), line);
+    }
+
+    fn compileLiteral(c: Compiler, gpa: std.mem.Allocator, literal: Literal, line: usize, vm: *VM) !void {
         const value: Value = switch (literal) {
             .number => |n| .{ .number = n },
             .string => unreachable,
-            .identifier => unreachable,
-            .constant => |c| switch (c) {
+            .constant => |constant| switch (constant) {
                 .true => Value.True,
                 .false => Value.False,
                 .nil => .nil,
             },
+            .identifier => |id| return c.compileID(gpa, id, line, vm),
         };
 
         _ = try vm.addConstant(gpa, value);
     }
 
-    fn compileOperator(gpa: std.mem.Allocator, op: Operator, args: []const SExpr, vm: *VM, line: usize) !void {
+    fn expect(u: anytype, comptime tag: std.meta.Tag(@TypeOf(u))) !@FieldType(@TypeOf(u), @tagName(tag)) {
+        return if (std.meta.activeTag(u) == tag) @field(u, @tagName(tag)) else error.UnexpectedValue;
+    }
+
+    fn compileEqual(
+        c: *Compiler,
+        gpa: std.mem.Allocator,
+        args: []const SExpr,
+        vm: *VM,
+        line: usize,
+    ) !void {
+        const atom = try expect(args[0], .atom);
+        const literal = try expect(atom.kind, .literal);
+        const id = try expect(literal, .identifier);
+        try c.globals.add(gpa, id);
+
+        try c.compile(gpa, args[1], vm);
+        try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_global), line);
+    }
+
+    fn compileOperator(
+        c: *Compiler,
+        gpa: std.mem.Allocator,
+        op: Operator,
+        args: []const SExpr,
+        vm: *VM,
+        line: usize,
+    ) !void {
         const instruction = switch (op) {
             .plus => VM.Instructions.add,
             .minus => if (args.len == 1) VM.Instructions.negate else VM.Instructions.sub,
             .slash => VM.Instructions.div,
             .star => VM.Instructions.mul,
+            .equal => return c.compileEqual(gpa, args, vm, line),
             else => unreachable,
         };
 
-        for (args) |a| try compile(gpa, a, vm);
+        for (args) |a| try c.compile(gpa, a, vm);
         try vm.addByte(gpa, @intFromEnum(instruction), line);
     }
 
@@ -42,58 +113,56 @@ pub const Compiler = struct {
         vm.patchJump(ji, @intCast(offset));
     }
 
-    fn compileIf(gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
+    fn compileIf(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
         // cond
-        try compile(gpa, args[0], vm);
+        try c.compile(gpa, args[0], vm);
 
         // true branch
         const j1 = try vm.addJumpIfFalse(gpa, 0);
 
         // true branch
-        try compile(gpa, args[1], vm);
+        try c.compile(gpa, args[1], vm);
 
         // false branch
-        if (args.len == 3) {
-            const j2 = try vm.addJump(gpa, 0);
-            try patchJump(j1, vm);
-
-            try compile(gpa, args[2], vm);
-            try patchJump(j2, vm);
-        } else {
-            try patchJump(j1, vm);
+        const j2 = try vm.addJump(gpa, 0);
+        try patchJump(j1, vm);
+        if (args.len == 3)
+            try c.compile(gpa, args[2], vm)
+        else
             _ = try vm.addConstant(gpa, .nil);
-        }
+
+        try patchJump(j2, vm);
     }
 
-    fn compileAtom(gpa: std.mem.Allocator, token: Token, vm: *VM) !void {
+    fn compileAtom(c: Compiler, gpa: std.mem.Allocator, token: Token, vm: *VM) !void {
         switch (token.kind) {
-            .literal => |literal| try compileLiteral(gpa, literal, vm),
+            .literal => |literal| try c.compileLiteral(gpa, literal, token.line, vm),
             else => unreachable,
         }
     }
 
-    fn compileCons(gpa: std.mem.Allocator, cons: []const SExpr, vm: *VM) !void {
+    fn compileCons(c: *Compiler, gpa: std.mem.Allocator, cons: []const SExpr, vm: *VM) !void {
         if (cons.len == 0) return;
         try switch (cons[0]) {
             .atom => |a| switch (a.kind) {
-                .operator => |op| compileOperator(gpa, op, cons[1..], vm, a.line),
+                .operator => |op| c.compileOperator(gpa, op, cons[1..], vm, a.line),
                 .special_fns => |fn_| switch (fn_) {
-                    .@"if" => compileIf(gpa, cons[1..], vm),
+                    .@"if" => c.compileIf(gpa, cons[1..], vm),
                     else => return error.NotImplemented,
                 },
                 else => unreachable,
             },
             .cons => |cs| {
-                try compileCons(gpa, cs.items, vm);
-                for (cons) |c| try compile(gpa, c, vm);
+                try c.compileCons(gpa, cs.items, vm);
+                for (cons) |sexpr| try c.compile(gpa, sexpr, vm);
             },
         };
     }
 
-    pub fn compile(gpa: std.mem.Allocator, sexpr: SExpr, vm: *VM) anyerror!void {
+    pub fn compile(c: *Compiler, gpa: std.mem.Allocator, sexpr: SExpr, vm: *VM) anyerror!void {
         try switch (sexpr) {
-            .atom => |token| compileAtom(gpa, token, vm),
-            .cons => |cons| compileCons(gpa, cons.items, vm),
+            .atom => |token| c.compileAtom(gpa, token, vm),
+            .cons => |cons| c.compileCons(gpa, cons.items, vm),
         };
     }
 };
@@ -105,6 +174,8 @@ test "if" {
     const gpa = std.testing.allocator;
 
     const test_cases = [_]struct { []const u8, Value }{
+        .{ "x = 5", .{ .number = 5 } },
+        .{ "if x = 8.5 do x", .{ .number = 8.5 } },
         .{ "1", .{ .number = 1 } },
         .{ "5 * 2.5", .{ .number = 12.5 } },
         .{ "8 / 2", .{ .number = 4 } },
@@ -112,6 +183,7 @@ test "if" {
         .{ "3 - 2", .{ .number = 1 } },
         .{ "if 1 + 2 do 3 - 4 else 5 - 7", .{ .number = -1 } },
         .{ "if nil do 3 - 4 else 5 - 7", .{ .number = -2 } },
+        .{ "if true do 3 - 4", .{ .number = -1 } },
         .{ "if false do 3 - 4", .nil },
     };
 
@@ -123,7 +195,10 @@ test "if" {
         var vm = VM.init();
         defer vm.deint(gpa);
 
-        try Compiler.compile(gpa, sexpr, &vm);
+        var compiler = Compiler.init();
+        defer compiler.deinit(gpa);
+
+        try compiler.compile(gpa, sexpr, &vm);
         try vm.run(gpa);
 
         try std.testing.expectEqual(1, vm.stack.items.len);

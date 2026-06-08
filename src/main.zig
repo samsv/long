@@ -4,7 +4,7 @@ const zsv = @import("zsv");
 const Io = std.Io;
 const Scanner = zsv.scanner.Scanner;
 const parser = zsv.parser;
-const compiler = zsv.compiler;
+const c = zsv.compiler;
 const vm_ = zsv.vm;
 
 pub fn main(init: std.process.Init) !void {
@@ -46,14 +46,17 @@ pub fn main(init: std.process.Init) !void {
     }
 
     {
-        var scanner = try Scanner.init("if 1 + 2 do 3 - 4 else 5 - 7");
+        var scanner = try Scanner.init("if x = 5 do x");
         var sexpr = try parser.expr(gpa, &scanner, 0);
         defer sexpr.deinit(gpa);
 
         var vm = vm_.VM.init();
         defer vm.deint(gpa);
 
-        try compiler.Compiler.compile(gpa, sexpr, &vm);
+        var compiler = c.Compiler.init();
+        defer compiler.deinit(gpa);
+
+        try compiler.compile(gpa, sexpr, &vm);
 
         var a: std.Io.Writer.Allocating = .init(gpa);
         defer a.deinit();
