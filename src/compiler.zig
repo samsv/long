@@ -14,10 +14,10 @@ pub const Compiler = struct {
             .string => unreachable,
             .identifier => unreachable,
             .constant => |c| switch (c) {
-                .@"true" => Value.True,
-                .@"false" => Value.False,
+                .true => Value.True,
+                .false => Value.False,
                 .nil => .nil,
-            }
+            },
         };
 
         _ = try vm.addConstant(gpa, value);
@@ -86,7 +86,7 @@ pub const Compiler = struct {
             .cons => |cs| {
                 try compileCons(gpa, cs.items, vm);
                 for (cons) |c| try compile(gpa, c, vm);
-            }
+            },
         };
     }
 
@@ -104,10 +104,15 @@ test "if" {
 
     const gpa = std.testing.allocator;
 
-    const test_cases = [_]struct{ []const u8, Value }{
-        .{"if 1 + 2 do 3 - 4 else 5 - 7", .{ .number = -1 }},
-        .{"if nil do 3 - 4 else 5 - 7", .{ .number = -2 }},
-        .{"if false do 3 - 4", .nil},
+    const test_cases = [_]struct { []const u8, Value }{
+        .{ "1", .{ .number = 1 } },
+        .{ "5 * 2.5", .{ .number = 12.5 } },
+        .{ "8 / 2", .{ .number = 4 } },
+        .{ "3 / 2", .{ .number = 1.5 } },
+        .{ "3 - 2", .{ .number = 1 } },
+        .{ "if 1 + 2 do 3 - 4 else 5 - 7", .{ .number = -1 } },
+        .{ "if nil do 3 - 4 else 5 - 7", .{ .number = -2 } },
+        .{ "if false do 3 - 4", .nil },
     };
 
     for (test_cases) |cs| {
