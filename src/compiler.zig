@@ -134,6 +134,14 @@ pub const Compiler = struct {
         try patchJump(j2, vm);
     }
 
+    fn compileDo(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
+        for (args, 0..) |s, i| {
+            try c.compile(gpa, s, vm);
+            if (i < args.len - 1)
+                try vm.addByte(gpa, @intFromEnum(VM.Instructions.pop), 0);
+        }
+    }
+
     fn compileAtom(c: Compiler, gpa: std.mem.Allocator, token: Token, vm: *VM) !void {
         switch (token.kind) {
             .literal => |literal| try c.compileLiteral(gpa, literal, token.line, vm),
@@ -149,6 +157,10 @@ pub const Compiler = struct {
                 .special_fns => |fn_| switch (fn_) {
                     .@"if" => c.compileIf(gpa, cons[1..], vm),
                     else => return error.NotImplemented,
+                },
+                .keywords => |k| switch (k) {
+                    .do => c.compileDo(gpa, cons[1..], vm),
+                    else => unreachable,
                 },
                 else => unreachable,
             },

@@ -82,7 +82,7 @@ pub const VM = struct {
         while (i < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[i]);
             switch (instruction) {
-                .add, .sub, .mul, .div, .negate, .set_global => {
+                .add, .sub, .mul, .div, .negate, .set_global, .pop => {
                     try writer.print("{} [ {s} ]\n", .{i, @tagName(instruction)});
                     i += 1;
                 },
@@ -190,6 +190,7 @@ pub const VM = struct {
                 .load_constant => vm.loadConstant(gpa),
                 .jump => vm.jump(),
                 .jump_if_false => vm.jumpIfFalse(),
+                .pop => _ = vm.stack.pop(),
                 else => return error.NotImplemented,
             };
             vm.ip += 1;
@@ -206,6 +207,7 @@ pub const VM = struct {
         get_global,
         load_constant,
         negate,
+        pop,
         jump,
         jump_if_false,
     };

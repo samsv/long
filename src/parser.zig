@@ -34,13 +34,16 @@ fn expect(s: *Scanner, kind: Token.Kind) !void {
     return Error.UnexpectedToken;
 }
 
+fn peek(s: *Scanner, kind: Token.Kind) !bool {
+    const token = try s.peek() orelse return false;
+    return std.meta.eql(token.kind, kind);
+}
+
 fn check(s: *Scanner, kind: Token.Kind) !?Token {
-    const token = try s.peek() orelse return null;
-
-    if (!std.meta.eql(token.kind, kind)) return null;
-
-    _ = s.next() catch unreachable;
-    return token;
+    return if (try peek(s, kind))
+        s.next() catch unreachable
+    else
+        null;
 }
 
 fn parseBracket(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token, lhs: SExpr) !SExpr {
@@ -74,20 +77,51 @@ fn parseParens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExp
 }
 
 fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
-    const min_prec = 0;
-
-    const cond = try expr(gpa, s, min_prec);
+    const cond = try expr(gpa, s, 0);
     try expect(s, .{ .keywords = .do });
 
-    const true_branch = try expr(gpa, s, min_prec);
+    const true_branch = try parseBlock(
+        gpa,
+        s,
+        &[_]Token.Kind{ .{ .keywords = .@"else" }, .{ .keywords = .end } },
+        token.line,
+    );
     var list: std.ArrayList(SExpr) = .empty;
     try list.appendSlice(gpa, &.{ .{ .atom = token }, cond, true_branch });
 
-    if (try check(s, .{ .keywords = .@"else" })) |_| {
-        const false_branch = try expr(gpa, s, min_prec);
+    if (try check(s, .{ .keywords = .@"else" })) |else_token| {
+        const false_branch = if (try check(s, .{ .special_fns = .@"if" })) |if_token|
+            try parseIf(gpa, s, if_token)
+        else
+            try parseBlock(gpa, s, &[_]Token.Kind{ .{ .keywords = .end } }, else_token.line);
         try list.append(gpa, false_branch);
     }
 
+    return .{ .cons = list };
+}
+
+fn parseBlock(
+    gpa: std.mem.Allocator,
+    s: *Scanner,
+    end_token_kinds: []const Token.Kind,
+    line: usize,
+) !SExpr {
+    var list: std.ArrayList(SExpr) = .empty;
+    try list.append(gpa, .{
+        .atom = .{
+            .kind = .{ .keywords = .do },
+            .line = line,
+        },
+    });
+
+    loop: while (true) {
+        const e = try expr(gpa, s, 0);
+        try list.append(gpa, e);
+
+        for (end_token_kinds) |k|
+            if (try peek(s, k))
+                break :loop;
+    }
     return .{ .cons = list };
 }
 
@@ -108,13 +142,18 @@ fn parseOperator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_pr
             },
         },
         .literal => .{ .atom = start_token },
-        else => return Error.UnexpectedToken,
+        else => {
+            std.log.err("Unexpected token {}", .{ start_token });
+            return Error.UnexpectedToken;
+        },
     };
 
     while (try s.peek()) |token| {
         const op = switch (token.kind) {
             .operator => |op| op,
             .literal, .special_fns => {
+                if (token.line != start_token.line) break;
+
                 std.log.err("Line {}: Unexpected token {any}\n", .{ s.line, start_token });
                 return Error.UnexpectedToken;
             },
@@ -187,10 +226,10 @@ test "ok exprs" {
         .{ "x[0][1]", "([ ([ x 0) 1)" },
         .{ "x, y = 1, 2", "(= (, x y) (, 1 2))" },
         .{ "world(1, 2, 3)", "(world 1 2 3)" },
-        .{ "if x + 5 do y + 1", "(if (+ x 5) (+ y 1))" },
-        .{ "if x + 5 do y + 1 else z + 1", "(if (+ x 5) (+ y 1) (+ z 1))" },
-        .{ "if x + 5 do 1 else z + 1", "(if (+ x 5) 1 (+ z 1))" },
-        .{ "if x + 5 do 1 else if x + 6 do z + 1 else k + 9", "(if (+ x 5) 1 (if (+ x 6) (+ z 1) (+ k 9)))" },
+        .{ "if x + 5 do y + 1 end", "(if (+ x 5) (do (+ y 1)))" },
+        .{ "if x + 5 do y + 1 else z + 1 end", "(if (+ x 5) (do (+ y 1)) (do (+ z 1)))" },
+        .{ "if x + 5 do 1 else z + 1 end", "(if (+ x 5) (do 1) (do (+ z 1)))" },
+        .{ "if x + 5 do 1 else if x + 6 do z + 1 else k + 9 end", "(if (+ x 5) (do 1) (if (+ x 6) (do (+ z 1)) (do (+ k 9))))" },
     };
 
     for (tests) |t| {
@@ -202,6 +241,10 @@ test "ok exprs" {
         defer a.deinit();
         try sexpr.print(&a.writer);
 
-        try std.testing.expectEqualDeep(t[1], a.written());
+        const w = a.written();
+        std.testing.expectEqualDeep(t[1], w) catch |err| {
+            std.debug.print("Expected {s}; got {s}\n", .{t[1], w});
+            return err;
+        };
     }
 }

@@ -34,22 +34,19 @@ pub fn main(init: std.process.Init) !void {
     }
 
     {
-        var scanner = try Scanner.init("if x + 5 do y + 1 else z + 1");
-        var sexpr = try parser.expr(gpa, &scanner, 0);
-        defer sexpr.deinit(gpa);
-
-        var a: std.Io.Writer.Allocating = .init(gpa);
-        defer a.deinit();
-        try sexpr.print(&a.writer);
-
-        std.debug.print("{s}\n", .{a.written()});
-    }
-
-    {
         var a: std.Io.Writer.Allocating = .init(gpa);
         defer a.deinit();
 
-        var scanner = try Scanner.init("y = if x = 5 do x");
+        var scanner = try Scanner.init(
+            // this will fail at runtime, as k is not a global.
+        \\y = if x = false do
+        \\    k = x + 1
+        \\    k + 5
+        \\else
+        \\    z = 5 + 1
+        \\    z
+        \\end
+        );
 
         var sexpr = try parser.expr(gpa, &scanner, 0);
         defer sexpr.deinit(gpa);
