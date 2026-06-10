@@ -46,9 +46,17 @@ pub fn main(init: std.process.Init) !void {
     }
 
     {
-        var scanner = try Scanner.init("if x = 5 do x");
+        var a: std.Io.Writer.Allocating = .init(gpa);
+        defer a.deinit();
+
+        var scanner = try Scanner.init("y = if x = 5 do x");
+
         var sexpr = try parser.expr(gpa, &scanner, 0);
         defer sexpr.deinit(gpa);
+        try sexpr.print(&a.writer);
+        std.debug.print("{s}\n", .{a.written()});
+
+        _ = a.writer.consumeAll();
 
         var vm = vm_.VM.init();
         defer vm.deint(gpa);
@@ -57,9 +65,6 @@ pub fn main(init: std.process.Init) !void {
         defer compiler.deinit(gpa);
 
         try compiler.compile(gpa, sexpr, &vm);
-
-        var a: std.Io.Writer.Allocating = .init(gpa);
-        defer a.deinit();
 
         try vm.printInstructions(&a.writer);
         std.debug.print("{s}\n", .{a.written()});

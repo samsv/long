@@ -79,10 +79,11 @@ pub const Compiler = struct {
         const atom = try expect(args[0], .atom);
         const literal = try expect(atom.kind, .literal);
         const id = try expect(literal, .identifier);
-        try c.globals.add(gpa, id);
 
         try c.compile(gpa, args[1], vm);
         try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_global), line);
+
+        try c.globals.add(gpa, id);
     }
 
     fn compileOperator(
@@ -174,7 +175,7 @@ test "if" {
 
     const test_cases = [_]struct { []const u8, Value }{
         .{ "x = 5", .{ .number = 5 } },
-        .{ "if x = 8.5 do x", .{ .number = 8.5 } },
+        .{ "y = if x = 8.5 do x", .{ .number = 8.5 } },
         .{ "1", .{ .number = 1 } },
         .{ "5 * 2.5", .{ .number = 12.5 } },
         .{ "8 / 2", .{ .number = 4 } },
