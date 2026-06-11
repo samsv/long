@@ -41,7 +41,12 @@ pub fn main(init: std.process.Init) !void {
             // this will fail at runtime, as k is not a global.
         \\y = if x = true do
         \\    k = 5
-        \\    k + 1
+        \\    l = if k do
+        \\        k + 4
+        \\    else
+        \\        k - 4
+        \\    end
+        \\    l + 2
         \\else
         \\    z = 5 + 1
         \\    z
@@ -79,7 +84,5 @@ pub fn main(init: std.process.Init) !void {
         _ = a.writer.consumeAll();
         try vm.printGlobals(&a.writer);
         std.debug.print("{s}\n", .{a.written()});
-
-
     }
 }
