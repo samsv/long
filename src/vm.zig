@@ -109,6 +109,12 @@ pub const VM = struct {
                     try writer.print(" offset {}\n", .{offset});
                     i += 3;
                 },
+                .pop_local => {
+                    try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
+                    const index = vm.chunk.bytecode.items[i + 1];
+                    try writer.print(" n {}\n", .{index});
+                    i += 2;
+                },
                 .load_constant, .get_global, .get_local => {
                     try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
                     const index = vm.chunk.bytecode.items[i + 1];
@@ -211,6 +217,12 @@ pub const VM = struct {
         vm.ip += 1;
     }
 
+    fn popLocal(vm: *VM) void {
+        const index = vm.chunk.bytecode.items[vm.ip + 1];
+        vm.chunk.locals.items.len -= index;
+        vm.ip += 1;
+    }
+
     pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {
         while (vm.ip < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
@@ -220,6 +232,7 @@ pub const VM = struct {
                 .get_global => vm.getGlobal(gpa),
                 .set_local => vm.setLocal(gpa),
                 .get_local => vm.getLocal(gpa),
+                .pop_local => vm.popLocal(),
                 .load_constant => vm.loadConstant(gpa),
                 .jump => vm.jump(),
                 .jump_if_false => vm.jumpIfFalse(),
@@ -240,6 +253,7 @@ pub const VM = struct {
         get_global,
         set_local,
         get_local,
+        pop_local,
         load_constant,
         negate,
         pop,

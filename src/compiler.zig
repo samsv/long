@@ -166,8 +166,11 @@ pub const Compiler = struct {
         c.locals = local;
     }
 
-    fn deinitScope(c: *Compiler, gpa: std.mem.Allocator) void {
+    fn deinitScope(c: *Compiler, gpa: std.mem.Allocator, vm: *VM) !void {
         var local = c.locals orelse return;
+
+        const n: u8 = @intCast(local.name_indexes.count());
+        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.pop_local), n, 0);
 
         c.locals = local.next;
         local.deinit(gpa);
@@ -177,7 +180,7 @@ pub const Compiler = struct {
     fn compileIf(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
         // cond
         try c.initScope(gpa);
-        defer c.deinitScope(gpa);
+        defer c.deinitScope(gpa, vm) catch unreachable;
 
         try c.compile(gpa, args[0], vm);
 
@@ -200,7 +203,7 @@ pub const Compiler = struct {
 
     fn compileDo(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
         try c.initScope(gpa);
-        defer c.deinitScope(gpa);
+        defer c.deinitScope(gpa, vm) catch unreachable;
 
         for (args, 0..) |s, i| {
             try c.compile(gpa, s, vm);
