@@ -5,16 +5,19 @@ pub const Chunk = struct {
     bytecode: std.ArrayList(u8),
     lines: std.ArrayList(usize),
     constants: std.ArrayList(Value),
+    locals: std.ArrayList(Value),
 
     pub const empty: Chunk = .{
         .bytecode = .empty,
         .lines = .empty,
         .constants = .empty,
+        .locals = .empty,
     };
 
     pub fn deinit(chunk: *Chunk, gpa: std.mem.Allocator) void {
         chunk.bytecode.deinit(gpa);
         chunk.constants.deinit(gpa);
+        chunk.locals.deinit(gpa);
         chunk.lines.deinit(gpa);
     }
 };
@@ -65,15 +68,29 @@ pub const VM = struct {
         return low + high;
     }
 
-    pub fn printStack(vm: VM, writer: *std.Io.Writer) !void {
-        try writer.writeAll("===== Stack =====\n");
+    fn printSlice(slice: []const Value, writer: *std.Io.Writer) !void {
         try writer.writeByte('[');
-        for (vm.stack.items, 0..) |value, i| {
+        for (slice, 0..) |value, i| {
             try value.print(writer);
-            if (i < vm.stack.items.len - 1)
+            if (i < slice.len - 1)
                 try writer.writeAll(", ");
         }
         try writer.writeByte(']');
+    }
+
+    pub fn printStack(vm: VM, writer: *std.Io.Writer) !void {
+        try writer.writeAll("===== Stack =====\n");
+        try printSlice(vm.stack.items, writer);
+    }
+
+    pub fn printLocals(vm: VM, writer: *std.Io.Writer) !void {
+        try writer.writeAll("===== Locals =====\n");
+        try printSlice(vm.chunk.locals.items, writer);
+    }
+
+    pub fn printGlobals(vm: VM, writer: *std.Io.Writer) !void {
+        try writer.writeAll("===== Globals =====\n");
+        try printSlice(vm.globals.items, writer);
     }
 
     pub fn printInstructions(vm: VM, writer: *std.Io.Writer) !void {
@@ -82,7 +99,7 @@ pub const VM = struct {
         while (i < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[i]);
             switch (instruction) {
-                .add, .sub, .mul, .div, .negate, .set_global, .pop => {
+                .add, .sub, .mul, .div, .negate, .set_global, .set_local, .pop => {
                     try writer.print("{} [ {s} ]\n", .{i, @tagName(instruction)});
                     i += 1;
                 },
@@ -92,7 +109,7 @@ pub const VM = struct {
                     try writer.print(" offset {}\n", .{offset});
                     i += 3;
                 },
-                .load_constant, .get_global => {
+                .load_constant, .get_global, .get_local => {
                     try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
                     const index = vm.chunk.bytecode.items[i + 1];
                     try writer.print(" index {}\n", .{index});
@@ -134,7 +151,10 @@ pub const VM = struct {
                 },
                 else => return error.InvalidArguments,
             },
-            else => return error.InvalidArguments,
+            else => {
+                std.log.err("Can not {s} {} with {}\n", .{@tagName(op), v1, v2});
+                return error.InvalidArguments;
+            },
         };
 
         vm.stack.appendAssumeCapacity(v);
@@ -165,9 +185,8 @@ pub const VM = struct {
     }
 
     fn setGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
-        const v = vm.stack.pop().?;
+        const v = vm.stack.getLast();
         try vm.globals.append(gpa, v);
-        try vm.stack.append(gpa, v);
     }
 
     fn getGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
@@ -180,6 +199,18 @@ pub const VM = struct {
         vm.ip += 1;
     }
 
+    fn setLocal(vm: *VM, gpa: std.mem.Allocator) !void {
+        const v = vm.stack.getLast();
+        try vm.chunk.locals.append(gpa, v);
+    }
+
+    fn getLocal(vm: *VM, gpa: std.mem.Allocator) !void {
+        const i = vm.chunk.bytecode.items[vm.ip + 1];
+        const v = vm.chunk.locals.items[i];
+        try vm.stack.append(gpa, v);
+        vm.ip += 1;
+    }
+
     pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {
         while (vm.ip < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
@@ -187,6 +218,8 @@ pub const VM = struct {
                 .add, .sub, .mul, .div => vm.mathOp(instruction),
                 .set_global => vm.setGlobal(gpa),
                 .get_global => vm.getGlobal(gpa),
+                .set_local => vm.setLocal(gpa),
+                .get_local => vm.getLocal(gpa),
                 .load_constant => vm.loadConstant(gpa),
                 .jump => vm.jump(),
                 .jump_if_false => vm.jumpIfFalse(),
@@ -205,6 +238,8 @@ pub const VM = struct {
         div,
         set_global,
         get_global,
+        set_local,
+        get_local,
         load_constant,
         negate,
         pop,

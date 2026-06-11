@@ -32,20 +32,61 @@ pub const Globals = struct {
     }
 };
 
+pub const Locals = struct {
+    name_indexes: std.StringArrayHashMapUnmanaged(usize),
+    next: ?*Locals,
+    offset: usize,
+
+    pub fn init(next: ?*Locals) Locals {
+        return .{
+            .name_indexes = .empty,
+            .next = next,
+            .offset = if (next) |n| n.name_indexes.count() + n.offset else 0,
+        };
+    }
+
+    pub fn deinit(l: *Locals, gpa: std.mem.Allocator) void {
+        l.name_indexes.deinit(gpa);
+    }
+
+    pub fn add(l: *Locals, gpa: std.mem.Allocator, id: []const u8) !void {
+        const idx = l.name_indexes.count();
+        const res = try l.name_indexes.getOrPutValue(gpa, id, idx);
+        if (res.found_existing)
+            return error.LocalRedefined;
+    }
+
+    pub fn get(l: Locals, id: []const u8) ?usize {
+        if (l.name_indexes.get(id)) |idx|
+            return idx + l.offset;
+
+        return if (l.next) |n| n.get(id) else return null;
+    }
+};
+
 pub const Compiler = struct {
     globals: Globals,
+    locals: ?*Locals,
 
     pub fn init() Compiler {
         return .{
             .globals = Globals.init(),
+            .locals = null,
         };
     }
 
     pub fn deinit(c: *Compiler, gpa: std.mem.Allocator) void {
         c.globals.deinit(gpa);
+        if (c.locals) |locals|
+            locals.deinit(gpa);
     }
 
     fn compileID(c: Compiler, gpa: std.mem.Allocator, id: []const u8, line: usize, vm: *VM) !void {
+        if (c.locals) |local| if (local.get(id)) |idx| {
+            try vm.addBytes(gpa, @intFromEnum(VM.Instructions.get_local), @intCast(idx), line);
+            return;
+        };
+
         const idx = try c.globals.get(id);
         try vm.addBytes(gpa, @intFromEnum(VM.Instructions.get_global), @intCast(idx), line);
     }
@@ -81,9 +122,15 @@ pub const Compiler = struct {
         const id = try expect(literal, .identifier);
 
         try c.compile(gpa, args[1], vm);
-        try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_global), line);
 
-        try c.globals.add(gpa, id);
+        if (c.locals) |local| {
+            try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
+            try local.add(gpa, id);
+        }
+        else {
+            try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_global), line);
+            try c.globals.add(gpa, id);
+        }
     }
 
     fn compileOperator(
@@ -113,8 +160,25 @@ pub const Compiler = struct {
         vm.patchJump(ji, @intCast(offset));
     }
 
+    fn initScope(c: *Compiler, gpa: std.mem.Allocator) !void {
+        const local = try gpa.create(Locals);
+        local.* = Locals.init(c.locals);
+        c.locals = local;
+    }
+
+    fn deinitScope(c: *Compiler, gpa: std.mem.Allocator) void {
+        var local = c.locals orelse return;
+
+        c.locals = local.next;
+        local.deinit(gpa);
+        gpa.destroy(local);
+    }
+
     fn compileIf(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
         // cond
+        try c.initScope(gpa);
+        defer c.deinitScope(gpa);
+
         try c.compile(gpa, args[0], vm);
 
         // true branch
@@ -135,6 +199,9 @@ pub const Compiler = struct {
     }
 
     fn compileDo(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
+        try c.initScope(gpa);
+        defer c.deinitScope(gpa);
+
         for (args, 0..) |s, i| {
             try c.compile(gpa, s, vm);
             if (i < args.len - 1)
@@ -187,16 +254,16 @@ test "if" {
 
     const test_cases = [_]struct { []const u8, Value }{
         .{ "x = 5", .{ .number = 5 } },
-        .{ "y = if x = 8.5 do x", .{ .number = 8.5 } },
+        .{ "y = if x = 8.5 do x end", .{ .number = 8.5 } },
         .{ "1", .{ .number = 1 } },
         .{ "5 * 2.5", .{ .number = 12.5 } },
         .{ "8 / 2", .{ .number = 4 } },
         .{ "3 / 2", .{ .number = 1.5 } },
         .{ "3 - 2", .{ .number = 1 } },
-        .{ "if 1 + 2 do 3 - 4 else 5 - 7", .{ .number = -1 } },
-        .{ "if nil do 3 - 4 else 5 - 7", .{ .number = -2 } },
-        .{ "if true do 3 - 4", .{ .number = -1 } },
-        .{ "if false do 3 - 4", .nil },
+        .{ "if 1 + 2 do 3 - 4 else 5 - 7 end", .{ .number = -1 } },
+        .{ "if nil do 3 - 4 else 5 - 7 end", .{ .number = -2 } },
+        .{ "if true do 3 - 4 end", .{ .number = -1 } },
+        .{ "if false do 3 - 4 end", .nil },
     };
 
     for (test_cases) |cs| {
