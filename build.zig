@@ -21,6 +21,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const pstruct = b.dependency("persistent_structures", .{}).module("pstruct");
+    mod.addImport("pstruct", pstruct);
+    exe.root_module.addImport("pstruct", pstruct);
+
     b.installArtifact(exe);
 
     const run_step = b.step("run", "Run the app");

@@ -6,6 +6,8 @@ const Scanner = zsv.scanner.Scanner;
 const parser = zsv.parser;
 const c = zsv.compiler;
 const vm_ = zsv.vm;
+const obj = zsv.obj;
+const Value = zsv.Value;
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
@@ -34,23 +36,32 @@ pub fn main(init: std.process.Init) !void {
     }
 
     {
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        var vec = try Value.initVec(alloc, gpa, &[_]Value{});
+        vec.deinit(gpa);
+    }
+
+    {
         var a: std.Io.Writer.Allocating = .init(gpa);
         defer a.deinit();
 
         var scanner = try Scanner.init(
             // this will fail at runtime, as k is not a global.
-        \\y = if x = true do
-        \\    k = 5
-        \\    l = if k do
-        \\        k + 4
-        \\    else
-        \\        k - 4
-        \\    end
-        \\    l + 2
-        \\else
-        \\    z = 5 + 1
-        \\    z
-        \\end
+            \\y = if x = true do
+            \\    k = 5
+            \\    l = if k do
+            \\        k + 4
+            \\    else
+            \\        k - 4
+            \\    end
+            \\    l + 2
+            \\else
+            \\    z = 5 + 1
+            \\    z
+            \\end
         );
 
         var sexpr = try parser.expr(gpa, &scanner, 0);

@@ -5,6 +5,8 @@ pub const parser = @import("parser.zig");
 pub const scanner = @import("scanner.zig");
 pub const compiler = @import("compiler.zig");
 pub const vm = @import("vm.zig");
+pub const obj = @import("object.zig");
+pub const Value = @import("value.zig").Value;
 
 /// This is a documentation comment to explain the `printAnotherMessage` function below.
 ///
