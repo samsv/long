@@ -7,6 +7,7 @@ pub const compiler = @import("compiler.zig");
 pub const vm = @import("vm.zig");
 pub const obj = @import("object.zig");
 pub const Value = @import("value.zig").Value;
+pub const List = @import("list.zig").List;
 
 /// This is a documentation comment to explain the `printAnotherMessage` function below.
 ///
@@ -27,4 +28,5 @@ test {
     _ = @import("parser.zig");
     _ = @import("scanner.zig");
     _ = @import("compiler.zig");
+    _ = @import("list.zig");
 }

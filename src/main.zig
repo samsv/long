@@ -23,6 +23,25 @@ pub fn main(init: std.process.Init) !void {
     const stdout_writer = &stdout_file_writer.interface;
 
     {
+        const MyList = zsv.List(u32);
+        var list = try MyList.init(gpa, &[_]u32{ 1, 2, 3 });
+        defer list.deinit(gpa);
+
+        var new_list_0 = try MyList.append(&list, gpa, 4);
+        defer new_list_0.deinit(gpa);
+
+        var new_list_1 = try MyList.append(&list, gpa, 5);
+        defer new_list_1.deinit(gpa);
+
+        var iter = MyList.Iterator.init(&new_list_0);
+        defer iter.deinit(gpa);
+
+        while (iter.next()) |v| {
+            std.debug.print("{}\n", .{v});
+        }
+    }
+
+    {
         var scanner = try Scanner.init("= ==( \"hello, world\") 1.25[5] , . |> \n_hello[man 你好");
         while (scanner.next() catch |err| {
             std.debug.print("{s}\n", .{scanner.err_ctx.?.reason});
