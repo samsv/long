@@ -6,9 +6,13 @@ pub fn List(comptime T: type) type {
         pub const Bucket = std.ArrayList(T);
 
         pub const LL = struct {
+            /// The bucket where data is located.
             bucket: RefCounter(Bucket).Ref,
+            /// The linked list tail.
             tail: ?Ref,
+            /// The bucket index where the LL starts. Counts backwards.
             start_index: usize,
+            /// This linked list node length.
             len: usize,
 
             pub fn deinit(ll: *LL, gpa: std.mem.Allocator) void {
@@ -18,6 +22,56 @@ pub fn List(comptime T: type) type {
                     tail.deinit(gpa);
             }
         };
+
+        const Ref = RefCounter(LL).Ref;
+        /// If an array has less than `copy_threshold` items, then a cloned LL will be used
+        const copy_threshold = 32;
+
+        pub fn initRaw(gpa: std.mem.Allocator, values: []const T) !LL {
+            var bucket: Bucket = .empty;
+            try bucket.appendSlice(gpa, values);
+
+            const bucket_ref = try RefCounter(Bucket).init(gpa, bucket);
+            const ll: LL = .{
+                .bucket = bucket_ref,
+                .tail = null,
+                .start_index = if (bucket.items.len > 0) bucket.items.len - 1 else 0,
+                .len = bucket.items.len,
+            };
+
+            return ll;
+        }
+
+        pub fn init(gpa: std.mem.Allocator, values: []const T) !Ref {
+            const ll = try initRaw(gpa, values);
+            return RefCounter(LL).init(gpa, ll);
+        }
+
+        pub fn initWithTail(gpa: std.mem.Allocator, values: []const T, tail: *Ref) !Ref {
+            var ll = try initRaw(gpa, values);
+            ll.tail = try tail.borrow();
+            return RefCounter(LL).init(gpa, ll);
+        }
+
+        pub fn append(ll_ref: *Ref, gpa: std.mem.Allocator, item: T) !Ref {
+            var ll = ll_ref.getPtr() catch unreachable;
+            var bucket = ll.bucket.getPtr() catch unreachable;
+
+            if (bucket.items.len - 1 != ll.start_index) {
+                // someone has already added data to the bucket
+                return try initWithTail(gpa, &[1]T{item}, ll_ref);
+            }
+
+            // we have space to append to the bucket
+            try bucket.append(gpa, item);
+            const new_ll: LL = .{
+                .bucket = ll.bucket.borrow() catch unreachable,
+                .tail = null,
+                .start_index = ll.start_index + 1,
+                .len = ll.len + 1,
+            };
+            return RefCounter(LL).init(gpa, new_ll);
+        }
 
         pub const Iterator = struct {
             root: Ref,
@@ -66,54 +120,6 @@ pub fn List(comptime T: type) type {
                 r.deinit(gpa);
             }
         };
-
-        const Ref = RefCounter(LL).Ref;
-
-        pub fn initRaw(gpa: std.mem.Allocator, values: []const T) !LL {
-            var bucket: Bucket = .empty;
-            try bucket.appendSlice(gpa, values);
-
-            const bucket_ref = try RefCounter(Bucket).init(gpa, bucket);
-            const ll: LL = .{
-                .bucket = bucket_ref,
-                .tail = null,
-                .start_index = if (bucket.items.len > 0) bucket.items.len - 1 else 0,
-                .len = bucket.items.len,
-            };
-
-            return ll;
-        }
-
-        pub fn init(gpa: std.mem.Allocator, values: []const T) !Ref {
-            const ll = try initRaw(gpa, values);
-            return RefCounter(LL).init(gpa, ll);
-        }
-
-        pub fn initWithTail(gpa: std.mem.Allocator, values: []const T, tail: *Ref) !Ref {
-            var ll = try initRaw(gpa, values);
-            ll.tail = try tail.borrow();
-            return RefCounter(LL).init(gpa, ll);
-        }
-
-        pub fn append(ll_ref: *Ref, gpa: std.mem.Allocator, item: T) !Ref {
-            var ll = ll_ref.getPtr() catch unreachable;
-            var bucket = ll.bucket.getPtr() catch unreachable;
-
-            if (bucket.items.len - 1 != ll.start_index) {
-                // someone has already added data to the bucket
-                return try initWithTail(gpa, &[1]T{item}, ll_ref);
-            }
-
-            // we have space to append to the bucket
-            try bucket.append(gpa, item);
-            const new_ll: LL = .{
-                .bucket = ll.bucket.borrow() catch unreachable,
-                .tail = null,
-                .start_index = ll.start_index + 1,
-                .len = ll.len + 1,
-            };
-            return RefCounter(LL).init(gpa, new_ll);
-        }
     };
 }
 
