@@ -59,14 +59,28 @@ pub fn List(comptime T: type) type {
 
             if (bucket.items.len - 1 != ll.start_index) {
                 // someone has already added data to the bucket
-                return try initWithTail(gpa, &[1]T{item}, ll_ref);
+                if (copy_threshold <= ll.len) {
+                    return try initWithTail(gpa, &[1]T{item}, ll_ref);
+                }
+
+                var new_bucket: Bucket = .empty;
+                try new_bucket.ensureTotalCapacity(gpa, bucket.items.len + 1);
+                new_bucket.appendSliceAssumeCapacity(bucket.items[bucket.items.len - ll.len - 1 .. ll.start_index + 1]);
+                new_bucket.appendAssumeCapacity(item);
+                const new_ll: LL = .{
+                    .bucket = try RefCounter(Bucket).init(gpa, new_bucket),
+                    .tail = ll.tail,
+                    .start_index = ll.start_index + 1,
+                    .len = ll.len + 1,
+                };
+                return RefCounter(LL).init(gpa, new_ll);
             }
 
             // we have space to append to the bucket
             try bucket.append(gpa, item);
             const new_ll: LL = .{
                 .bucket = ll.bucket.borrow() catch unreachable,
-                .tail = null,
+                .tail = ll.tail,
                 .start_index = ll.start_index + 1,
                 .len = ll.len + 1,
             };

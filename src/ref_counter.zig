@@ -39,6 +39,10 @@ pub fn RefCounter(comptime T: type) type {
                 return self.value.?.value;
             }
 
+            pub fn getPtrUnwrap(self: Ref) *T {
+                return &self.value.?.value;
+            }
+
             pub fn borrow(self: Ref) !Ref {
                 const value = self.value orelse return error.BorrowOfFreedReference;
                 return Ref{ .value = value._borrow() };
