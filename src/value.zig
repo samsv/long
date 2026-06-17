@@ -1,15 +1,11 @@
 const std = @import("std");
 
-const pstruct = @import("pstruct");
-const Vector = pstruct.AutoPVector;
-const RefCounter = pstruct.RefCounter;
 const Obj = @import("object.zig").Obj;
 
 pub const Value = union(enum) {
     number: f64,
     boolean: bool,
     nil,
-    obj: *RefCounter(Obj).Ref,
 
     pub const True: Value = .{ .boolean = true };
     pub const False: Value = .{ .boolean = false };
@@ -45,13 +41,5 @@ pub const Value = union(enum) {
             .nil => try writer.writeAll("nil"),
             inline else => |v| try writer.print("{}", .{v}),
         }
-    }
-
-    pub fn initVec(obj_allocator: std.mem.Allocator, gpa: std.mem.Allocator, items: []const Value) !Value {
-        const vec: Obj = .{ .vector = try Vector(Value).init(gpa, items) };
-
-        const obj = try obj_allocator.create(RefCounter(Obj).Ref);
-        obj.* = try RefCounter(Obj).init(gpa, vec);
-        return .{ .obj = obj };
     }
 };

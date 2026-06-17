@@ -36,15 +36,6 @@ pub fn main(init: std.process.Init) !void {
     }
 
     {
-        var arena: std.heap.ArenaAllocator = .init(gpa);
-        defer arena.deinit();
-        const alloc = arena.allocator();
-
-        var vec = try Value.initVec(alloc, gpa, &[_]Value{});
-        vec.deinit(gpa);
-    }
-
-    {
         var a: std.Io.Writer.Allocating = .init(gpa);
         defer a.deinit();
 

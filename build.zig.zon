@@ -3,12 +3,7 @@
     .fingerprint = 0x1b53caa828a993bb, // Changing this has security and trust implications.
     .version = "0.0.0",
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{
-        .persistent_structures = .{
-            .url = "https://codeberg.org/samsvp/zig-persistent-structures/archive/main.tar.gz",
-            .hash = "persistent_structures-0.0.0-7c72Z5LIAQCciSV66MEfO8q9Nz1wqjMSVQOH8eXqR3Qe",
-        },
-    },
+    .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",
