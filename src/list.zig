@@ -42,6 +42,21 @@ pub fn List(comptime T: type) type {
             return ll;
         }
 
+        fn initFromBucket(
+            gpa: std.mem.Allocator,
+            bucket: RefCounter(Bucket).Ref,
+            tail: ?Ref,
+            start_index: usize,
+            len: usize,
+        ) !Ref {
+            return try RefCounter(LL).init(gpa, .{
+                .bucket = bucket.borrow() catch unreachable,
+                .tail = if (tail) |t| t.borrow() catch unreachable else null,
+                .start_index = start_index,
+                .len = len,
+            });
+        }
+
         pub fn init(gpa: std.mem.Allocator, values: []const T) !Ref {
             const ll = try initRaw(gpa, values);
             return RefCounter(LL).init(gpa, ll);
@@ -53,38 +68,66 @@ pub fn List(comptime T: type) type {
             return RefCounter(LL).init(gpa, ll);
         }
 
-        pub fn append(ll_ref: *Ref, gpa: std.mem.Allocator, item: T) !Ref {
-            var ll = ll_ref.getPtr() catch unreachable;
-            var bucket = ll.bucket.getPtr() catch unreachable;
+        fn createBucket(gpa: std.mem.Allocator, values: []const T) !RefCounter(Bucket).Ref {
+            var new_bucket: Bucket = .empty;
+            try new_bucket.ensureTotalCapacity(gpa, values.len);
+            new_bucket.appendSliceAssumeCapacity(values);
 
-            if (bucket.items.len - 1 != ll.start_index) {
+            var bucket = try RefCounter(Bucket).init(gpa, new_bucket);
+            bucket.value.?.count = 0;
+            return bucket;
+        }
+
+        pub fn append(ll_ref: *Ref, gpa: std.mem.Allocator, item: T) !Ref {
+            const ll = ll_ref.getPtr() catch unreachable;
+            var bucket = ll.bucket;
+
+            if (bucket.getUnwrap().items.len - 1 != ll.start_index) {
                 // someone has already added data to the bucket
                 if (copy_threshold <= ll.len) {
                     return try initWithTail(gpa, &[1]T{item}, ll_ref);
                 }
 
-                var new_bucket: Bucket = .empty;
-                try new_bucket.ensureTotalCapacity(gpa, bucket.items.len + 1);
-                new_bucket.appendSliceAssumeCapacity(bucket.items[bucket.items.len - ll.len - 1 .. ll.start_index + 1]);
-                new_bucket.appendAssumeCapacity(item);
-                const new_ll: LL = .{
-                    .bucket = try RefCounter(Bucket).init(gpa, new_bucket),
-                    .tail = ll.tail,
-                    .start_index = ll.start_index + 1,
-                    .len = ll.len + 1,
-                };
-                return RefCounter(LL).init(gpa, new_ll);
+                const items = bucket.getUnwrap().items;
+                bucket = try createBucket(gpa, items[items.len - ll.len - 1 .. ll.start_index + 1]);
             }
 
             // we have space to append to the bucket
-            try bucket.append(gpa, item);
+            try bucket.getPtrUnwrap().append(gpa, item);
             const new_ll: LL = .{
-                .bucket = ll.bucket.borrow() catch unreachable,
-                .tail = ll.tail,
+                .bucket = bucket.borrow() catch unreachable,
+                .tail = if (ll.tail) |tail| tail.borrow() catch unreachable else null,
                 .start_index = ll.start_index + 1,
                 .len = ll.len + 1,
             };
             return RefCounter(LL).init(gpa, new_ll);
+        }
+
+        pub fn insert(ll_ref: *Ref, gpa: std.mem.Allocator, idx: usize, item: T) !Ref {
+            if (idx == 0) return append(ll_ref, gpa, item);
+
+            const ll = ll_ref.getUnwrap();
+            if (idx >= ll.len) {
+                var tail = ll.tail orelse return error.IndexOutOfRange;
+
+                const tail_ll = try insert(&tail, gpa, idx - ll.len, item);
+                const head_ll = LL{
+                    .bucket = ll.bucket.borrow() catch unreachable,
+                    .tail = tail_ll,
+                    .start_index = ll.start_index,
+                    .len = ll.len,
+                };
+                return RefCounter(LL).init(gpa, head_ll);
+            }
+
+            var tail_ll = try initFromBucket(gpa, ll.bucket, ll.tail, ll.len - idx - 1, idx - 1);
+            tail_ll.value.?.count = 0;
+
+            var item_ll = try initFromBucket(gpa, try createBucket(gpa, &[1]T{item}), tail_ll, 0, 1);
+            item_ll.value.?.count = 0;
+
+            const head_ll = try initFromBucket(gpa, ll.bucket, item_ll, ll.start_index, ll.len + 1 - idx);
+            return head_ll;
         }
 
         pub const Iterator = struct {
@@ -165,4 +208,37 @@ test "Append" {
 
     try std.testing.expect(equalsSlice(new_list_0, &[_]u32{ 4, 3, 2, 1 }));
     try std.testing.expect(equalsSlice(new_list_1, &[_]u32{ 5, 3, 2, 1 }));
+}
+
+test "Insert" {
+    const MyList = List(u32);
+    const equalsSlice = struct {
+        pub fn f(ll: MyList.Ref, slice: []const u32) bool {
+            var iter = MyList.Iterator.initNoBorrow(ll);
+
+            var i: usize = 0;
+            while (iter.next()) |v| : (i += 1) {
+                if (v != slice[i]) return false;
+            }
+
+            return i == slice.len;
+        }
+    }.f;
+    const gpa = std.testing.allocator;
+
+    var list = try MyList.init(gpa, &[_]u32{ 1, 2, 3 });
+    defer list.deinit(gpa);
+
+    var new_list_0 = try MyList.insert(&list, gpa, 2, 4);
+    defer new_list_0.deinit(gpa);
+
+    var new_list_1 = try MyList.insert(&new_list_0, gpa, 2, 5);
+    defer new_list_1.deinit(gpa);
+
+    var new_list_2 = try MyList.insert(&new_list_1, gpa, 0, 8);
+    defer new_list_2.deinit(gpa);
+
+    try std.testing.expect(equalsSlice(new_list_0, &[_]u32{ 3, 2, 4, 1 }));
+    try std.testing.expect(equalsSlice(new_list_1, &[_]u32{ 3, 2, 5, 4, 1 }));
+    try std.testing.expect(equalsSlice(new_list_2, &[_]u32{ 8, 3, 2, 5, 4, 1 }));
 }
