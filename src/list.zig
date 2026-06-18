@@ -144,7 +144,7 @@ pub fn List(comptime T: type) type {
             const ll = ll_ref.getUnwrap();
 
             if (idx == 0 and ll.len > 0)
-                return try tail(ll_ref, gpa);
+                return try tail(ll_ref, gpa) orelse try init(gpa, &[_]T{});
 
             if (idx >= ll.len) {
                 var ll_tail = ll.node_tail orelse return error.IndexOutOfRange;
