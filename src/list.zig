@@ -64,7 +64,10 @@ pub fn List(comptime T: type) type {
 
         pub fn initWithTail(gpa: std.mem.Allocator, values: []const T, ll_tail: *Ref) !Ref {
             var ll = try initRaw(gpa, values);
-            ll.node_tail = try ll_tail.borrow();
+            ll.node_tail = if (ll_tail.getUnwrap().len > 0)
+                try ll_tail.borrow()
+            else
+                null;
             return RefCounter(LL).init(gpa, ll);
         }
 
@@ -149,7 +152,15 @@ pub fn List(comptime T: type) type {
             if (idx >= ll.len) {
                 var ll_tail = ll.node_tail orelse return error.IndexOutOfRange;
 
-                const tail_ll = try delete_at(&ll_tail, gpa, idx - ll.len);
+                var tail_ll = try delete_at(&ll_tail, gpa, idx - ll.len);
+                if (tail_ll.getPtrUnwrap().len == 0) {
+                    defer tail_ll.deinit(gpa);
+                    const node_tail = if (tail_ll.getUnwrap().node_tail) |t|
+                        t.borrow() catch unreachable
+                    else
+                        null;
+                    return try initFromBucket(gpa, ll.bucket, node_tail, ll.start_index, ll.len);
+                }
                 return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
             }
 
@@ -179,7 +190,7 @@ pub fn List(comptime T: type) type {
 
             pub fn init(ll: *Ref) Iterator {
                 const b = ll.borrow() catch unreachable;
-                const current_ll = if (b.getUnwrap().len == 0) null else b;
+                const current_ll = if (b.getUnwrap().len > 0) b else null;
                 return .{
                     .root = b,
                     .ll = current_ll,
@@ -204,12 +215,7 @@ pub fn List(comptime T: type) type {
             }
 
             pub fn deinit(iter: *Iterator, gpa: std.mem.Allocator) void {
-                var r = &iter.root;
-                while ((r.getPtr() catch unreachable).node_tail) |*t| {
-                    r.deinit(gpa);
-                    r = t;
-                }
-                r.deinit(gpa);
+                iter.root.deinit(gpa);
             }
         };
 
