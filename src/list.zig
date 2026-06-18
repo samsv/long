@@ -109,10 +109,17 @@ pub fn List(comptime T: type) type {
 
             const ll = ll_ref.getUnwrap();
             if (idx >= ll.len) {
-                var ll_tail = ll.node_tail orelse return error.IndexOutOfRange;
+                if (idx > ll.len) {
+                    var ll_tail = ll.node_tail orelse return error.IndexOutOfRange;
 
-                const tail_ll = try insert_at(&ll_tail, gpa, idx - ll.len, item);
-                return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
+                    const tail_ll = try insert_at(&ll_tail, gpa, idx - ll.len, item);
+                    return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
+                } else {
+                    const ll_tail = if (ll.node_tail) |t| t.borrow() catch unreachable else null;
+                    const item_ll = try initFromBucket(gpa, try createBucket(gpa, &[1]T{item}), ll_tail, 0, 1);
+                    const head_ll = try initFromBucket(gpa, ll.bucket, item_ll, ll.start_index, idx);
+                    return head_ll;
+                }
             }
 
             const ll_tail = if (ll.node_tail) |t| t.borrow() catch unreachable else null;
@@ -124,6 +131,8 @@ pub fn List(comptime T: type) type {
 
         pub fn tail(ll_ref: *Ref, gpa: std.mem.Allocator) !?Ref {
             const ll = ll_ref.getUnwrap();
+            if (ll.len == 0) return null;
+
             const node_tail = if (ll.node_tail) |t| t.borrow() catch unreachable else null;
             return if (ll.len == 1)
                 node_tail
@@ -132,9 +141,11 @@ pub fn List(comptime T: type) type {
         }
 
         pub fn delete_at(ll_ref: *Ref, gpa: std.mem.Allocator, idx: usize) !Ref {
-            if (idx == 0) return try tail(ll_ref, gpa) orelse error.IndexOutOfRange;
-
             const ll = ll_ref.getUnwrap();
+
+            if (idx == 0 and ll.len > 0)
+                return try tail(ll_ref, gpa);
+
             if (idx >= ll.len) {
                 var ll_tail = ll.node_tail orelse return error.IndexOutOfRange;
 
@@ -143,7 +154,7 @@ pub fn List(comptime T: type) type {
             }
 
             const node_tail = if (ll.node_tail) |t| t.borrow() catch unreachable else null;
-            const tail_ll = if (ll.len > idx)
+            const tail_ll = if (ll.len > idx + 1)
                 try initFromBucket(gpa, ll.bucket, node_tail, ll.start_index - idx - 1, ll.len - idx - 1)
             else
                 node_tail;
@@ -158,9 +169,10 @@ pub fn List(comptime T: type) type {
             current: usize,
 
             pub fn initNoBorrow(ll: Ref) Iterator {
+                const current_ll = if (ll.getUnwrap().len > 0) ll else null;
                 return .{
                     .root = ll,
-                    .ll = ll,
+                    .ll = current_ll,
                     .current = ll.getUnwrap().start_index,
                 };
             }
@@ -221,14 +233,36 @@ test "Append" {
     var list = try MyList.init(gpa, &[_]u32{ 1, 2, 3 });
     defer list.deinit(gpa);
 
+    var empty = try MyList.init(gpa, &[_]u32{});
+    defer empty.deinit(gpa);
+
+    var single = try MyList.init(gpa, &[_]u32{7});
+    defer single.deinit(gpa);
+
     var new_list_0 = try MyList.append(&list, gpa, 4);
     defer new_list_0.deinit(gpa);
 
-    var new_list_1 = try MyList.append(&list, gpa, 5);
+    var new_list_1 = try MyList.append(&new_list_0, gpa, 6);
     defer new_list_1.deinit(gpa);
 
+    var new_list_2 = try MyList.append(&list, gpa, 5);
+    defer new_list_2.deinit(gpa);
+
+    var new_list_3 = try MyList.append(&list, gpa, 9);
+    defer new_list_3.deinit(gpa);
+
+    var new_list_4 = try MyList.append(&empty, gpa, 1);
+    defer new_list_4.deinit(gpa);
+
+    var new_list_5 = try MyList.append(&single, gpa, 8);
+    defer new_list_5.deinit(gpa);
+
     try std.testing.expect(MyList.equalsSlice(new_list_0, &[_]u32{ 4, 3, 2, 1 }));
-    try std.testing.expect(MyList.equalsSlice(new_list_1, &[_]u32{ 5, 3, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_1, &[_]u32{ 6, 4, 3, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_2, &[_]u32{ 5, 3, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_3, &[_]u32{ 9, 3, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_4, &[_]u32{1}));
+    try std.testing.expect(MyList.equalsSlice(new_list_5, &[_]u32{ 8, 7 }));
 }
 
 test "Insert" {
@@ -238,30 +272,53 @@ test "Insert" {
     var list = try MyList.init(gpa, &[_]u32{ 1, 2, 3 });
     defer list.deinit(gpa);
 
-    var new_list_0 = try MyList.insert_at(&list, gpa, 2, 4);
+    var new_list_0 = try MyList.insert_at(&list, gpa, 0, 9);
     defer new_list_0.deinit(gpa);
 
-    var new_list_1 = try MyList.insert_at(&new_list_0, gpa, 2, 5);
+    var new_list_1 = try MyList.insert_at(&list, gpa, 1, 9);
     defer new_list_1.deinit(gpa);
 
-    var new_list_2 = try MyList.insert_at(&new_list_1, gpa, 0, 8);
+    var new_list_2 = try MyList.insert_at(&list, gpa, 2, 9);
     defer new_list_2.deinit(gpa);
 
-    var new_list_3 = try MyList.insert_at(&new_list_1, gpa, 0, 7);
+    var new_list_3 = try MyList.insert_at(&new_list_2, gpa, 3, 7);
     defer new_list_3.deinit(gpa);
 
-    try std.testing.expect(MyList.equalsSlice(new_list_0, &[_]u32{ 3, 2, 4, 1 }));
-    try std.testing.expect(MyList.equalsSlice(new_list_1, &[_]u32{ 3, 2, 5, 4, 1 }));
-    try std.testing.expect(MyList.equalsSlice(new_list_2, &[_]u32{ 8, 3, 2, 5, 4, 1 }));
-    try std.testing.expect(MyList.equalsSlice(new_list_3, &[_]u32{ 7, 3, 2, 5, 4, 1 }));
+    var new_list_4 = try MyList.insert_at(&new_list_2, gpa, 1, 5);
+    defer new_list_4.deinit(gpa);
+
+    var new_list_5 = try MyList.insert_at(&list, gpa, 3, 0);
+    defer new_list_5.deinit(gpa);
+
+    try std.testing.expect(MyList.equalsSlice(new_list_0, &[_]u32{ 9, 3, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_1, &[_]u32{ 3, 9, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_2, &[_]u32{ 3, 2, 9, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_3, &[_]u32{ 3, 2, 9, 7, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_4, &[_]u32{ 3, 5, 2, 9, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_5, &[_]u32{ 3, 2, 1, 0 }));
 }
 
 test "remove" {
     const MyList = List(u32);
     const gpa = std.testing.allocator;
 
-    var list = try MyList.init(gpa, &[_]u32{ 1, 2, 3 });
+    var list = try MyList.init(gpa, &[_]u32{ 1, 2, 3, 4, 5 });
     defer list.deinit(gpa);
+
+    var single = try MyList.init(gpa, &[_]u32{7});
+    defer single.deinit(gpa);
+
+    var head = try MyList.init(gpa, &[_]u32{ 1, 2, 3 });
+    defer head.deinit(gpa);
+
+    var head_list = try MyList.initWithTail(gpa, &[_]u32{9}, &head);
+    defer head_list.deinit(gpa);
+
+    var tail_node = try MyList.init(gpa, &[_]u32{9});
+    defer tail_node.deinit(gpa);
+
+    var tail_list = try MyList.initWithTail(gpa, &[_]u32{ 1, 2, 3 }, &tail_node);
+    defer tail_list.deinit(gpa);
 
     var new_list_0 = try MyList.delete_at(&list, gpa, 0);
     defer new_list_0.deinit(gpa);
@@ -269,10 +326,70 @@ test "remove" {
     var new_list_1 = try MyList.delete_at(&list, gpa, 1);
     defer new_list_1.deinit(gpa);
 
-    var new_list_2 = try MyList.delete_at(&new_list_1, gpa, 0);
+    var new_list_2 = try MyList.delete_at(&list, gpa, 2);
     defer new_list_2.deinit(gpa);
 
-    try std.testing.expect(MyList.equalsSlice(new_list_0, &[_]u32{ 2, 1 }));
-    try std.testing.expect(MyList.equalsSlice(new_list_1, &[_]u32{ 3, 1 }));
-    try std.testing.expect(MyList.equalsSlice(new_list_2, &[_]u32{ 1 }));
+    var new_list_3 = try MyList.delete_at(&list, gpa, 3);
+    defer new_list_3.deinit(gpa);
+
+    var new_list_4 = try MyList.delete_at(&new_list_2, gpa, 2);
+    defer new_list_4.deinit(gpa);
+
+    var new_list_5 = try MyList.delete_at(&list, gpa, 4);
+    defer new_list_5.deinit(gpa);
+
+    var new_list_6 = try MyList.delete_at(&head_list, gpa, 0);
+    defer new_list_6.deinit(gpa);
+
+    var new_list_7 = try MyList.delete_at(&tail_list, gpa, 3);
+    defer new_list_7.deinit(gpa);
+
+    var new_list_8 = try MyList.delete_at(&single, gpa, 0);
+    defer new_list_8.deinit(gpa);
+
+    try std.testing.expect(MyList.equalsSlice(new_list_0, &[_]u32{ 4, 3, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_1, &[_]u32{ 5, 3, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_2, &[_]u32{ 5, 4, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_3, &[_]u32{ 5, 4, 3, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_4, &[_]u32{ 5, 4, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_5, &[_]u32{ 5, 4, 3, 2 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_6, &[_]u32{ 3, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_7, &[_]u32{ 3, 2, 1 }));
+    try std.testing.expect(MyList.equalsSlice(new_list_8, &[_]u32{}));
+}
+
+test "Empty" {
+    const MyList = List(u32);
+    const gpa = std.testing.allocator;
+
+    var list = try MyList.init(gpa, &[_]u32{});
+    defer list.deinit(gpa);
+
+    var new_list_0 = try MyList.append(&list, gpa, 1);
+    defer new_list_0.deinit(gpa);
+
+    var new_list_1 = try MyList.insert_at(&list, gpa, 0, 5);
+    defer new_list_1.deinit(gpa);
+
+    try std.testing.expect(MyList.equalsSlice(list, &[_]u32{}));
+    try std.testing.expect(MyList.equalsSlice(new_list_0, &[_]u32{1}));
+    try std.testing.expect(MyList.equalsSlice(new_list_1, &[_]u32{5}));
+    try std.testing.expectError(error.IndexOutOfRange, MyList.insert_at(&list, gpa, 2, 9));
+    try std.testing.expectError(error.IndexOutOfRange, MyList.delete_at(&list, gpa, 0));
+}
+
+test "tail" {
+    const MyList = List(u32);
+    const gpa = std.testing.allocator;
+
+    var empty = try MyList.init(gpa, &[_]u32{});
+    defer empty.deinit(gpa);
+
+    var list = try MyList.initWithTail(gpa, &[_]u32{ 1, 2, 3 }, &empty);
+    defer list.deinit(gpa);
+
+    const empty_tail = try MyList.tail(&empty, gpa);
+
+    try std.testing.expect(MyList.equalsSlice(list, &[_]u32{ 3, 2, 1 }));
+    try std.testing.expect(empty_tail == null);
 }
