@@ -117,6 +117,26 @@ pub fn List(comptime T: type) type {
             return try initFromBucket(gpa, bucket_ref, node_tail, bucket_ref.getUnwrap().items.len - 1, ll.len + 1);
         }
 
+        pub fn get(self: Self, i: usize) ?T {
+            const list = self.list.getUnwrap();
+            return if (i < list.len)
+                list.bucket.getUnwrap().items[list.start_index - i]
+            else if (list.node_tail) |t|
+                t.get(i - list.len)
+            else
+                null;
+        }
+
+        pub fn getPtr(self: Self, i: usize) ?*T {
+            const list = self.list.getUnwrap();
+            return if (i < list.len)
+                &list.bucket.getUnwrap().items[list.start_index - i]
+            else if (list.node_tail) |t|
+                t.getPtr(i - list.len)
+            else
+                null;
+        }
+
         pub fn append(self: *Self, gpa: std.mem.Allocator, item: T) !Self {
             const ll = self.list.getPtr() catch unreachable;
             var bucket_ref = ll.bucket;
@@ -202,6 +222,11 @@ pub fn List(comptime T: type) type {
             return try initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
         }
 
+        pub fn count(self: Self) usize {
+            const list = self.list.getUnwrap();
+            return list.len + if (list.node_tail) |t| t.count() else 0;
+        }
+
         pub const Iterator = struct {
             root: Self,
             ll: ?Self,
@@ -258,6 +283,31 @@ pub fn List(comptime T: type) type {
             return i == slice.len;
         }
     };
+}
+
+test "Get" {
+    const MyList = List(u32);
+    const gpa = std.testing.allocator;
+
+    var list = try MyList.init(gpa, &[_]u32{ 1, 2, 3 });
+    defer list.deinit(gpa);
+
+    var new_list_0 = try list.append(gpa, 4);
+    defer new_list_0.deinit(gpa);
+
+    var new_list_1 = try new_list_0.append(gpa, 6);
+    defer new_list_1.deinit(gpa);
+
+    var new_list_2 = try list.append(gpa, 5);
+    defer new_list_2.deinit(gpa);
+
+    var new_list_3 = try list.append(gpa, 9);
+    defer new_list_3.deinit(gpa);
+
+    try std.testing.expectEqual(list.get(0), 3);
+    try std.testing.expectEqual(list.getPtr(0).?.*, 3);
+    try std.testing.expectEqual(new_list_3.get(0), 9);
+    try std.testing.expectEqual(list.get(2), 1);
 }
 
 test "Append" {
