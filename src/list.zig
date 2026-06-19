@@ -188,11 +188,10 @@ pub fn List(comptime T: type) type {
                 var tail_ll = try delete_at(&ll_tail, gpa, idx - ll.len);
                 if (tail_ll.list.getPtrUnwrap().len == 0) {
                     defer tail_ll.deinit(gpa);
-                    var node_tail = borrow(tail_ll.list.getUnwrap().node_tail);
-                    errdefer if (node_tail) |*t| t.deinit(gpa);
-                    return try initFromBucket(gpa, ll.bucket, node_tail, ll.start_index, ll.len);
+                    return try initFromBucket(gpa, ll.bucket, null, ll.start_index, ll.len);
                 }
 
+                errdefer tail_ll.deinit(gpa);
                 return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
             }
 
@@ -469,6 +468,15 @@ test "allocation failures" {
             defer b1.deinit(gpa);
             var b2 = b0.append(gpa, 200) catch break :blk false;
             defer b2.deinit(gpa);
+
+            var japp = joined.append(gpa, 1) catch break :blk false;
+            defer japp.deinit(gpa);
+            var tn3 = L.init(gpa, &[_]u32{ 6, 7, 8 }) catch break :blk false;
+            defer tn3.deinit(gpa);
+            var j3 = L.initWithTail(gpa, &[_]u32{ 1, 2, 3 }, &tn3) catch break :blk false;
+            defer j3.deinit(gpa);
+            var d3 = j3.delete_at(gpa, 4) catch break :blk false;
+            defer d3.deinit(gpa);
 
             break :blk true;
         };
