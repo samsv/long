@@ -186,8 +186,6 @@ pub fn List(comptime T: type) type {
                 var ll_tail = ll.node_tail orelse return error.IndexOutOfRange;
 
                 var tail_ll = try delete_at(&ll_tail, gpa, idx - ll.len);
-                errdefer tail_ll.deinit(gpa);
-
                 if (tail_ll.list.getPtrUnwrap().len == 0) {
                     defer tail_ll.deinit(gpa);
                     var node_tail = borrow(tail_ll.list.getUnwrap().node_tail);
@@ -429,4 +427,52 @@ test "tail" {
 
     try std.testing.expect(list.equalsSlice(&[_]u32{ 3, 2, 1 }));
     try std.testing.expect(empty_tail == null);
+}
+
+test "allocation failures" {
+    const L = List(u32);
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        var fa = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        const gpa = fa.allocator();
+
+        const completed = blk: {
+            var l0 = L.init(gpa, &[_]u32{ 1, 2, 3 }) catch break :blk false;
+            defer l0.deinit(gpa);
+            var l1 = l0.append(gpa, 4) catch break :blk false;
+            defer l1.deinit(gpa);
+            var l2 = l0.append(gpa, 5) catch break :blk false;
+            defer l2.deinit(gpa);
+            var l3 = l1.insert_at(gpa, 2, 9) catch break :blk false;
+            defer l3.deinit(gpa);
+            var l4 = l3.delete_at(gpa, 1) catch break :blk false;
+            defer l4.deinit(gpa);
+            var l5 = l3.delete_at(gpa, 0) catch break :blk false;
+            defer l5.deinit(gpa);
+
+            var tn = L.init(gpa, &[_]u32{9}) catch break :blk false;
+            defer tn.deinit(gpa);
+            var joined = L.initWithTail(gpa, &[_]u32{ 1, 2, 3 }, &tn) catch break :blk false;
+            defer joined.deinit(gpa);
+            var ins = joined.insert_at(gpa, 4, 7) catch break :blk false;
+            defer ins.deinit(gpa);
+            var col = joined.delete_at(gpa, 3) catch break :blk false;
+            defer col.deinit(gpa);
+            var t = (joined.tail(gpa) catch break :blk false) orelse break :blk false;
+            defer t.deinit(gpa);
+
+            var big: [40]u32 = undefined;
+            for (&big, 0..) |*x, i| x.* = @intCast(i);
+            var b0 = L.init(gpa, &big) catch break :blk false;
+            defer b0.deinit(gpa);
+            var b1 = b0.append(gpa, 100) catch break :blk false;
+            defer b1.deinit(gpa);
+            var b2 = b0.append(gpa, 200) catch break :blk false;
+            defer b2.deinit(gpa);
+
+            break :blk true;
+        };
+
+        if (completed) break;
+    }
 }
