@@ -1,5 +1,5 @@
 const std = @import("std");
-const RefCounter = @import("ref_counter.zig").RefCounter;
+const RC = @import("ref_counter.zig").RC;
 
 pub fn List(comptime T: type) type {
     return struct {
@@ -7,9 +7,9 @@ pub fn List(comptime T: type) type {
 
         pub const LL = struct {
             /// The bucket where data is located.
-            bucket: RefCounter(Bucket).Ref,
+            bucket: RC(Bucket),
             /// The linked list tail.
-            node_tail: ?Ref,
+            node_tail: ?RC(LL),
             /// The bucket index where the LL starts. Counts backwards.
             start_index: usize,
             /// This linked list node length.
@@ -23,15 +23,15 @@ pub fn List(comptime T: type) type {
             }
         };
 
-        const Ref = RefCounter(LL).Ref;
         /// If an array has less than `copy_threshold` items, then a cloned LL will be used
         const copy_threshold = 32;
 
         pub fn initRaw(gpa: std.mem.Allocator, values: []const T) !LL {
             var bucket: Bucket = .empty;
             try bucket.appendSlice(gpa, values);
+            errdefer bucket.deinit(gpa);
 
-            const bucket_ref = try RefCounter(Bucket).init(gpa, bucket);
+            const bucket_ref = try RC(Bucket).init(gpa, bucket);
             const ll: LL = .{
                 .bucket = bucket_ref,
                 .node_tail = null,
@@ -44,48 +44,74 @@ pub fn List(comptime T: type) type {
 
         fn initFromBucket(
             gpa: std.mem.Allocator,
-            bucket: RefCounter(Bucket).Ref,
-            ll_tail: ?Ref,
+            bucket: RC(Bucket),
+            ll_tail: ?RC(LL),
             start_index: usize,
             len: usize,
-        ) !Ref {
-            return try RefCounter(LL).init(gpa, .{
-                .bucket = bucket.borrow() catch unreachable,
+        ) !RC(LL) {
+            var b = bucket.borrow() catch unreachable;
+            errdefer b.deinit(gpa);
+
+            return try RC(LL).init(gpa, .{
+                .bucket = b,
                 .node_tail = ll_tail,
                 .start_index = start_index,
                 .len = len,
             });
         }
 
-        pub fn init(gpa: std.mem.Allocator, values: []const T) !Ref {
-            const ll = try initRaw(gpa, values);
-            return RefCounter(LL).init(gpa, ll);
+        pub fn init(gpa: std.mem.Allocator, values: []const T) !RC(LL) {
+            var ll = try initRaw(gpa, values);
+            errdefer ll.deinit(gpa);
+            return try RC(LL).init(gpa, ll);
         }
 
-        pub fn initWithTail(gpa: std.mem.Allocator, values: []const T, ll_tail: *Ref) !Ref {
+        pub fn initWithTail(gpa: std.mem.Allocator, values: []const T, ll_tail: *RC(LL)) !RC(LL) {
             var ll = try initRaw(gpa, values);
+            errdefer ll.deinit(gpa);
+
             ll.node_tail = if (ll_tail.getUnwrap().len > 0)
                 try ll_tail.borrow()
             else
                 null;
-            return RefCounter(LL).init(gpa, ll);
+
+            return try RC(LL).init(gpa, ll);
         }
 
-        fn createBucket(gpa: std.mem.Allocator, values: []const T) !RefCounter(Bucket).Ref {
+        fn borrow(ll_ref: ?RC(LL)) ?RC(LL) {
+            return if (ll_ref) |t|
+                t.borrow() catch unreachable
+            else
+                null;
+        }
+
+        fn createBucketWithCapacity(gpa: std.mem.Allocator, values: []const T, capacity: usize) !RC(Bucket) {
             var new_bucket: Bucket = .empty;
-            try new_bucket.ensureTotalCapacity(gpa, values.len);
+            try new_bucket.ensureTotalCapacity(gpa, capacity);
+            errdefer new_bucket.deinit(gpa);
+
             new_bucket.appendSliceAssumeCapacity(values);
 
-            var bucket = try RefCounter(Bucket).init(gpa, new_bucket);
+            var bucket = try RC(Bucket).init(gpa, new_bucket);
             bucket.value.?.count = 0;
             return bucket;
         }
 
-        pub fn append(ll_ref: *Ref, gpa: std.mem.Allocator, item: T) !Ref {
+        fn createBucket(gpa: std.mem.Allocator, values: []const T) !RC(Bucket) {
+            return createBucketWithCapacity(gpa, values, values.len);
+        }
+
+        fn appendAssumeCapacity(ll: *LL, gpa: std.mem.Allocator, bucket_ref: RC(Bucket)) !RC(LL) {
+            var node_tail = borrow(ll.node_tail);
+            errdefer if (node_tail) |*t| t.deinit(gpa);
+            return try initFromBucket(gpa, bucket_ref, node_tail, bucket_ref.getUnwrap().items.len - 1, ll.len + 1);
+        }
+
+        pub fn append(ll_ref: *RC(LL), gpa: std.mem.Allocator, item: T) !RC(LL) {
             const ll = ll_ref.getPtr() catch unreachable;
             var bucket_ref = ll.bucket;
 
-            const bucket = bucket_ref.getUnwrap();
+            var bucket = bucket_ref.getPtrUnwrap();
             if (bucket.items.len > 0 and bucket.items.len - 1 != ll.start_index) {
                 // someone has already added data to the bucket
                 if (copy_threshold <= ll.len) {
@@ -93,93 +119,88 @@ pub fn List(comptime T: type) type {
                 }
 
                 const items = bucket_ref.getUnwrap().items;
-                bucket_ref = try createBucket(gpa, items[ll.start_index + 1 - ll.len .. ll.start_index + 1]);
+                const copy_slice = items[ll.start_index + 1 - ll.len .. ll.start_index + 1];
+                bucket_ref = try createBucketWithCapacity(gpa, copy_slice, copy_slice.len + 1);
+                bucket_ref.getPtrUnwrap().appendAssumeCapacity(item);
+                return try appendAssumeCapacity(ll, gpa, bucket_ref);
             }
 
             // we have space to append to the bucket
-            try bucket_ref.getPtrUnwrap().append(gpa, item);
-            const new_ll: LL = .{
-                .bucket = bucket_ref.borrow() catch unreachable,
-                .node_tail = if (ll.node_tail) |t| t.borrow() catch unreachable else null,
-                .start_index = bucket_ref.getUnwrap().items.len - 1,
-                .len = ll.len + 1,
-            };
-            return RefCounter(LL).init(gpa, new_ll);
+            try bucket.append(gpa, item);
+            errdefer _ = bucket.pop();
+
+            return try appendAssumeCapacity(ll, gpa, bucket_ref);
         }
 
-        pub fn insert_at(ll_ref: *Ref, gpa: std.mem.Allocator, idx: usize, item: T) !Ref {
+        pub fn insert_at(ll_ref: *RC(LL), gpa: std.mem.Allocator, idx: usize, item: T) !RC(LL) {
             if (idx == 0) return append(ll_ref, gpa, item);
 
             const ll = ll_ref.getUnwrap();
-            if (idx >= ll.len) {
-                if (idx > ll.len) {
-                    var ll_tail = ll.node_tail orelse return error.IndexOutOfRange;
-
-                    const tail_ll = try insert_at(&ll_tail, gpa, idx - ll.len, item);
-                    return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
-                } else {
-                    const ll_tail = if (ll.node_tail) |t| t.borrow() catch unreachable else null;
-                    const item_ll = try initFromBucket(gpa, try createBucket(gpa, &[1]T{item}), ll_tail, 0, 1);
-                    const head_ll = try initFromBucket(gpa, ll.bucket, item_ll, ll.start_index, idx);
-                    return head_ll;
-                }
+            if (idx > ll.len) {
+                var node_tail = ll.node_tail orelse return error.IndexOutOfRange;
+                var tail_ll = try insert_at(&node_tail, gpa, idx - ll.len, item);
+                errdefer tail_ll.deinit(gpa);
+                return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
             }
 
-            const ll_tail = if (ll.node_tail) |t| t.borrow() catch unreachable else null;
-            const tail_ll = try initFromBucket(gpa, ll.bucket, ll_tail, ll.start_index - idx, ll.len - idx);
-            const item_ll = try initFromBucket(gpa, try createBucket(gpa, &[1]T{item}), tail_ll, 0, 1);
-            const head_ll = try initFromBucket(gpa, ll.bucket, item_ll, ll.start_index, idx);
-            return head_ll;
+            var head_node: ?RC(LL) = borrow(ll.node_tail);
+            errdefer if (head_node) |*t| t.deinit(gpa);
+            if (idx < ll.len)
+                head_node = try initFromBucket(gpa, ll.bucket, head_node, ll.start_index - idx, ll.len - idx);
+            head_node = try initFromBucket(gpa, try createBucket(gpa, &[1]T{item}), head_node, 0, 1);
+            return try initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
         }
 
-        pub fn tail(ll_ref: *Ref, gpa: std.mem.Allocator) !?Ref {
+        pub fn head(ll_ref: RC(LL)) ?T {
+            const ll = ll_ref.getUnwrap();
+            return if (ll.len == 0) null else ll.bucket.getUnwrap().items[ll.start_index];
+        }
+
+        pub fn tail(ll_ref: *RC(LL), gpa: std.mem.Allocator) !?RC(LL) {
             const ll = ll_ref.getUnwrap();
             if (ll.len == 0) return null;
 
-            const node_tail = if (ll.node_tail) |t| t.borrow() catch unreachable else null;
-            return if (ll.len == 1)
-                node_tail
-            else
-                try initFromBucket(gpa, ll.bucket, node_tail, ll.start_index - 1, ll.len - 1);
+            var node_tail = borrow(ll.node_tail);
+            if (ll.len == 1) return node_tail;
+            errdefer if (node_tail) |*t| t.deinit(gpa);
+            return try initFromBucket(gpa, ll.bucket, node_tail, ll.start_index - 1, ll.len - 1);
         }
 
-        pub fn delete_at(ll_ref: *Ref, gpa: std.mem.Allocator, idx: usize) !Ref {
+        pub fn delete_at(ll_ref: *RC(LL), gpa: std.mem.Allocator, idx: usize) !RC(LL) {
             const ll = ll_ref.getUnwrap();
 
             if (idx == 0 and ll.len > 0)
-                return try tail(ll_ref, gpa) orelse try init(gpa, &[_]T{});
+                return try tail(ll_ref, gpa) orelse init(gpa, &[_]T{});
 
             if (idx >= ll.len) {
                 var ll_tail = ll.node_tail orelse return error.IndexOutOfRange;
 
                 var tail_ll = try delete_at(&ll_tail, gpa, idx - ll.len);
+                errdefer tail_ll.deinit(gpa);
+
                 if (tail_ll.getPtrUnwrap().len == 0) {
                     defer tail_ll.deinit(gpa);
-                    const node_tail = if (tail_ll.getUnwrap().node_tail) |t|
-                        t.borrow() catch unreachable
-                    else
-                        null;
+                    var node_tail = borrow(tail_ll.getUnwrap().node_tail);
+                    errdefer if (node_tail) |*t| t.deinit(gpa);
                     return try initFromBucket(gpa, ll.bucket, node_tail, ll.start_index, ll.len);
                 }
+
                 return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
             }
 
-            const node_tail = if (ll.node_tail) |t| t.borrow() catch unreachable else null;
-            const tail_ll = if (ll.len > idx + 1)
-                try initFromBucket(gpa, ll.bucket, node_tail, ll.start_index - idx - 1, ll.len - idx - 1)
-            else
-                node_tail;
-            const head_ll = try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, idx);
-
-            return head_ll;
+            var head_node: ?RC(LL) = borrow(ll.node_tail);
+            errdefer if (head_node) |*t| t.deinit(gpa);
+            if (ll.len > idx + 1)
+                head_node = try initFromBucket(gpa, ll.bucket, head_node, ll.start_index - idx - 1, ll.len - idx - 1);
+            return try initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
         }
 
         pub const Iterator = struct {
-            root: Ref,
-            ll: ?Ref,
+            root: RC(LL),
+            ll: ?RC(LL),
             current: usize,
 
-            pub fn initNoBorrow(ll: Ref) Iterator {
+            pub fn initNoBorrow(ll: RC(LL)) Iterator {
                 const current_ll = if (ll.getUnwrap().len > 0) ll else null;
                 return .{
                     .root = ll,
@@ -188,7 +209,7 @@ pub fn List(comptime T: type) type {
                 };
             }
 
-            pub fn init(ll: *Ref) Iterator {
+            pub fn init(ll: *RC(LL)) Iterator {
                 const b = ll.borrow() catch unreachable;
                 const current_ll = if (b.getUnwrap().len > 0) b else null;
                 return .{
@@ -219,7 +240,7 @@ pub fn List(comptime T: type) type {
             }
         };
 
-        fn equalsSlice(ll: Ref, slice: []const T) bool {
+        fn equalsSlice(ll: RC(LL), slice: []const T) bool {
             var iter = Iterator.initNoBorrow(ll);
 
             var i: usize = 0;
