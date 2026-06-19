@@ -76,6 +76,13 @@ pub fn List(comptime T: type) type {
             return .{ .list = try RC(LL).init(gpa, ll) };
         }
 
+        pub fn initOwned(gpa: std.mem.Allocator, values: []const T) !Self {
+            const bucket = Bucket.fromOwnedSlice(values);
+            var bucket_ref = try RC(Bucket).init(gpa, bucket);
+            defer bucket_ref.deinit(gpa);
+            return initFromBucket(gpa, bucket_ref, null, bucket.items.len - 1, bucket.items.len);
+        }
+
         pub fn initWithTail(gpa: std.mem.Allocator, values: []const T, ll_tail: *Self) !Self {
             var ll = try initRaw(gpa, values);
             errdefer ll.deinit(gpa);
@@ -118,13 +125,7 @@ pub fn List(comptime T: type) type {
         }
 
         pub fn get(self: Self, i: usize) ?T {
-            const list = self.list.getUnwrap();
-            return if (i < list.len)
-                list.bucket.getUnwrap().items[list.start_index - i]
-            else if (list.node_tail) |t|
-                t.get(i - list.len)
-            else
-                null;
+            return if (self.getPtr(i)) |v| v.* else null;
         }
 
         pub fn getPtr(self: Self, i: usize) ?*T {
@@ -181,19 +182,23 @@ pub fn List(comptime T: type) type {
             return try initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
         }
 
-        pub fn head(self: Self) ?T {
+        pub fn update(self: *Self, gpa: std.mem.Allocator, idx: usize, item: T) !Self {
             const ll = self.list.getUnwrap();
-            return if (ll.len == 0) null else ll.bucket.getUnwrap().items[ll.start_index];
-        }
 
-        pub fn tail(self: *Self, gpa: std.mem.Allocator) !?Self {
-            const ll = self.list.getUnwrap();
-            if (ll.len == 0) return null;
+            if (idx >= ll.len) {
+                var node_tail = ll.node_tail orelse return error.IndexOutOfRange;
+                var tail_ll = try update(&node_tail, gpa, idx - ll.len, item);
+                errdefer tail_ll.deinit(gpa);
+                return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
+            }
 
-            var node_tail = borrow(ll.node_tail);
-            if (ll.len == 1) return node_tail;
-            errdefer if (node_tail) |*t| t.deinit(gpa);
-            return try initFromBucket(gpa, ll.bucket, node_tail, ll.start_index - 1, ll.len - 1);
+            var head_node: ?Self = borrow(ll.node_tail);
+            errdefer if (head_node) |*t| t.deinit(gpa);
+            if (ll.len > idx + 1)
+                head_node = try initFromBucket(gpa, ll.bucket, head_node, ll.start_index - idx - 1, ll.len - idx - 1);
+            head_node = try initFromBucket(gpa, try createBucket(gpa, &[1]T{item}), head_node, 0, 1);
+            if (idx == 0) return head_node.?;
+            return try initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
         }
 
         pub fn delete_at(self: *Self, gpa: std.mem.Allocator, idx: usize) !Self {
@@ -222,9 +227,30 @@ pub fn List(comptime T: type) type {
             return try initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
         }
 
+        pub fn head(self: Self) ?T {
+            const ll = self.list.getUnwrap();
+            return if (ll.len == 0) null else ll.bucket.getUnwrap().items[ll.start_index];
+        }
+
+        pub fn tail(self: *Self, gpa: std.mem.Allocator) !?Self {
+            const ll = self.list.getUnwrap();
+            if (ll.len == 0) return null;
+
+            var node_tail = borrow(ll.node_tail);
+            if (ll.len == 1) return node_tail;
+            errdefer if (node_tail) |*t| t.deinit(gpa);
+            return try initFromBucket(gpa, ll.bucket, node_tail, ll.start_index - 1, ll.len - 1);
+        }
+
         pub fn count(self: Self) usize {
             const list = self.list.getUnwrap();
             return list.len + if (list.node_tail) |t| t.count() else 0;
+        }
+
+        pub fn hasSpaceAtHead(self: Self) bool {
+            const ll = self.list.getPtrUnwrap();
+            const bucket = ll.bucket.getPtrUnwrap();
+            return bucket.items.len == 0 or bucket.items.len - 1 == ll.start_index;
         }
 
         pub const Iterator = struct {
@@ -382,6 +408,50 @@ test "Insert" {
     try std.testing.expect(new_list_5.equalsSlice(&[_]u32{ 3, 2, 1, 0 }));
 }
 
+test "update" {
+    const MyList = List(u32);
+    const gpa = std.testing.allocator;
+
+    var list = try MyList.init(gpa, &[_]u32{ 1, 2, 3 });
+    defer list.deinit(gpa);
+
+    var tail_node = try MyList.init(gpa, &[_]u32{ 6, 7 });
+    defer tail_node.deinit(gpa);
+
+    var multi = try MyList.initWithTail(gpa, &[_]u32{ 1, 2, 3 }, &tail_node);
+    defer multi.deinit(gpa);
+
+    var new_list_0 = try list.update(gpa, 0, 9);
+    defer new_list_0.deinit(gpa);
+
+    var new_list_1 = try list.update(gpa, 1, 9);
+    defer new_list_1.deinit(gpa);
+
+    var new_list_2 = try list.update(gpa, 2, 9);
+    defer new_list_2.deinit(gpa);
+
+    var new_list_3 = try new_list_2.update(gpa, 0, 5);
+    defer new_list_3.deinit(gpa);
+
+    var new_list_4 = try multi.update(gpa, 0, 5);
+    defer new_list_4.deinit(gpa);
+
+    var new_list_5 = try multi.update(gpa, 3, 8);
+    defer new_list_5.deinit(gpa);
+
+    var new_list_6 = try multi.update(gpa, 4, 8);
+    defer new_list_6.deinit(gpa);
+
+    try std.testing.expect(new_list_0.equalsSlice(&[_]u32{ 9, 2, 1 }));
+    try std.testing.expect(new_list_1.equalsSlice(&[_]u32{ 3, 9, 1 }));
+    try std.testing.expect(new_list_2.equalsSlice(&[_]u32{ 3, 2, 9 }));
+    try std.testing.expect(new_list_3.equalsSlice(&[_]u32{ 5, 2, 9 }));
+    try std.testing.expect(new_list_4.equalsSlice(&[_]u32{ 5, 2, 1, 7, 6 }));
+    try std.testing.expect(new_list_5.equalsSlice(&[_]u32{ 3, 2, 1, 8, 6 }));
+    try std.testing.expect(new_list_6.equalsSlice(&[_]u32{ 3, 2, 1, 7, 8 }));
+    try std.testing.expectError(error.IndexOutOfRange, list.update(gpa, 3, 9));
+}
+
 test "remove" {
     const MyList = List(u32);
     const gpa = std.testing.allocator;
@@ -509,6 +579,15 @@ test "allocation failures" {
             defer col.deinit(gpa);
             var t = (joined.tail(gpa) catch break :blk false) orelse break :blk false;
             defer t.deinit(gpa);
+
+            var upd0 = l3.update(gpa, 0, 8) catch break :blk false;
+            defer upd0.deinit(gpa);
+            var upd1 = l3.update(gpa, 2, 8) catch break :blk false;
+            defer upd1.deinit(gpa);
+            var upd2 = joined.update(gpa, 0, 8) catch break :blk false;
+            defer upd2.deinit(gpa);
+            var upd3 = joined.update(gpa, 3, 8) catch break :blk false;
+            defer upd3.deinit(gpa);
 
             var big: [40]u32 = undefined;
             for (&big, 0..) |*x, i| x.* = @intCast(i);
