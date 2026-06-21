@@ -34,6 +34,17 @@ pub fn List(comptime T: type) type {
         /// If an array has less than `copy_threshold` items, then a cloned LL will be used
         const copy_threshold = 32;
 
+        pub fn initOwned(gpa: std.mem.Allocator, values: []T) !Self {
+            var bucket = Bucket.fromOwnedSlice(values);
+            var bucket_ref = RC(Bucket).init(gpa, bucket) catch |e| {
+                bucket.deinit(gpa);
+                return e;
+            };
+            defer bucket_ref.deinit(gpa);
+
+            return initFromBucket(gpa, bucket_ref, null, bucket.items.len - 1, bucket.items.len);
+        }
+
         pub fn initRaw(gpa: std.mem.Allocator, values: []const T) !LL {
             var bucket: Bucket = .empty;
             try bucket.appendSlice(gpa, values);
@@ -114,7 +125,7 @@ pub fn List(comptime T: type) type {
         fn newHead(ll: *LL, gpa: std.mem.Allocator, bucket_ref: RC(Bucket)) !Self {
             var node_tail = borrow(ll.node_tail);
             errdefer if (node_tail) |*t| t.deinit(gpa);
-            return try initFromBucket(gpa, bucket_ref, node_tail, bucket_ref.getUnwrap().items.len - 1, ll.len + 1);
+            return initFromBucket(gpa, bucket_ref, node_tail, bucket_ref.getUnwrap().items.len - 1, ll.len + 1);
         }
 
         pub fn get(self: Self, i: usize) ?T {
@@ -139,21 +150,21 @@ pub fn List(comptime T: type) type {
             if (bucket.items.len > 0 and bucket.items.len - 1 != ll.start_index) {
                 // someone has already added data to the bucket
                 if (copy_threshold <= ll.len) {
-                    return try initWithTail(gpa, &[1]T{item}, self);
+                    return initWithTail(gpa, &[1]T{item}, self);
                 }
 
                 const items = bucket_ref.getUnwrap().items;
                 const copy_slice = items[ll.start_index + 1 - ll.len .. ll.start_index + 1];
                 bucket_ref = try createBucketWithCapacity(gpa, copy_slice, copy_slice.len + 1);
                 bucket_ref.getPtrUnwrap().appendAssumeCapacity(item);
-                return try newHead(ll, gpa, bucket_ref);
+                return newHead(ll, gpa, bucket_ref);
             }
 
             // we have space to append to the bucket
             try bucket.append(gpa, item);
             errdefer _ = bucket.pop();
 
-            return try newHead(ll, gpa, bucket_ref);
+            return newHead(ll, gpa, bucket_ref);
         }
 
         pub fn insert_at(self: *Self, gpa: std.mem.Allocator, idx: usize, item: T) !Self {
@@ -164,7 +175,7 @@ pub fn List(comptime T: type) type {
                 var node_tail = ll.node_tail orelse return error.IndexOutOfRange;
                 var tail_ll = try insert_at(&node_tail, gpa, idx - ll.len, item);
                 errdefer tail_ll.deinit(gpa);
-                return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
+                return initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
             }
 
             var head_node: ?Self = borrow(ll.node_tail);
@@ -172,7 +183,7 @@ pub fn List(comptime T: type) type {
             if (idx < ll.len)
                 head_node = try initFromBucket(gpa, ll.bucket, head_node, ll.start_index - idx, ll.len - idx);
             head_node = try initFromBucket(gpa, try createBucket(gpa, &[1]T{item}), head_node, 0, 1);
-            return try initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
+            return initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
         }
 
         pub fn update(self: *Self, gpa: std.mem.Allocator, idx: usize, item: T) !Self {
@@ -182,7 +193,7 @@ pub fn List(comptime T: type) type {
                 var node_tail = ll.node_tail orelse return error.IndexOutOfRange;
                 var tail_ll = try update(&node_tail, gpa, idx - ll.len, item);
                 errdefer tail_ll.deinit(gpa);
-                return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
+                return initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
             }
 
             var head_node: ?Self = borrow(ll.node_tail);
@@ -191,7 +202,7 @@ pub fn List(comptime T: type) type {
                 head_node = try initFromBucket(gpa, ll.bucket, head_node, ll.start_index - idx - 1, ll.len - idx - 1);
             head_node = try initFromBucket(gpa, try createBucket(gpa, &[1]T{item}), head_node, 0, 1);
             if (idx == 0) return head_node.?;
-            return try initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
+            return initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
         }
 
         pub fn delete_at(self: *Self, gpa: std.mem.Allocator, idx: usize) !Self {
@@ -206,18 +217,18 @@ pub fn List(comptime T: type) type {
                 var tail_ll = try delete_at(&ll_tail, gpa, idx - ll.len);
                 if (tail_ll.list.getPtrUnwrap().len == 0) {
                     defer tail_ll.deinit(gpa);
-                    return try initFromBucket(gpa, ll.bucket, null, ll.start_index, ll.len);
+                    return initFromBucket(gpa, ll.bucket, null, ll.start_index, ll.len);
                 }
 
                 errdefer tail_ll.deinit(gpa);
-                return try initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
+                return initFromBucket(gpa, ll.bucket, tail_ll, ll.start_index, ll.len);
             }
 
             var head_node: ?Self = borrow(ll.node_tail);
             errdefer if (head_node) |*t| t.deinit(gpa);
             if (ll.len > idx + 1)
                 head_node = try initFromBucket(gpa, ll.bucket, head_node, ll.start_index - idx - 1, ll.len - idx - 1);
-            return try initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
+            return initFromBucket(gpa, ll.bucket, head_node, ll.start_index, idx);
         }
 
         pub fn head(self: Self) ?T {
