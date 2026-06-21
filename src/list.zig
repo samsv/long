@@ -88,7 +88,7 @@ pub fn List(comptime T: type) type {
             return .{ .list = try RC(LL).init(gpa, ll) };
         }
 
-        fn borrow(node: ?Self) ?Self {
+        pub fn borrow(node: ?Self) ?Self {
             return if (node) |t|
                 .{ .list = t.list.borrow() catch unreachable }
             else
@@ -246,6 +246,14 @@ pub fn List(comptime T: type) type {
             return bucket.items.len == 0 or bucket.items.len - 1 == ll.start_index;
         }
 
+        pub fn iter(self: *Self) Iterator {
+            return Iterator.init(self);
+        }
+
+        pub fn iterNoBorrow(self: Self) Iterator {
+            return Iterator.initNoBorrow(self);
+        }
+
         pub const Iterator = struct {
             root: Self,
             ll: ?Self,
@@ -270,32 +278,32 @@ pub fn List(comptime T: type) type {
                 };
             }
 
-            pub fn next(iter: *Iterator) ?T {
-                const ll = (iter.ll orelse return null).list.getUnwrap();
-                const item = ll.bucket.getUnwrap().items[iter.current];
+            pub fn next(iterator: *Iterator) ?T {
+                const ll = (iterator.ll orelse return null).list.getUnwrap();
+                const item = ll.bucket.getUnwrap().items[iterator.current];
 
-                if (iter.current == ll.start_index + 1 - ll.len) {
+                if (iterator.current == ll.start_index + 1 - ll.len) {
                     const ll_tail = ll.node_tail;
-                    iter.ll = ll_tail;
+                    iterator.ll = ll_tail;
                     if (ll_tail) |t|
-                        iter.current = t.list.getUnwrap().start_index;
+                        iterator.current = t.list.getUnwrap().start_index;
                 } else {
-                    iter.current -= 1;
+                    iterator.current -= 1;
                 }
 
                 return item;
             }
 
-            pub fn deinit(iter: *Iterator, gpa: std.mem.Allocator) void {
-                iter.root.deinit(gpa);
+            pub fn deinit(iterator: *Iterator, gpa: std.mem.Allocator) void {
+                iterator.root.deinit(gpa);
             }
         };
 
         fn equalsSlice(ll: Self, slice: []const T) bool {
-            var iter = Iterator.initNoBorrow(ll);
+            var iterator = Iterator.initNoBorrow(ll);
 
             var i: usize = 0;
-            while (iter.next()) |v| : (i += 1) {
+            while (iterator.next()) |v| : (i += 1) {
                 if (v != slice[i]) return false;
             }
 

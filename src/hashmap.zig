@@ -16,6 +16,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
         const Self = @This();
 
         const max_load_percentage = 75;
+        const max_copy_size = 32;
 
         pub const KV = struct {
             key: K,
@@ -32,7 +33,35 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             set: SparseSet,
             child: ?Self,
 
+            fn grow(parent_map: *Map, gpa: std.mem.Allocator, key: K, value: V) anyerror!Map {
+                const size = capacityForSize(@intCast(parent_map.count()));
+                var set = try SparseSet.init(gpa, &[0]SparseSet.Item{}, size);
+                errdefer set.deinit(gpa);
+
+                var map = Map{
+                    .set = set,
+                    .child = null,
+                };
+                defer map.deinit(gpa);
+
+                var current_map: ?*Map = parent_map;
+                while (current_map) |c_map| {
+                    var iterator = c_map.set.dense.iterNoBorrow();
+                    while (iterator.next()) |item| : (current_map = if (c_map.child) |c| c.map.getPtrUnwrap() else null) {
+                        const new_map = try map.putIfNotExists(gpa, item.value.key, item.value.value);
+                        map.deinit(gpa);
+                        map = new_map;
+                    }
+                }
+                const new_map = map.put(gpa, key, value);
+                return new_map;
+            }
+
             fn insert(map: *Map, gpa: std.mem.Allocator, key: K, value: V, index: usize) !Map {
+                if (map.set.len() * 100 / map.set.capacity() >= max_load_percentage) {
+                    return map.grow(gpa, key, value);
+                }
+
                 const new_set = try map.set.insert(
                     gpa,
                     SparseSet.Item{
@@ -55,6 +84,15 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 return switch (map.getHashed(key, hash, null)) {
                     .empty => |index| map.insert(gpa, key, value, index),
                     .item => @panic("TODO! update"),
+                    .full => map.grow(gpa, key, value),
+                };
+            }
+
+            fn putIfNotExists(map: *Map, gpa: std.mem.Allocator, key: K, value: V) !Map {
+                const hash = ctx.hash(key);
+                return switch (map.getHashed(key, hash, null)) {
+                    .empty => |index| map.insert(gpa, key, value, index),
+                    .item => .{ .set = map.set, .child = borrow(map.child) },
                     .full => error.FullMap,
                 };
             }
@@ -90,6 +128,10 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             pub fn deinit(self: *Map, gpa: std.mem.Allocator) void {
                 self.set.deinit(gpa);
                 if (self.child) |*c| c.deinit(gpa);
+            }
+
+            pub fn count(self: Map) usize {
+                return self.set.dense.count() + if (self.child) |c| c.count() else 0;
             }
         };
 
@@ -144,6 +186,10 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             errdefer new_map.deinit(gpa);
 
             return .{ .map = try RC(Map).init(gpa, new_map) };
+        }
+
+        pub fn count(self: Self) usize {
+            return self.map.getUnwrap().count();
         }
 
         /// A Sparse for private use inside the immutable hashmap
@@ -211,6 +257,13 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                     .dense = new_dense,
                 };
             }
+
+            pub fn borrow(self: *SparseSet) SparseSet {
+                return .{
+                    .dense = self.dense.borrow(),
+                    .sparse = self.sparse.borrow() catch unreachable,
+                };
+            }
         };
     };
 }
@@ -241,17 +294,32 @@ test "Create" {
 
     var map = try Map.init(gpa, &[_]Map.KV{
         .{ .key = "key", .value = 0 },
-        .{ .key = "hello", .value = 1 },
-        .{ .key = "world", .value = 2 },
     });
     defer map.deinit(gpa);
 
-    var new_map = try map.put(gpa, "man", 3);
+    const vs = &[_]Map.KV{
+        .{ .key = "hello", .value = 1 },
+        .{ .key = "world", .value = 2 },
+        .{ .key = "man", .value = 3 },
+        .{ .key = "man 2", .value = 4 },
+        .{ .key = "man 3", .value = 5 },
+        .{ .key = "man 4", .value = 6 },
+    };
+
+    var new_map = map.borrow().?;
     defer new_map.deinit(gpa);
+    for (vs) |v| {
+        const m_new_map = new_map.put(gpa, v.key, v.value) catch |err| {
+            std.debug.print("key {s}: error {any}\n", .{ v.key, err });
+            @panic("error");
+        };
+        new_map.deinit(gpa);
+        new_map = m_new_map;
+    }
 
     try std.testing.expectEqual(0, map.get("key").?.value);
-    try std.testing.expectEqual(1, map.get("hello").?.value);
-    try std.testing.expectEqual(2, map.get("world").?.value);
+    try std.testing.expectEqual(1, new_map.get("hello").?.value);
+    try std.testing.expectEqual(2, new_map.get("world").?.value);
     try std.testing.expectEqual(null, map.get("man"));
     try std.testing.expectEqual(3, new_map.get("man").?.value);
 }
