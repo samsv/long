@@ -76,13 +76,6 @@ pub fn List(comptime T: type) type {
             return .{ .list = try RC(LL).init(gpa, ll) };
         }
 
-        pub fn initOwned(gpa: std.mem.Allocator, values: []const T) !Self {
-            const bucket = Bucket.fromOwnedSlice(values);
-            var bucket_ref = try RC(Bucket).init(gpa, bucket);
-            defer bucket_ref.deinit(gpa);
-            return initFromBucket(gpa, bucket_ref, null, bucket.items.len - 1, bucket.items.len);
-        }
-
         pub fn initWithTail(gpa: std.mem.Allocator, values: []const T, ll_tail: *Self) !Self {
             var ll = try initRaw(gpa, values);
             errdefer ll.deinit(gpa);

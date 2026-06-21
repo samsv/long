@@ -29,4 +29,5 @@ test {
     _ = @import("scanner.zig");
     _ = @import("compiler.zig");
     _ = @import("list.zig");
+    _ = @import("hashmap.zig");
 }

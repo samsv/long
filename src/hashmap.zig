@@ -2,64 +2,256 @@ const std = @import("std");
 const List = @import("list.zig").List;
 const RC = @import("ref_counter.zig").RC;
 
-/// A Sparse for private use inside the immutable hashmap
-fn SparseSet(comptime T: type) type {
+pub fn Ctx(comptime K: type) type {
     return struct {
-        dense: List(Item),
-        sparse: Sparse,
+        hash: *const fn (K) u32,
+        eql: *const fn (K, K) bool,
+    };
+}
+
+pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
+    return struct {
+        map: RC(Map),
 
         const Self = @This();
-        const Sparse = RC(std.ArrayList(?usize));
 
-        pub const Item = struct {
-            sparse_index: usize,
-            value: T,
+        const max_load_percentage = 75;
+
+        pub const KV = struct {
+            key: K,
+            value: V,
         };
 
-        pub fn init(gpa: std.mem.Allocator, values: []const Item, size: usize) !Self {
-            var dense = try List(Item).init(gpa, values);
-            errdefer dense.deinit(gpa);
+        const GetResult = union(enum) {
+            item: SparseSet.Item,
+            empty: usize,
+            full,
+        };
 
-            var sparse_arr = try std.ArrayList(?usize).initCapacity(gpa, size);
-            sparse_arr.appendNTimesAssumeCapacity(null, size);
-            for (values, 0..) |v, i|
-                sparse_arr.items[v.sparse_index] = i;
+        pub const Map = struct {
+            set: SparseSet,
+            child: ?Self,
 
-            errdefer sparse_arr.deinit(gpa);
+            fn insert(map: *Map, gpa: std.mem.Allocator, key: K, value: V, index: usize) !Map {
+                const new_set = try map.set.insert(
+                    gpa,
+                    SparseSet.Item{
+                        .sparse_index = index,
+                        .value = KV{
+                            .key = key,
+                            .value = value,
+                        },
+                    },
+                );
 
-            return .{ .sparse = try Sparse.init(gpa, sparse_arr), .dense = dense };
+                return .{
+                    .set = new_set,
+                    .child = borrow(map.child),
+                };
+            }
+
+            fn put(map: *Map, gpa: std.mem.Allocator, key: K, value: V) !Map {
+                const hash = ctx.hash(key);
+                return switch (map.getHashed(key, hash, null)) {
+                    .empty => |index| map.insert(gpa, key, value, index),
+                    .item => @panic("TODO! update"),
+                    .full => error.FullMap,
+                };
+            }
+
+            fn getHashed(map: Map, key: K, hash: u32, child: ?Self) GetResult {
+                const set = map.set;
+                const set_capacity = set.capacity();
+                var i = hash % set_capacity;
+                const start = i;
+                const local: GetResult = while (set.get(i)) |item| {
+                    if (ctx.eql(item.value.key, key)) break .{ .item = item };
+                    i = (i + 1) % set_capacity;
+                    if (start == i) break .full;
+                } else .{ .empty = i };
+
+                return switch (local) {
+                    .item => local,
+                    inline else => if (child) |c| blk: {
+                        const c_map = c.map.getUnwrap();
+                        break :blk c_map.getHashed(key, hash, c_map.child);
+                    } else local,
+                };
+            }
+
+            pub fn get(map: Map, key: K) ?KV {
+                const hash = ctx.hash(key);
+                return switch (map.getHashed(key, hash, map.child)) {
+                    .item => |item| item.value,
+                    .empty, .full => null,
+                };
+            }
+
+            pub fn deinit(self: *Map, gpa: std.mem.Allocator) void {
+                self.set.deinit(gpa);
+                if (self.child) |*c| c.deinit(gpa);
+            }
+        };
+
+        fn borrow(self: ?Self) ?Self {
+            return if (self) |s| .{ .map = s.map.borrow() catch unreachable } else null;
+        }
+
+        fn capacityForSize(size: u32) u32 {
+            var new_cap: u32 = @intCast((@as(u64, size) * 100) / max_load_percentage + 1);
+            new_cap = std.math.ceilPowerOfTwo(u32, new_cap) catch unreachable;
+            return new_cap;
+        }
+
+        fn initWithChild(gpa: std.mem.Allocator, values: []const KV, child: ?Self) !Self {
+            const size = capacityForSize(@intCast(values.len));
+            var set = try SparseSet.init(gpa, &[0]SparseSet.Item{}, size);
+            errdefer set.deinit(gpa);
+
+            var map = Map{
+                .set = set,
+                .child = child,
+            };
+            errdefer map.deinit(gpa);
+
+            for (values) |v| {
+                const new_map = try map.put(gpa, v.key, v.value);
+                map.deinit(gpa);
+                map = new_map;
+            }
+
+            return .{
+                .map = try RC(Map).init(gpa, map),
+            };
+        }
+
+        pub fn init(gpa: std.mem.Allocator, values: []const KV) !Self {
+            return initWithChild(gpa, values, null);
         }
 
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
-            self.dense.deinit(gpa);
-            self.sparse.deinit(gpa);
+            self.map.deinit(gpa);
         }
 
-        fn denseGet(self: Self, index: usize) ?Item {
-            const c = self.dense.count();
-            if (index >= c) return null;
-            return self.dense.get(c - index - 1);
+        pub fn get(self: Self, key: K) ?KV {
+            const map = self.map.getUnwrap();
+            return map.get(key);
         }
 
-        pub fn get(self: Self, index: usize) ?T {
-            const i = self.sparse.getUnwrap().items[index] orelse return null;
-            const item = self.denseGet(i) orelse return null;
-            return if (item.sparse_index == index) item.value else null;
+        pub fn put(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !Self {
+            var map = self.map.getUnwrap();
+            var new_map = try map.put(gpa, key, value);
+            errdefer new_map.deinit(gpa);
+
+            return .{ .map = try RC(Map).init(gpa, new_map) };
         }
 
-        pub fn insert(self: *Self, gpa: std.mem.Allocator, item: Item) !Self {
-            if (!self.dense.hasSpaceAtHead()) return error.NoSpaceOnDense;
+        /// A Sparse for private use inside the immutable hashmap
+        const SparseSet = struct {
+            dense: List(Item),
+            sparse: Sparse,
 
-            self.sparse.getPtrUnwrap().items[item.sparse_index] = self.dense.count();
-            var new_sparse = try self.sparse.borrow();
-            errdefer new_sparse.deinit(gpa);
+            const Sparse = RC(std.ArrayList(?usize));
 
-            const new_dense = try self.dense.append(gpa, item);
-
-            return .{
-                .sparse = new_sparse,
-                .dense = new_dense,
+            pub const Item = struct {
+                sparse_index: usize,
+                value: KV,
             };
-        }
+
+            pub fn init(gpa: std.mem.Allocator, values: []const Item, size: usize) !SparseSet {
+                var dense = try List(Item).init(gpa, values);
+                errdefer dense.deinit(gpa);
+
+                var sparse_arr = try std.ArrayList(?usize).initCapacity(gpa, size);
+                sparse_arr.appendNTimesAssumeCapacity(null, size);
+                for (values, 0..) |v, i|
+                    sparse_arr.items[v.sparse_index] = i;
+
+                errdefer sparse_arr.deinit(gpa);
+
+                return .{ .sparse = try Sparse.init(gpa, sparse_arr), .dense = dense };
+            }
+
+            pub fn deinit(self: *SparseSet, gpa: std.mem.Allocator) void {
+                self.dense.deinit(gpa);
+                self.sparse.deinit(gpa);
+            }
+
+            pub fn len(self: SparseSet) usize {
+                return self.dense.count();
+            }
+
+            pub fn capacity(self: SparseSet) usize {
+                return self.sparse.getUnwrap().items.len;
+            }
+
+            fn denseGet(self: SparseSet, index: usize) ?Item {
+                const c = self.dense.count();
+                if (index >= c) return null;
+                return self.dense.get(c - index - 1);
+            }
+
+            pub fn get(self: SparseSet, index: usize) ?Item {
+                const i = self.sparse.getUnwrap().items[index] orelse return null;
+                const item = self.denseGet(i) orelse return null;
+                return if (item.sparse_index == index) item else null;
+            }
+
+            pub fn insert(self: *SparseSet, gpa: std.mem.Allocator, item: Item) !SparseSet {
+                if (!self.dense.hasSpaceAtHead()) return error.NoSpaceOnDense;
+
+                self.sparse.getPtrUnwrap().items[item.sparse_index] = self.dense.count();
+                var new_sparse = try self.sparse.borrow();
+                errdefer new_sparse.deinit(gpa);
+
+                const new_dense = try self.dense.append(gpa, item);
+
+                return .{
+                    .sparse = new_sparse,
+                    .dense = new_dense,
+                };
+            }
+        };
     };
+}
+
+fn strEql(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+}
+
+fn strHash(a: []const u8) u32 {
+    var h: u32 = 2166136261;
+    for (a) |c| {
+        h ^= c;
+        h *%= 16777619;
+    }
+    return h;
+}
+
+test "Create" {
+    const K = []const u8;
+    const V = f32;
+    const MyHashCtx = Ctx(K){
+        .eql = strEql,
+        .hash = strHash,
+    };
+
+    const Map = HashMap(K, V, MyHashCtx);
+    const gpa = std.testing.allocator;
+
+    var map = try Map.init(gpa, &[_]Map.KV{
+        .{ .key = "key", .value = 0 },
+        .{ .key = "hello", .value = 1 },
+        .{ .key = "world", .value = 2 },
+    });
+    defer map.deinit(gpa);
+
+    var new_map = try map.put(gpa, "man", 3);
+    defer new_map.deinit(gpa);
+
+    try std.testing.expectEqual(0, map.get("key").?.value);
+    try std.testing.expectEqual(1, map.get("hello").?.value);
+    try std.testing.expectEqual(2, map.get("world").?.value);
+    try std.testing.expectEqual(null, map.get("man"));
+    try std.testing.expectEqual(3, new_map.get("man").?.value);
 }
