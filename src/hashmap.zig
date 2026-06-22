@@ -50,7 +50,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 errdefer map.deinit(gpa);
 
                 for (values) |v| {
-                    const new_map = try map.putIfNotExists(gpa, v.key, v.value.?);
+                    const new_map = try map.putIfNotExists(gpa, v.key, v.value);
                     map.deinit(gpa);
                     map = new_map;
                 }
@@ -59,14 +59,30 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             }
 
             fn grow(parent_map: *Map, gpa: std.mem.Allocator, key: K, value: ?V) anyerror!Map {
-                const size = capacityForSize(@intCast(parent_map.count()));
-                var map = try Map.initCapacity(gpa, &[1]KV{.{ .key = key, .value = value }}, size, null);
+                const size = capacityForSize(@intCast(parent_map.physicalCount()));
+                const initial_value = if (value == null) &[0]KV{} else &[1]KV{.{ .key = key, .value = value }};
+                var map = try Map.initCapacity(gpa, initial_value, size, null);
                 errdefer map.deinit(gpa);
+
+                const del_initial_value = if (value != null) &[0]KV{} else &[1]KV{.{ .key = key, .value = value }};
+                var deleted = try Map.initCapacity(gpa, del_initial_value, capacityForSize(1), null);
+                defer deleted.deinit(gpa);
 
                 var current_map: ?*Map = parent_map;
                 while (current_map) |c_map| : (current_map = if (c_map.child) |c| c.map.getPtrUnwrap() else null) {
                     var iterator = c_map.set.dense.iterNoBorrow();
                     while (iterator.next()) |item| {
+                        if (item.value.value == null) {
+                            const new_deleted = try deleted.putIfNotExists(gpa, item.value.key, undefined);
+                            deleted.deinit(gpa);
+                            deleted = new_deleted;
+                            continue;
+                        }
+
+                        if (deleted.get(item.value.key)) |_| {
+                            continue;
+                        }
+
                         const new_map = try map.putIfNotExists(gpa, item.value.key, item.value.value);
                         map.deinit(gpa);
                         map = new_map;
@@ -116,15 +132,20 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 const set_capacity = set.capacity();
                 var i = hash % set_capacity;
                 const start = i;
+                var found_tomb = false;
                 const local: GetResult = while (set.get(i)) |item| {
-                    if (ctx.eql(item.value.key, key)) break .{ .item = item };
+                    if (ctx.eql(item.value.key, key)) {
+                        if (item.value.value != null) break .{ .item = item } else found_tomb = true;
+                    }
                     i = (i + 1) % set_capacity;
                     if (start == i) break .full;
                 } else .{ .empty = i };
 
                 return switch (local) {
                     .item => local,
-                    inline else => if (child) |c| blk: {
+                    inline else => if (found_tomb)
+                        local
+                    else if (child) |c| blk: {
                         const c_map = c.map.getUnwrap();
                         break :blk c_map.getHashed(key, hash, c_map.child);
                     } else local,
@@ -144,8 +165,50 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 if (self.child) |*c| c.deinit(gpa);
             }
 
-            pub fn count(self: Map) usize {
-                return self.set.dense.count() + if (self.child) |c| c.count() else 0;
+            pub fn physicalCount(self: Map) usize {
+                return self.set.dense.count() + if (self.child) |c| c.physicalCount() else 0;
+            }
+
+            fn setHas(self: Map, key: K, hash: u32) bool {
+                const set = self.set;
+                const set_capacity = set.capacity();
+                var i = hash % set_capacity;
+                const start = i;
+                while (set.get(i)) |item| {
+                    if (ctx.eql(item.value.key, key)) return true;
+                    i = (i + 1) % set_capacity;
+                    if (start == i) break;
+                }
+                return false;
+            }
+
+            pub fn count(top: Map) usize {
+                var total: usize = 0;
+                var layer: ?Map = top;
+                var layer_idx: usize = 0;
+                while (layer) |c_map| {
+                    var it = c_map.set.dense.iterNoBorrow();
+                    while (it.next()) |item| {
+                        if (item.value.value == null) continue;
+                        const hash = ctx.hash(item.value.key);
+                        var shadowed = false;
+                        var up: ?Map = top;
+                        var up_idx: usize = 0;
+                        while (up) |u_map| {
+                            if (up_idx >= layer_idx) break;
+                            if (u_map.setHas(item.value.key, hash)) {
+                                shadowed = true;
+                                break;
+                            }
+                            up = if (u_map.child) |ch| ch.map.getUnwrap() else null;
+                            up_idx += 1;
+                        }
+                        if (!shadowed) total += 1;
+                    }
+                    layer = if (c_map.child) |ch| ch.map.getUnwrap() else null;
+                    layer_idx += 1;
+                }
+                return total;
             }
         };
 
@@ -182,29 +245,46 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             return map.get(key);
         }
 
+        pub fn update(self: *Self, gpa: std.mem.Allocator, key: K, value: ?V, index: usize) !Map {
+            var map = self.map.getUnwrap();
+            return if (map.physicalCount() <= max_copy_size)
+                map.update(gpa, key, value, index)
+            else if (map.depth >= max_depth)
+                map.grow(gpa, key, value)
+            else
+                Map.initCapacity(
+                    gpa,
+                    &[1]KV{.{ .key = key, .value = value }},
+                    capacityForSize(1),
+                    self.*,
+                );
+        }
+
         pub fn put(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !Self {
             var map = self.map.getUnwrap();
             const hash = ctx.hash(key);
             var new_map = try switch (map.getHashed(key, hash, null)) {
                 .empty => |index| map.insert(gpa, key, value, index) catch |err| switch (err) {
-                    error.NoSpaceOnDense => if (map.depth >= max_depth or map.count() <= max_copy_size)
+                    error.NoSpaceOnDense => if (map.depth >= max_depth or map.physicalCount() <= max_copy_size)
                         map.grow(gpa, key, value)
                     else
                         Map.initCapacity(gpa, &[1]KV{.{ .key = key, .value = value }}, capacityForSize(1), self.*),
                     else => return err,
                 },
-                .item => |item| if (map.count() <= max_copy_size)
-                    map.update(gpa, key, value, item.sparse_index)
-                else if (map.depth >= max_depth)
-                    map.grow(gpa, key, value)
-                else
-                    Map.initCapacity(
-                        gpa,
-                        &[1]KV{.{ .key = key, .value = value }},
-                        capacityForSize(1),
-                        self.*,
-                    ),
+                .item => |item| self.update(gpa, key, value, item.sparse_index),
                 .full => map.grow(gpa, key, value),
+            };
+            errdefer new_map.deinit(gpa);
+
+            return .{ .map = try RC(Map).init(gpa, new_map) };
+        }
+
+        pub fn delete(self: *Self, gpa: std.mem.Allocator, key: K) !Self {
+            var map = self.map.getUnwrap();
+            const hash = ctx.hash(key);
+            var new_map = try switch (map.getHashed(key, hash, map.child)) {
+                .empty, .full => Map.init(map.set.borrow(), map.child),
+                .item => |item| self.update(gpa, key, null, item.sparse_index),
             };
             errdefer new_map.deinit(gpa);
 
@@ -213,6 +293,10 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
 
         pub fn count(self: Self) usize {
             return self.map.getUnwrap().count();
+        }
+
+        pub fn physicalCount(self: Self) usize {
+            return self.map.getUnwrap().physicalCount();
         }
 
         pub fn depth(self: Self) u8 {
@@ -614,4 +698,92 @@ test "sibling insert fork" {
     try std.testing.expectEqual(200, b.get(20).?.value.?);
     try std.testing.expectEqual(2, b.get(2).?.value.?);
     try std.testing.expectEqual(null, b.get(10));
+}
+
+test "delete" {
+    const K = u32;
+    const V = u32;
+    const MyHashCtx = Ctx(K){
+        .eql = u32Eql,
+        .hash = u32Hash,
+    };
+
+    const Map = HashMap(K, V, MyHashCtx);
+    const gpa = std.testing.allocator;
+
+    var map = try Map.init(gpa, &[_]Map.KV{
+        .{ .key = 1, .value = 1 },
+        .{ .key = 2, .value = 2 },
+        .{ .key = 3, .value = 3 },
+    });
+    defer map.deinit(gpa);
+
+    var deleted = try map.delete(gpa, 2);
+    defer deleted.deinit(gpa);
+
+    var missing = try map.delete(gpa, 99);
+    defer missing.deinit(gpa);
+
+    try std.testing.expectEqual(null, deleted.get(2));
+    try std.testing.expectEqual(1, deleted.get(1).?.value.?);
+    try std.testing.expectEqual(3, deleted.get(3).?.value.?);
+    try std.testing.expectEqual(2, map.get(2).?.value.?);
+    try std.testing.expectEqual(1, missing.get(1).?.value.?);
+}
+
+test "delete from child layer" {
+    const K = u32;
+    const V = u32;
+    const MyHashCtx = Ctx(K){
+        .eql = u32Eql,
+        .hash = u32Hash,
+    };
+
+    const Map = HashMap(K, V, MyHashCtx);
+    const gpa = std.testing.allocator;
+
+    var kvs: [40]Map.KV = undefined;
+    for (&kvs, 0..) |*kv, i| kv.* = .{ .key = @intCast(i), .value = @intCast(i) };
+
+    var big = try Map.init(gpa, &kvs);
+    defer big.deinit(gpa);
+
+    var chained = try big.put(gpa, 0, 999);
+    defer chained.deinit(gpa);
+
+    var d = try chained.delete(gpa, 1);
+    defer d.deinit(gpa);
+
+    try std.testing.expectEqual(null, d.get(1));
+    try std.testing.expectEqual(2, d.get(2).?.value.?);
+    try std.testing.expectEqual(999, d.get(0).?.value.?);
+}
+
+test "count semantics" {
+    const K = u32;
+    const V = u32;
+    const MyHashCtx = Ctx(K){
+        .eql = u32Eql,
+        .hash = u32Hash,
+    };
+
+    const Map = HashMap(K, V, MyHashCtx);
+    const gpa = std.testing.allocator;
+
+    var kvs: [40]Map.KV = undefined;
+    for (&kvs, 0..) |*kv, i| kv.* = .{ .key = @intCast(i), .value = @intCast(i) };
+
+    var big = try Map.init(gpa, &kvs);
+    defer big.deinit(gpa);
+
+    var chained = try big.put(gpa, 0, 999);
+    defer chained.deinit(gpa);
+
+    var del = try chained.delete(gpa, 1);
+    defer del.deinit(gpa);
+
+    try std.testing.expectEqual(40, big.count());
+    try std.testing.expectEqual(40, chained.count());
+    try std.testing.expectEqual(39, del.count());
+    try std.testing.expect(del.physicalCount() > del.count());
 }
