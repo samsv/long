@@ -17,6 +17,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
 
         const max_load_percentage = 75;
         const max_copy_size = 32;
+        const max_depth = 5;
 
         pub const KV = struct {
             key: K,
@@ -32,14 +33,20 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
         pub const Map = struct {
             set: SparseSet,
             child: ?Self,
+            depth: u8,
+
+            fn init(set: SparseSet, child: ?Self) Map {
+                return .{
+                    .set = set,
+                    .child = borrow(child),
+                    .depth = if (child) |c| c.depth() + 1 else 0,
+                };
+            }
 
             fn initCapacity(gpa: std.mem.Allocator, values: []const KV, size: u32, child: ?Self) !Map {
                 const set = try SparseSet.init(gpa, &[0]SparseSet.Item{}, size);
 
-                var map = Map{
-                    .set = set,
-                    .child = borrow(child),
-                };
+                var map = Map.init(set, child);
                 errdefer map.deinit(gpa);
 
                 for (values) |v| {
@@ -84,17 +91,14 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                     },
                 );
 
-                return .{
-                    .set = new_set,
-                    .child = borrow(map.child),
-                };
+                return Map.init(new_set, map.child);
             }
 
             fn putIfNotExists(map: *Map, gpa: std.mem.Allocator, key: K, value: V) !Map {
                 const hash = ctx.hash(key);
                 return switch (map.getHashed(key, hash, null)) {
                     .empty => |index| map.insert(gpa, key, value, index),
-                    .item => .{ .set = map.set.borrow(), .child = borrow(map.child) },
+                    .item => Map.init(map.set.borrow(), map.child),
                     .full => error.FullMap,
                 };
             }
@@ -104,7 +108,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                     .sparse_index = index,
                     .value = .{ .key = key, .value = value },
                 });
-                return .{ .set = new_set, .child = borrow(map.child) };
+                return Map.init(new_set, map.child);
             }
 
             fn getHashed(map: Map, key: K, hash: u32, child: ?Self) GetResult {
@@ -178,19 +182,21 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             return map.get(key);
         }
 
-        // TODO: two paths from DICT_LL.md are still unhandled:
-        //   1. depth bound: repeated large (> max_copy_size) updates stack child layers with nothing
-        //      flattening them, so lookups degrade to O(chain depth). Needs a cached `depth` and a
-        //      `flatten` pass once it exceeds a MAX_CHILDREN threshold.
-        //   2. insert fork: `SparseSet.insert` returns error.NoSpaceOnDense when a sibling already
-        //      consumed the dense head (two puts off one parent). Should copy-if-small / child-if-large.
         pub fn put(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !Self {
             var map = self.map.getUnwrap();
             const hash = ctx.hash(key);
             var new_map = try switch (map.getHashed(key, hash, null)) {
-                .empty => |index| map.insert(gpa, key, value, index),
+                .empty => |index| map.insert(gpa, key, value, index) catch |err| switch (err) {
+                    error.NoSpaceOnDense => if (map.depth >= max_depth or map.count() <= max_copy_size)
+                        map.grow(gpa, key, value)
+                    else
+                        Map.initCapacity(gpa, &[1]KV{.{ .key = key, .value = value }}, capacityForSize(1), self.*),
+                    else => return err,
+                },
                 .item => |item| if (map.count() <= max_copy_size)
                     map.update(gpa, key, value, item.sparse_index)
+                else if (map.depth >= max_depth)
+                    map.grow(gpa, key, value)
                 else
                     Map.initCapacity(
                         gpa,
@@ -207,6 +213,10 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
 
         pub fn count(self: Self) usize {
             return self.map.getUnwrap().count();
+        }
+
+        pub fn depth(self: Self) u8 {
+            return self.map.getUnwrap().depth;
         }
 
         /// A Sparse for private use inside the immutable hashmap
@@ -533,4 +543,75 @@ test "allocation failures" {
 
         if (completed) break;
     }
+}
+
+test "deep chain flatten" {
+    const K = u32;
+    const V = u32;
+    const MyHashCtx = Ctx(K){
+        .eql = u32Eql,
+        .hash = u32Hash,
+    };
+
+    const Map = HashMap(K, V, MyHashCtx);
+    const gpa = std.testing.allocator;
+
+    var kvs: [40]Map.KV = undefined;
+    for (&kvs, 0..) |*kv, i| kv.* = .{ .key = @intCast(i), .value = @intCast(i) };
+
+    var map = try Map.init(gpa, &kvs);
+    defer map.deinit(gpa);
+
+    try std.testing.expectEqual(0, map.depth());
+
+    const expected_depths = [_]u8{ 1, 2, 3, 4, 5, 0, 1, 2, 3 };
+
+    var current = map.borrow().?;
+    defer current.deinit(gpa);
+
+    for (expected_depths, 0..) |expected, n| {
+        const v: u32 = @intCast(1000 + n);
+        const next = try current.put(gpa, 0, v);
+        current.deinit(gpa);
+        current = next;
+
+        try std.testing.expectEqual(expected, current.depth());
+        try std.testing.expectEqual(v, current.get(0).?.value);
+        try std.testing.expectEqual(39, current.get(39).?.value);
+    }
+}
+
+test "sibling insert fork" {
+    const K = u32;
+    const V = u32;
+    const MyHashCtx = Ctx(K){
+        .eql = u32Eql,
+        .hash = u32Hash,
+    };
+
+    const Map = HashMap(K, V, MyHashCtx);
+    const gpa = std.testing.allocator;
+
+    var parent = try Map.init(gpa, &[_]Map.KV{
+        .{ .key = 1, .value = 1 },
+        .{ .key = 2, .value = 2 },
+    });
+    defer parent.deinit(gpa);
+
+    var a = try parent.put(gpa, 10, 100);
+    defer a.deinit(gpa);
+
+    var b = try parent.put(gpa, 20, 200);
+    defer b.deinit(gpa);
+
+    try std.testing.expectEqual(0, a.depth());
+    try std.testing.expectEqual(0, b.depth());
+
+    try std.testing.expectEqual(100, a.get(10).?.value);
+    try std.testing.expectEqual(1, a.get(1).?.value);
+    try std.testing.expectEqual(null, a.get(20));
+
+    try std.testing.expectEqual(200, b.get(20).?.value);
+    try std.testing.expectEqual(2, b.get(2).?.value);
+    try std.testing.expectEqual(null, b.get(10));
 }
