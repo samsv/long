@@ -21,7 +21,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
 
         pub const KV = struct {
             key: K,
-            value: V,
+            value: ?V,
         };
 
         const GetResult = union(enum) {
@@ -50,7 +50,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 errdefer map.deinit(gpa);
 
                 for (values) |v| {
-                    const new_map = try map.putIfNotExists(gpa, v.key, v.value);
+                    const new_map = try map.putIfNotExists(gpa, v.key, v.value.?);
                     map.deinit(gpa);
                     map = new_map;
                 }
@@ -58,7 +58,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 return map;
             }
 
-            fn grow(parent_map: *Map, gpa: std.mem.Allocator, key: K, value: V) anyerror!Map {
+            fn grow(parent_map: *Map, gpa: std.mem.Allocator, key: K, value: ?V) anyerror!Map {
                 const size = capacityForSize(@intCast(parent_map.count()));
                 var map = try Map.initCapacity(gpa, &[1]KV{.{ .key = key, .value = value }}, size, null);
                 errdefer map.deinit(gpa);
@@ -75,7 +75,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 return map;
             }
 
-            fn insert(map: *Map, gpa: std.mem.Allocator, key: K, value: V, index: usize) !Map {
+            fn insert(map: *Map, gpa: std.mem.Allocator, key: K, value: ?V, index: usize) !Map {
                 if (map.set.len() * 100 / map.set.capacity() >= max_load_percentage) {
                     return map.grow(gpa, key, value);
                 }
@@ -94,7 +94,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 return Map.init(new_set, map.child);
             }
 
-            fn putIfNotExists(map: *Map, gpa: std.mem.Allocator, key: K, value: V) !Map {
+            fn putIfNotExists(map: *Map, gpa: std.mem.Allocator, key: K, value: ?V) !Map {
                 const hash = ctx.hash(key);
                 return switch (map.getHashed(key, hash, null)) {
                     .empty => |index| map.insert(gpa, key, value, index),
@@ -103,7 +103,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 };
             }
 
-            fn update(map: *Map, gpa: std.mem.Allocator, key: K, value: V, index: usize) !Map {
+            fn update(map: *Map, gpa: std.mem.Allocator, key: K, value: ?V, index: usize) !Map {
                 const new_set = try map.set.update(gpa, .{
                     .sparse_index = index,
                     .value = .{ .key = key, .value = value },
@@ -347,7 +347,7 @@ test "Create" {
     var new_map = map.borrow().?;
     defer new_map.deinit(gpa);
     for (vs) |v| {
-        const m_new_map = new_map.put(gpa, v.key, v.value) catch |err| {
+        const m_new_map = new_map.put(gpa, v.key, v.value.?) catch |err| {
             std.debug.print("key {s}: error {any}\n", .{ v.key, err });
             @panic("error");
         };
@@ -355,11 +355,11 @@ test "Create" {
         new_map = m_new_map;
     }
 
-    try std.testing.expectEqual(0, map.get("key").?.value);
-    try std.testing.expectEqual(1, new_map.get("hello").?.value);
-    try std.testing.expectEqual(2, new_map.get("world").?.value);
+    try std.testing.expectEqual(0, map.get("key").?.value.?);
+    try std.testing.expectEqual(1, new_map.get("hello").?.value.?);
+    try std.testing.expectEqual(2, new_map.get("world").?.value.?);
     try std.testing.expectEqual(null, map.get("man"));
-    try std.testing.expectEqual(3, new_map.get("man").?.value);
+    try std.testing.expectEqual(3, new_map.get("man").?.value.?);
 }
 
 test "Update" {
@@ -390,7 +390,7 @@ test "Update" {
     var new_map = map.borrow().?;
     defer new_map.deinit(gpa);
     for (vs) |v| {
-        const m_new_map = new_map.put(gpa, v.key, v.value) catch |err| {
+        const m_new_map = new_map.put(gpa, v.key, v.value.?) catch |err| {
             std.debug.print("key {s}: error {any}\n", .{ v.key, err });
             @panic("error");
         };
@@ -410,7 +410,7 @@ test "Update" {
     var upd_map = new_map.borrow().?;
     defer upd_map.deinit(gpa);
     for (upvs) |v| {
-        const m_new_map = upd_map.put(gpa, v.key, v.value) catch |err| {
+        const m_new_map = upd_map.put(gpa, v.key, v.value.?) catch |err| {
             std.debug.print("key {s}: error {any}\n", .{ v.key, err });
             @panic("error");
         };
@@ -418,17 +418,17 @@ test "Update" {
         upd_map = m_new_map;
     }
 
-    try std.testing.expectEqual(0, map.get("key").?.value);
-    try std.testing.expectEqual(1, new_map.get("hello").?.value);
-    try std.testing.expectEqual(2, new_map.get("world").?.value);
+    try std.testing.expectEqual(0, map.get("key").?.value.?);
+    try std.testing.expectEqual(1, new_map.get("hello").?.value.?);
+    try std.testing.expectEqual(2, new_map.get("world").?.value.?);
     try std.testing.expectEqual(null, map.get("man"));
-    try std.testing.expectEqual(3, new_map.get("man").?.value);
+    try std.testing.expectEqual(3, new_map.get("man").?.value.?);
 
-    try std.testing.expectEqual(0, map.get("key").?.value);
-    try std.testing.expectEqual(5, upd_map.get("hello").?.value);
-    try std.testing.expectEqual(6, upd_map.get("world").?.value);
+    try std.testing.expectEqual(0, map.get("key").?.value.?);
+    try std.testing.expectEqual(5, upd_map.get("hello").?.value.?);
+    try std.testing.expectEqual(6, upd_map.get("world").?.value.?);
     try std.testing.expectEqual(null, map.get("man"));
-    try std.testing.expectEqual(7, upd_map.get("man").?.value);
+    try std.testing.expectEqual(7, upd_map.get("man").?.value.?);
 }
 
 fn u32Eql(a: u32, b: u32) bool {
@@ -458,7 +458,7 @@ test "Empty" {
 
     try std.testing.expectEqual(null, map.get("hello"));
     try std.testing.expectEqual(0, map.count());
-    try std.testing.expectEqual(1, new_map.get("hello").?.value);
+    try std.testing.expectEqual(1, new_map.get("hello").?.value.?);
     try std.testing.expectEqual(null, new_map.get("missing"));
     try std.testing.expectEqual(1, new_map.count());
 }
@@ -483,10 +483,10 @@ test "large update" {
     var updated = try map.put(gpa, 0, 999);
     defer updated.deinit(gpa);
 
-    try std.testing.expectEqual(0, map.get(0).?.value);
-    try std.testing.expectEqual(39, map.get(39).?.value);
-    try std.testing.expectEqual(999, updated.get(0).?.value);
-    try std.testing.expectEqual(39, updated.get(39).?.value);
+    try std.testing.expectEqual(0, map.get(0).?.value.?);
+    try std.testing.expectEqual(39, map.get(39).?.value.?);
+    try std.testing.expectEqual(999, updated.get(0).?.value.?);
+    try std.testing.expectEqual(39, updated.get(39).?.value.?);
     try std.testing.expectEqual(null, updated.get(100));
 }
 
@@ -576,8 +576,8 @@ test "deep chain flatten" {
         current = next;
 
         try std.testing.expectEqual(expected, current.depth());
-        try std.testing.expectEqual(v, current.get(0).?.value);
-        try std.testing.expectEqual(39, current.get(39).?.value);
+        try std.testing.expectEqual(v, current.get(0).?.value.?);
+        try std.testing.expectEqual(39, current.get(39).?.value.?);
     }
 }
 
@@ -607,11 +607,11 @@ test "sibling insert fork" {
     try std.testing.expectEqual(0, a.depth());
     try std.testing.expectEqual(0, b.depth());
 
-    try std.testing.expectEqual(100, a.get(10).?.value);
-    try std.testing.expectEqual(1, a.get(1).?.value);
+    try std.testing.expectEqual(100, a.get(10).?.value.?);
+    try std.testing.expectEqual(1, a.get(1).?.value.?);
     try std.testing.expectEqual(null, a.get(20));
 
-    try std.testing.expectEqual(200, b.get(20).?.value);
-    try std.testing.expectEqual(2, b.get(2).?.value);
+    try std.testing.expectEqual(200, b.get(20).?.value.?);
+    try std.testing.expectEqual(2, b.get(2).?.value.?);
     try std.testing.expectEqual(null, b.get(10));
 }
