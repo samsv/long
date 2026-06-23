@@ -24,8 +24,13 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             value: ?V,
         };
 
-        const GetResult = union(enum) {
+        const Item = struct {
             item: SparseSet.Item,
+            depth: u8,
+        };
+
+        const GetResult = union(enum) {
+            item: Item,
             empty: usize,
             full,
         };
@@ -34,6 +39,11 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             set: SparseSet,
             child: ?Self,
             depth: u8,
+
+            const GetRet = struct {
+                kv: KV,
+                depth: u8,
+            };
 
             fn init(set: SparseSet, child: ?Self) Map {
                 return .{
@@ -64,29 +74,11 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 var map = try Map.initCapacity(gpa, initial_value, size, null);
                 errdefer map.deinit(gpa);
 
-                const del_initial_value = if (value != null) &[0]KV{} else &[1]KV{.{ .key = key, .value = value }};
-                var deleted = try Map.initCapacity(gpa, del_initial_value, capacityForSize(1), null);
-                defer deleted.deinit(gpa);
-
-                var current_map: ?*Map = parent_map;
-                while (current_map) |c_map| : (current_map = if (c_map.child) |c| c.map.getPtrUnwrap() else null) {
-                    var iterator = c_map.set.dense.iterNoBorrow();
-                    while (iterator.next()) |item| {
-                        if (item.value.value == null) {
-                            const new_deleted = try deleted.putIfNotExists(gpa, item.value.key, undefined);
-                            deleted.deinit(gpa);
-                            deleted = new_deleted;
-                            continue;
-                        }
-
-                        if (deleted.get(item.value.key)) |_| {
-                            continue;
-                        }
-
-                        const new_map = try map.putIfNotExists(gpa, item.value.key, item.value.value);
-                        map.deinit(gpa);
-                        map = new_map;
-                    }
+                var itr = Iterator.initNoBorrow(parent_map.*);
+                while (itr.next()) |kv| {
+                    const new_map = try map.putIfNotExists(gpa, kv.key, kv.value);
+                    map.deinit(gpa);
+                    map = new_map;
                 }
                 return map;
             }
@@ -112,7 +104,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
 
             fn putIfNotExists(map: *Map, gpa: std.mem.Allocator, key: K, value: ?V) !Map {
                 const hash = ctx.hash(key);
-                return switch (map.getHashed(key, hash, null)) {
+                return switch (map.getHashed(key, hash, null, 0)) {
                     .empty => |index| map.insert(gpa, key, value, index),
                     .item => Map.init(map.set.borrow(), map.child),
                     .full => error.FullMap,
@@ -127,7 +119,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 return Map.init(new_set, map.child);
             }
 
-            fn getHashed(map: Map, key: K, hash: u32, child: ?Self) GetResult {
+            fn getHashed(map: Map, key: K, hash: u32, child: ?Self, curr_depth: u8) GetResult {
                 const set = map.set;
                 const set_capacity = set.capacity();
                 var i = hash % set_capacity;
@@ -135,7 +127,10 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 var found_tomb = false;
                 const local: GetResult = while (set.get(i)) |item| {
                     if (ctx.eql(item.value.key, key)) {
-                        if (item.value.value != null) break .{ .item = item } else found_tomb = true;
+                        if (item.value.value) |_|
+                            break .{ .item = .{.item = item, .depth = curr_depth } }
+                        else
+                            found_tomb = true;
                     }
                     i = (i + 1) % set_capacity;
                     if (start == i) break .full;
@@ -147,15 +142,15 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                         local
                     else if (child) |c| blk: {
                         const c_map = c.map.getUnwrap();
-                        break :blk c_map.getHashed(key, hash, c_map.child);
+                        break :blk c_map.getHashed(key, hash, c_map.child, curr_depth + 1);
                     } else local,
                 };
             }
 
             pub fn get(map: Map, key: K) ?KV {
                 const hash = ctx.hash(key);
-                return switch (map.getHashed(key, hash, map.child)) {
-                    .item => |item| item.value,
+                return switch (map.getHashed(key, hash, map.child, 0)) {
+                    .item => |item| item.item.value,
                     .empty, .full => null,
                 };
             }
@@ -167,48 +162,6 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
 
             pub fn physicalCount(self: Map) usize {
                 return self.set.dense.count() + if (self.child) |c| c.physicalCount() else 0;
-            }
-
-            fn setHas(self: Map, key: K, hash: u32) bool {
-                const set = self.set;
-                const set_capacity = set.capacity();
-                var i = hash % set_capacity;
-                const start = i;
-                while (set.get(i)) |item| {
-                    if (ctx.eql(item.value.key, key)) return true;
-                    i = (i + 1) % set_capacity;
-                    if (start == i) break;
-                }
-                return false;
-            }
-
-            pub fn count(top: Map) usize {
-                var total: usize = 0;
-                var layer: ?Map = top;
-                var layer_idx: usize = 0;
-                while (layer) |c_map| {
-                    var it = c_map.set.dense.iterNoBorrow();
-                    while (it.next()) |item| {
-                        if (item.value.value == null) continue;
-                        const hash = ctx.hash(item.value.key);
-                        var shadowed = false;
-                        var up: ?Map = top;
-                        var up_idx: usize = 0;
-                        while (up) |u_map| {
-                            if (up_idx >= layer_idx) break;
-                            if (u_map.setHas(item.value.key, hash)) {
-                                shadowed = true;
-                                break;
-                            }
-                            up = if (u_map.child) |ch| ch.map.getUnwrap() else null;
-                            up_idx += 1;
-                        }
-                        if (!shadowed) total += 1;
-                    }
-                    layer = if (c_map.child) |ch| ch.map.getUnwrap() else null;
-                    layer_idx += 1;
-                }
-                return total;
             }
         };
 
@@ -263,7 +216,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
         pub fn put(self: *Self, gpa: std.mem.Allocator, key: K, value: V) !Self {
             var map = self.map.getUnwrap();
             const hash = ctx.hash(key);
-            var new_map = try switch (map.getHashed(key, hash, null)) {
+            var new_map = try switch (map.getHashed(key, hash, null, 0)) {
                 .empty => |index| map.insert(gpa, key, value, index) catch |err| switch (err) {
                     error.NoSpaceOnDense => if (map.depth >= max_depth or map.physicalCount() <= max_copy_size)
                         map.grow(gpa, key, value)
@@ -271,7 +224,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                         Map.initCapacity(gpa, &[1]KV{.{ .key = key, .value = value }}, capacityForSize(1), self.*),
                     else => return err,
                 },
-                .item => |item| self.update(gpa, key, value, item.sparse_index),
+                .item => |item| self.update(gpa, key, value, item.item.sparse_index),
                 .full => map.grow(gpa, key, value),
             };
             errdefer new_map.deinit(gpa);
@@ -282,30 +235,93 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
         pub fn delete(self: *Self, gpa: std.mem.Allocator, key: K) !Self {
             var map = self.map.getUnwrap();
             const hash = ctx.hash(key);
-            var new_map = try switch (map.getHashed(key, hash, map.child)) {
+            var new_map = try switch (map.getHashed(key, hash, map.child, 0)) {
                 .empty, .full => Map.init(map.set.borrow(), map.child),
-                .item => |item| self.update(gpa, key, null, item.sparse_index),
+                .item => |item| self.update(gpa, key, null, item.item.sparse_index),
             };
             errdefer new_map.deinit(gpa);
 
             return .{ .map = try RC(Map).init(gpa, new_map) };
         }
 
-        pub fn count(self: Self) usize {
-            return self.map.getUnwrap().count();
-        }
-
         pub fn physicalCount(self: Self) usize {
             return self.map.getUnwrap().physicalCount();
+        }
+
+        pub fn count(self: Self) usize {
+            var itr = Iterator.initNoBorrow(self.map.getUnwrap());
+            var i: usize = 0;
+            while (itr.next()) |_|: (i += 1) {}
+            return i;
         }
 
         pub fn depth(self: Self) u8 {
             return self.map.getUnwrap().depth;
         }
 
+        pub fn iter(self: *Self) Iterator {
+            return Iterator.init(self);
+        }
+
+        pub fn iterNoBorrow(self: Self) Iterator {
+            return Iterator.initNoBorrow(self);
+        }
+
+        const Iterator = struct {
+            parent: Map,
+            map: ?Map,
+            index: usize,
+            depth: u8,
+
+            pub fn init(map: *Map) Iterator {
+                return .{
+                    .parent = borrow(map).?,
+                    .map = map,
+                    .index = 0,
+                    .depth = 0,
+                };
+            }
+
+            pub fn deinit(iterator: Iterator, gpa: std.mem.Allocator) void {
+                iterator.parent.deinit(gpa);
+            }
+
+            pub fn initNoBorrow(map: Map) Iterator {
+                return .{
+                    .parent = map,
+                    .map = map,
+                    .index = 0,
+                    .depth = 0,
+                };
+            }
+
+            pub fn next(iterator: *Iterator) ?KV {
+                const map = iterator.map orelse return null;
+                const dense = map.set.dense;
+                if (iterator.index >= dense.list.getUnwrap().len) {
+                    iterator.map = if (map.child) |c| c.map.getUnwrap() else null;
+                    iterator.index = 0;
+                    iterator.depth += 1;
+                    return iterator.next();
+                }
+
+                const kv = dense.get(iterator.index).?.value;
+                iterator.index += 1;
+                const hash = ctx.hash(kv.key);
+                const item = switch (iterator.parent.getHashed(kv.key, hash, iterator.parent.child, 0)) {
+                    .item => |item| item,
+                    else => return iterator.next(),
+                };
+                return if (item.depth == iterator.depth)
+                    item.item.value
+                else
+                    iterator.next();
+            }
+        };
+
         /// A Sparse for private use inside the immutable hashmap
         const SparseSet = struct {
-            dense: List(Item),
+            dense: List(SparseSet.Item),
             sparse: Sparse,
 
             const Sparse = RC(std.ArrayList(?usize));
@@ -315,8 +331,8 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 value: KV,
             };
 
-            pub fn init(gpa: std.mem.Allocator, values: []const Item, size: usize) !SparseSet {
-                var dense = try List(Item).init(gpa, values);
+            pub fn init(gpa: std.mem.Allocator, values: []const SparseSet.Item, size: usize) !SparseSet {
+                var dense = try List(SparseSet.Item).init(gpa, values);
                 errdefer dense.deinit(gpa);
 
                 var sparse_arr = try std.ArrayList(?usize).initCapacity(gpa, size);
@@ -342,19 +358,19 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 return self.sparse.getUnwrap().items.len;
             }
 
-            fn denseGet(self: SparseSet, index: usize) ?Item {
+            fn denseGet(self: SparseSet, index: usize) ?SparseSet.Item {
                 const c = self.dense.count();
                 if (index >= c) return null;
                 return self.dense.get(c - index - 1);
             }
 
-            pub fn get(self: SparseSet, index: usize) ?Item {
+            pub fn get(self: SparseSet, index: usize) ?SparseSet.Item {
                 const i = self.sparse.getUnwrap().items[index] orelse return null;
                 const item = self.denseGet(i) orelse return null;
                 return if (item.sparse_index == index) item else null;
             }
 
-            pub fn insert(self: *SparseSet, gpa: std.mem.Allocator, item: Item) !SparseSet {
+            pub fn insert(self: *SparseSet, gpa: std.mem.Allocator, item: SparseSet.Item) !SparseSet {
                 if (!self.dense.hasSpaceAtHead()) return error.NoSpaceOnDense;
 
                 self.sparse.getPtrUnwrap().items[item.sparse_index] = self.dense.count();
@@ -369,13 +385,13 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 };
             }
 
-            pub fn update(self: *SparseSet, gpa: std.mem.Allocator, item: Item) !SparseSet {
+            pub fn update(self: *SparseSet, gpa: std.mem.Allocator, item: SparseSet.Item) !SparseSet {
                 const tail_offset = self.sparse.getUnwrap().items[item.sparse_index].?;
 
-                const new_bucket = try gpa.dupe(Item, self.dense.list.getPtrUnwrap().bucket.getPtrUnwrap().items);
+                const new_bucket = try gpa.dupe(SparseSet.Item, self.dense.list.getPtrUnwrap().bucket.getPtrUnwrap().items);
                 new_bucket[tail_offset] = item;
 
-                const new_dense = try List(Item).initOwned(gpa, new_bucket);
+                const new_dense = try List(SparseSet.Item).initOwned(gpa, new_bucket);
                 const new_sparse = try self.sparse.borrow();
                 return .{ .sparse = new_sparse, .dense = new_dense };
             }
@@ -541,10 +557,8 @@ test "Empty" {
     defer new_map.deinit(gpa);
 
     try std.testing.expectEqual(null, map.get("hello"));
-    try std.testing.expectEqual(0, map.count());
     try std.testing.expectEqual(1, new_map.get("hello").?.value.?);
     try std.testing.expectEqual(null, new_map.get("missing"));
-    try std.testing.expectEqual(1, new_map.count());
 }
 
 test "large update" {
@@ -786,4 +800,41 @@ test "count semantics" {
     try std.testing.expectEqual(40, chained.count());
     try std.testing.expectEqual(39, del.count());
     try std.testing.expect(del.physicalCount() > del.count());
+}
+
+test "count flat" {
+    const K = u32;
+    const V = u32;
+    const MyHashCtx = Ctx(K){
+        .eql = u32Eql,
+        .hash = u32Hash,
+    };
+
+    const Map = HashMap(K, V, MyHashCtx);
+    const gpa = std.testing.allocator;
+
+    var m0 = try Map.init(gpa, &[_]Map.KV{});
+    defer m0.deinit(gpa);
+
+    var m1 = try m0.put(gpa, 1, 10);
+    defer m1.deinit(gpa);
+
+    var m2 = try m1.put(gpa, 2, 20);
+    defer m2.deinit(gpa);
+
+    var m3 = try m2.put(gpa, 1, 99);
+    defer m3.deinit(gpa);
+
+    var m4 = try m3.delete(gpa, 1);
+    defer m4.deinit(gpa);
+
+    var m5 = try m4.delete(gpa, 12345);
+    defer m5.deinit(gpa);
+
+    try std.testing.expectEqual(0, m0.count());
+    try std.testing.expectEqual(1, m1.count());
+    try std.testing.expectEqual(2, m2.count());
+    try std.testing.expectEqual(2, m3.count());
+    try std.testing.expectEqual(1, m4.count());
+    try std.testing.expectEqual(1, m5.count());
 }
