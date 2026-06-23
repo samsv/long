@@ -311,16 +311,77 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             return Iterator.initNoBorrow(self);
         }
 
+        /// Iterator over the map values.
+        const Iterator = union(enum) {
+            flat: FlatIterator,
+            depth: DepthIterator,
+
+            /// Borrowing iterator over `map`; release with `deinit`.
+            pub fn init(map: *Map) Iterator {
+                return if (map.depth == 0) .{ .flat = FlatIterator.init(map) } else .{ .depth = DepthIterator.init(map) };
+            }
+
+            /// Release the borrowed map reference.
+            pub fn deinit(itr: *Iterator, gpa: std.mem.Allocator) void {
+                switch (itr.*) {
+                    inline else => |*i| i.deinit(gpa),
+                }
+            }
+
+            /// Iterator over `map` without taking a reference (do not call `deinit`).
+            pub fn initNoBorrow(map: Map) Iterator {
+                return if (map.depth == 0) .{ .flat = FlatIterator.initNoBorrow(map) } else .{ .depth = DepthIterator.initNoBorrow(map) };
+            }
+
+            /// Next live `KV`, or null when exhausted.
+            pub fn next(itr: *Iterator) ?KV {
+                return switch (itr.*) {
+                    inline else => |*i| i.next(),
+                };
+            }
+        };
+
+        /// A special iterator for maps with depth 0.
+        const FlatIterator = struct {
+            map: Map,
+            index: usize,
+
+            pub fn init(map: *Map) FlatIterator {
+                return .{
+                    .map = map,
+                    .index = 0,
+                };
+            }
+
+            pub fn deinit(iterator: FlatIterator, gpa: std.mem.Allocator) void {
+                iterator.map.deinit(gpa);
+            }
+
+            pub fn initNoBorrow(map: Map) FlatIterator {
+                return .{
+                    .map = map,
+                    .index = 0,
+                };
+            }
+
+            pub fn next(itr: *FlatIterator) ?KV {
+                const dense = itr.map.set.dense;
+                const item = dense.get(itr.index) orelse return null;
+                const kv = item.value;
+                itr.index += 1;
+                return if (kv.value) |_| kv else itr.next();
+            }
+        };
+
         /// Iterates the live, unique key/value pairs across all layers: the topmost non-null
         /// value for a key wins, and tombstones / shadowed entries are skipped.
-        const Iterator = struct {
+        const DepthIterator = struct {
             parent: Map,
             map: ?Map,
             index: usize,
             depth: u8,
 
-            /// Borrowing iterator over `map`; release with `deinit`.
-            pub fn init(map: *Map) Iterator {
+            pub fn init(map: *Map) DepthIterator {
                 return .{
                     .parent = borrow(map).?,
                     .map = map,
@@ -329,13 +390,11 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 };
             }
 
-            /// Release the borrowed map reference.
-            pub fn deinit(iterator: Iterator, gpa: std.mem.Allocator) void {
+            pub fn deinit(iterator: DepthIterator, gpa: std.mem.Allocator) void {
                 iterator.parent.deinit(gpa);
             }
 
-            /// Iterator over `map` without taking a reference (do not call `deinit`).
-            pub fn initNoBorrow(map: Map) Iterator {
+            pub fn initNoBorrow(map: Map) DepthIterator {
                 return .{
                     .parent = map,
                     .map = map,
@@ -344,9 +403,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 };
             }
 
-            /// Next live `KV`, or null when exhausted. Skips tombstones and any entry shadowed
-            /// by a higher layer (resolved from the top via `getHashed`).
-            pub fn next(iterator: *Iterator) ?KV {
+            pub fn next(iterator: *DepthIterator) ?KV {
                 const map = iterator.map orelse return null;
                 const dense = map.set.dense;
                 if (iterator.index >= dense.list.getUnwrap().len) {
