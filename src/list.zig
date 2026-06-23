@@ -167,6 +167,18 @@ pub fn List(comptime T: type) type {
             return newHead(ll, gpa, bucket_ref);
         }
 
+        pub fn appendMut(self: *Self, gpa: std.mem.Allocator, item: T) !void {
+            const ll = self.list.getPtr() catch unreachable;
+            var bucket_ref = ll.bucket;
+
+            var bucket = bucket_ref.getPtrUnwrap();
+            try bucket.append(gpa, item);
+            errdefer _ = bucket.pop();
+
+            ll.len += 1;
+            ll.start_index = bucket.items.len - 1;
+        }
+
         pub fn insert_at(self: *Self, gpa: std.mem.Allocator, idx: usize, item: T) !Self {
             if (idx == 0) return append(self, gpa, item);
 
