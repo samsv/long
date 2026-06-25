@@ -101,11 +101,25 @@ pub fn main(init: std.process.Init) !void {
     }
 
     {
+        std.debug.print("\n", .{});
         var scanner = try Scanner.init("x = [1, 2, 3]");
 
         var sexpr = try parser.expr(gpa, &scanner, 0);
         defer sexpr.deinit(gpa);
-        try stdout_writer.print("{f}\n", .{sexpr});
+
+        var vm = vm_.VM.init();
+        defer vm.deint(gpa);
+
+        var compiler = c.Compiler.init();
+        defer compiler.deinit(gpa);
+
+        try compiler.compile(gpa, sexpr, &vm);
+        try vm.run(gpa);
+
+        try vm.printStack(stdout_writer);
+        try stdout_writer.writeByte('\n');
         try stdout_writer.flush();
+
+        std.debug.print("bye\n\n", .{});
     }
 }

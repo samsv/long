@@ -38,6 +38,8 @@ pub const VM = struct {
     }
 
     pub fn deint(vm: *VM, gpa: std.mem.Allocator) void {
+        for (vm.stack.items) |*v| v.deinit(gpa);
+        for (vm.globals.items) |*v| v.deinit(gpa);
         vm.stack.deinit(gpa);
         vm.chunk.deinit(gpa);
         vm.globals.deinit(gpa);
@@ -71,7 +73,7 @@ pub const VM = struct {
     fn printSlice(slice: []const Value, writer: *std.Io.Writer) !void {
         try writer.writeByte('[');
         for (slice, 0..) |value, i| {
-            try value.print(writer);
+            try value.format(writer);
             if (i < slice.len - 1)
                 try writer.writeAll(", ");
         }
@@ -104,21 +106,18 @@ pub const VM = struct {
                     i += 1;
                 },
                 .jump, .jump_if_false => {
-                    try writer.print("{} [ {s} ]", .{ i, @tagName(instruction) });
                     const offset = vm.getOffset(i + 1);
-                    try writer.print(" offset {}\n", .{offset});
+                    try writer.print("{} [ {s} ] offset {}\n", .{ i, @tagName(instruction), offset });
                     i += 3;
                 },
-                .pop_local => {
-                    try writer.print("{} [ {s} ]", .{ i, @tagName(instruction) });
-                    const index = vm.chunk.bytecode.items[i + 1];
-                    try writer.print(" n {}\n", .{index});
+                .pop_local, .list => {
+                    const n = vm.chunk.bytecode.items[i + 1];
+                    try writer.print("{} [ {s} ] size {} \n", .{ i, @tagName(instruction), n });
                     i += 2;
                 },
                 .load_constant, .get_global, .get_local => {
-                    try writer.print("{} [ {s} ]", .{ i, @tagName(instruction) });
                     const index = vm.chunk.bytecode.items[i + 1];
-                    try writer.print(" index {}\n", .{index});
+                    try writer.print("{} [ {s} ] index {}\n", .{ i, @tagName(instruction), index });
                     i += 2;
                 },
             }
@@ -158,7 +157,7 @@ pub const VM = struct {
                 else => return error.InvalidArguments,
             },
             else => {
-                std.log.err("Can not {s} {} with {}\n", .{ @tagName(op), v1, v2 });
+                std.log.err("Can not {s} {f} with {f}\n", .{ @tagName(op), v1, v2 });
                 return error.InvalidArguments;
             },
         };
@@ -223,6 +222,15 @@ pub const VM = struct {
         vm.ip += 1;
     }
 
+    fn makeList(vm: *VM, gpa: std.mem.Allocator) !void {
+        const n = vm.chunk.bytecode.items[vm.ip + 1];
+        const values = try gpa.alloc(Value, n);
+        @memcpy(values, vm.stack.items[vm.stack.items.len - n..vm.stack.items.len]);
+        vm.stack.items.len -= n;
+        try vm.stack.append(gpa, try Value.initList(gpa, values));
+        vm.ip += 1;
+    }
+
     pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {
         while (vm.ip < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
@@ -237,6 +245,7 @@ pub const VM = struct {
                 .jump => vm.jump(),
                 .jump_if_false => vm.jumpIfFalse(),
                 .pop => _ = vm.stack.pop(),
+                .list => vm.makeList(gpa),
                 else => return error.NotImplemented,
             };
             vm.ip += 1;
@@ -258,5 +267,6 @@ pub const VM = struct {
         pop,
         jump,
         jump_if_false,
+        list,
     };
 };

@@ -24,13 +24,18 @@ fn expectClose(s: *Scanner, open: Token, kind: Token.Kind) !void {
 }
 
 fn expect(s: *Scanner, kind: Token.Kind) !void {
+    _ = try expectToken(s, kind);
+    return;
+}
+
+fn expectToken(s: *Scanner, kind: Token.Kind) !Token {
     const token = try s.next() orelse return Error.EOF;
 
     if (std.meta.eql(token.kind, kind)) {
-        return;
+        return token;
     }
 
-    std.log.err("Unexpected token: {any}. Expected token {any}", .{ token, kind });
+    std.log.err("Unexpected token: {f}. Expected token {f}", .{ token, kind });
     return Error.UnexpectedToken;
 }
 
@@ -86,16 +91,16 @@ fn parseParens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExp
     return parseContainer(&list, gpa, s, left_paren, .right_paren);
 }
 
-fn parseList(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token) !SExpr {
+fn parseList(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token, close_token: Token.Kind) !SExpr {
     var list: std.ArrayList(SExpr) = .empty;
     try list.append(gpa, .{
         .atom = .{
             .line = left_bracket.line,
-            .kind = .{ .literal = .{ .identifier = "list" } },
+            .kind = .{ .special_fns = .list },
         },
     });
 
-    return parseContainer(&list, gpa, s, left_bracket, .right_bracket);
+    return parseContainer(&list, gpa, s, left_bracket, close_token);
 }
 
 fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
@@ -155,7 +160,7 @@ fn parseOperator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_pr
                 try expect(s, .right_paren);
                 break :paren ret;
             },
-            .left_bracket => try parseList(gpa, s, start_token),
+            .left_bracket => try parseList(gpa, s, start_token, .right_bracket),
             else => blk: {
                 const prec = try prefixPrec(op);
                 const rhs = try expr(gpa, s, prec.left);
@@ -212,6 +217,7 @@ pub fn expr(gpa: std.mem.Allocator, s: *Scanner, min_prec: u8) anyerror!SExpr {
     return switch (token.kind) {
         .special_fns => |fn_| switch (fn_) {
             .@"if" => parseIf(gpa, s, token),
+            .list => parseList(gpa, s, try expectToken(s, .{ .operator = .left_paren }), .right_paren),
             else => error.NotImplemented,
         },
         else => parseOperator(gpa, s, token, min_prec) catch |err| {

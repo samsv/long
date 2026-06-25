@@ -13,7 +13,7 @@ pub const Value = union(enum) {
 
     pub fn deinit(value: *Value, gpa: std.mem.Allocator) void {
         switch (value.*) {
-            .obj => |obj| obj.release(gpa),
+            .obj => |obj| obj.deinit(gpa),
             else => {},
         }
     }
@@ -37,10 +37,19 @@ pub const Value = union(enum) {
         };
     }
 
-    pub fn print(value: Value, writer: *std.Io.Writer) !void {
-        switch (value) {
-            .nil => try writer.writeAll("nil"),
-            inline else => |v| try writer.print("{}", .{v}),
-        }
+    pub fn initList(gpa: std.mem.Allocator, values: []Value) !Value {
+        const obj = try gpa.create(Obj);
+        obj.* = try Obj.initList(gpa, values);
+        return .{
+            .obj = obj,
+        };
+    }
+
+    pub fn format(value: Value, writer: *std.Io.Writer) !void {
+        try switch (value) {
+            .nil => writer.writeAll("nil"),
+            .obj => |o| writer.print("{f}", .{o}),
+            inline else => |v| writer.print("{}", .{v}),
+        };
     }
 };

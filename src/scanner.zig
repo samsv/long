@@ -7,6 +7,12 @@ pub const Token = struct {
     kind: Kind,
     line: usize,
 
+    pub fn format(t: Token, writer: *std.Io.Writer) !void {
+        _ = try writer.write("{{\n");
+        try t.kind.format(writer);
+        try writer.print("Line: {}\n}}", .{t.line});
+    }
+
     pub const Kind = union(enum) {
         right_paren,
         right_brace,
@@ -88,6 +94,7 @@ pub const Token = struct {
         def,
         @"for",
         @"if",
+        list,
         map,
         mapf,
         match,
