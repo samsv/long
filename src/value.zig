@@ -1,19 +1,20 @@
 const std = @import("std");
 
 const Obj = @import("object.zig").Obj;
+const RC = @import("ref_counter.zig").RC;
 
 pub const Value = union(enum) {
     number: f64,
     boolean: bool,
     nil,
-    obj: *Obj,
+    obj: RC(Obj),
 
     pub const True: Value = .{ .boolean = true };
     pub const False: Value = .{ .boolean = false };
 
     pub fn deinit(value: *Value, gpa: std.mem.Allocator) void {
         switch (value.*) {
-            .obj => |obj| obj.deinit(gpa),
+            .obj => |*obj| obj.deinit(gpa),
             else => {},
         }
     }
@@ -38,8 +39,7 @@ pub const Value = union(enum) {
     }
 
     pub fn initList(gpa: std.mem.Allocator, values: []Value) !Value {
-        const obj = try gpa.create(Obj);
-        obj.* = try Obj.initList(gpa, values);
+        const obj = try RC(Obj).init(gpa, try Obj.initList(gpa, values));
         return .{
             .obj = obj,
         };
@@ -48,7 +48,7 @@ pub const Value = union(enum) {
     pub fn format(value: Value, writer: *std.Io.Writer) !void {
         try switch (value) {
             .nil => writer.writeAll("nil"),
-            .obj => |o| writer.print("{f}", .{o}),
+            .obj => |o| writer.print("{f}", .{o.getUnwrap()}),
             inline else => |v| writer.print("{}", .{v}),
         };
     }
