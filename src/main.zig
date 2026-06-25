@@ -48,16 +48,12 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("line: {}\n", .{scanner.err_ctx.?.line});
             return err;
         }) |next| {
-            try next.kind.print(stdout_writer);
-            try stdout_writer.print("\n", .{});
+            try stdout_writer.print("{f}\n", .{next.kind});
             try stdout_writer.flush();
         }
     }
 
     {
-        var a: std.Io.Writer.Allocating = .init(gpa);
-        defer a.deinit();
-
         var scanner = try Scanner.init(
             // this will fail at runtime, as k is not a global.
             \\y = if x = true do
@@ -76,10 +72,8 @@ pub fn main(init: std.process.Init) !void {
 
         var sexpr = try parser.expr(gpa, &scanner, 0);
         defer sexpr.deinit(gpa);
-        try sexpr.print(&a.writer);
-        std.debug.print("{s}\n", .{a.written()});
-
-        _ = a.writer.consumeAll();
+        try stdout_writer.print("{f}\n", .{sexpr});
+        try stdout_writer.flush();
 
         var vm = vm_.VM.init();
         defer vm.deint(gpa);
@@ -89,21 +83,29 @@ pub fn main(init: std.process.Init) !void {
 
         try compiler.compile(gpa, sexpr, &vm);
 
-        try vm.printInstructions(&a.writer);
-        std.debug.print("{s}\n", .{a.written()});
+        try vm.printInstructions(stdout_writer);
+        try stdout_writer.writeByte('\n');
+        try stdout_writer.flush();
 
         try vm.run(gpa);
 
-        _ = a.writer.consumeAll();
-        try vm.printStack(&a.writer);
-        std.debug.print("{s}\n", .{a.written()});
+        try vm.printStack(stdout_writer);
+        try stdout_writer.writeByte('\n');
 
-        _ = a.writer.consumeAll();
-        try vm.printLocals(&a.writer);
-        std.debug.print("{s}\n", .{a.written()});
+        try vm.printLocals(stdout_writer);
+        try stdout_writer.writeByte('\n');
 
-        _ = a.writer.consumeAll();
-        try vm.printGlobals(&a.writer);
-        std.debug.print("{s}\n", .{a.written()});
+        try vm.printGlobals(stdout_writer);
+        try stdout_writer.writeByte('\n');
+        try stdout_writer.flush();
+    }
+
+    {
+        var scanner = try Scanner.init("x = [1, 2, 3]");
+
+        var sexpr = try parser.expr(gpa, &scanner, 0);
+        defer sexpr.deinit(gpa);
+        try stdout_writer.print("{f}\n", .{sexpr});
+        try stdout_writer.flush();
     }
 }

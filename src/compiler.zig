@@ -126,8 +126,7 @@ pub const Compiler = struct {
         if (c.locals) |local| {
             try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
             try local.add(gpa, id);
-        }
-        else {
+        } else {
             try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_global), line);
             try c.globals.add(gpa, id);
         }

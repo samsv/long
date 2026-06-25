@@ -17,13 +17,13 @@ pub const SExpr = union(enum) {
         }
     }
 
-    pub fn print(s: SExpr, writer: *std.Io.Writer) !void {
+    pub fn format(s: SExpr, writer: *std.Io.Writer) !void {
         return switch (s) {
-            .atom => |t| t.kind.print(writer),
+            .atom => |t| t.kind.format(writer),
             .cons => |cons| {
                 try writer.writeByte('(');
                 for (cons.items, 0..) |c, i| {
-                    try c.print(writer);
+                    try c.format(writer);
                     if (i != cons.items.len - 1)
                         try writer.writeByte(' ');
                 }

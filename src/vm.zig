@@ -100,34 +100,34 @@ pub const VM = struct {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[i]);
             switch (instruction) {
                 .add, .sub, .mul, .div, .negate, .set_global, .set_local, .pop => {
-                    try writer.print("{} [ {s} ]\n", .{i, @tagName(instruction)});
+                    try writer.print("{} [ {s} ]\n", .{ i, @tagName(instruction) });
                     i += 1;
                 },
                 .jump, .jump_if_false => {
-                    try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
+                    try writer.print("{} [ {s} ]", .{ i, @tagName(instruction) });
                     const offset = vm.getOffset(i + 1);
                     try writer.print(" offset {}\n", .{offset});
                     i += 3;
                 },
                 .pop_local => {
-                    try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
+                    try writer.print("{} [ {s} ]", .{ i, @tagName(instruction) });
                     const index = vm.chunk.bytecode.items[i + 1];
                     try writer.print(" n {}\n", .{index});
                     i += 2;
                 },
                 .load_constant, .get_global, .get_local => {
-                    try writer.print("{} [ {s} ]", .{i, @tagName(instruction)});
+                    try writer.print("{} [ {s} ]", .{ i, @tagName(instruction) });
                     const index = vm.chunk.bytecode.items[i + 1];
                     try writer.print(" index {}\n", .{index});
                     i += 2;
-                }
+                },
             }
         }
     }
 
     pub fn patchJump(vm: *VM, index: usize, value: u16) void {
         vm.chunk.bytecode.items[index] = @truncate(value);
-        vm.chunk.bytecode.items[index+1] = @truncate(value >> 8);
+        vm.chunk.bytecode.items[index + 1] = @truncate(value >> 8);
     }
 
     pub fn addJump(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
@@ -158,7 +158,7 @@ pub const VM = struct {
                 else => return error.InvalidArguments,
             },
             else => {
-                std.log.err("Can not {s} {} with {}\n", .{@tagName(op), v1, v2});
+                std.log.err("Can not {s} {} with {}\n", .{ @tagName(op), v1, v2 });
                 return error.InvalidArguments;
             },
         };
@@ -243,7 +243,6 @@ pub const VM = struct {
         }
     }
 
-
     pub const Instructions = enum {
         add,
         sub,
@@ -261,4 +260,3 @@ pub const VM = struct {
         jump_if_false,
     };
 };
-

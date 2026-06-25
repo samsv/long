@@ -56,13 +56,16 @@ fn parseBracket(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token, lhs: S
     return .{ .cons = list };
 }
 
-fn parseParens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExpr) !SExpr {
-    var list: std.ArrayList(SExpr) = .empty;
-    try list.append(gpa, lhs);
-
-    if (try s.peek()) |t| if (t.kind == .right_paren) {
+fn parseContainer(
+    list: *std.ArrayList(SExpr),
+    gpa: std.mem.Allocator,
+    s: *Scanner,
+    open_token: Token,
+    close_kind: Token.Kind,
+) !SExpr {
+    if (try s.peek()) |t| if (std.meta.eql(t.kind, close_kind)) {
         _ = s.next() catch unreachable;
-        return .{ .cons = list };
+        return .{ .cons = list.* };
     };
 
     while (true) {
@@ -72,8 +75,27 @@ fn parseParens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExp
         break;
     }
 
-    try expectClose(s, left_paren, .right_paren);
-    return .{ .cons = list };
+    try expectClose(s, open_token, close_kind);
+    return .{ .cons = list.* };
+}
+
+fn parseParens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExpr) !SExpr {
+    var list: std.ArrayList(SExpr) = .empty;
+    try list.append(gpa, lhs);
+
+    return parseContainer(&list, gpa, s, left_paren, .right_paren);
+}
+
+fn parseList(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token) !SExpr {
+    var list: std.ArrayList(SExpr) = .empty;
+    try list.append(gpa, .{
+        .atom = .{
+            .line = left_bracket.line,
+            .kind = .{ .literal = .{ .identifier = "list" } },
+        },
+    });
+
+    return parseContainer(&list, gpa, s, left_bracket, .right_bracket);
 }
 
 fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
@@ -93,7 +115,7 @@ fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
         const false_branch = if (try check(s, .{ .special_fns = .@"if" })) |if_token|
             try parseIf(gpa, s, if_token)
         else
-            try parseBlock(gpa, s, &[_]Token.Kind{ .{ .keywords = .end } }, else_token.line);
+            try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, else_token.line);
         try list.append(gpa, false_branch);
     }
 
@@ -133,6 +155,7 @@ fn parseOperator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_pr
                 try expect(s, .right_paren);
                 break :paren ret;
             },
+            .left_bracket => try parseList(gpa, s, start_token),
             else => blk: {
                 const prec = try prefixPrec(op);
                 const rhs = try expr(gpa, s, prec.left);
@@ -143,7 +166,7 @@ fn parseOperator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_pr
         },
         .literal => .{ .atom = start_token },
         else => {
-            std.log.err("Unexpected token {}", .{ start_token });
+            std.log.err("Unexpected token {}", .{start_token});
             return Error.UnexpectedToken;
         },
     };
@@ -180,7 +203,7 @@ fn parseOperator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_pr
     return lhs;
 }
 
-pub fn expr(gpa: std.mem.Allocator, s: *Scanner, min_prec: u8) !SExpr {
+pub fn expr(gpa: std.mem.Allocator, s: *Scanner, min_prec: u8) anyerror!SExpr {
     const token = try s.next() orelse {
         std.log.err("Line {}: Expected Token, got <EOF>", .{s.line});
         return Error.UnexpectedToken;
@@ -191,7 +214,10 @@ pub fn expr(gpa: std.mem.Allocator, s: *Scanner, min_prec: u8) !SExpr {
             .@"if" => parseIf(gpa, s, token),
             else => error.NotImplemented,
         },
-        else => parseOperator(gpa, s, token, min_prec),
+        else => parseOperator(gpa, s, token, min_prec) catch |err| {
+            std.debug.print("Error at line {} token: {f}\n", .{ token.line, token.kind });
+            return err;
+        },
     };
 }
 
@@ -239,11 +265,11 @@ test "ok exprs" {
 
         var a: std.Io.Writer.Allocating = .init(gpa);
         defer a.deinit();
-        try sexpr.print(&a.writer);
+        try sexpr.format(&a.writer);
 
         const w = a.written();
         std.testing.expectEqualDeep(t[1], w) catch |err| {
-            std.debug.print("Expected {s}; got {s}\n", .{t[1], w});
+            std.debug.print("Expected {s}; got {s}\n", .{ t[1], w });
             return err;
         };
     }

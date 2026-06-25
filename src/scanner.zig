@@ -23,7 +23,7 @@ pub const Token = struct {
 
         eof,
 
-        pub fn print(t: Kind, writer: *std.Io.Writer) !void {
+        pub fn format(t: Kind, writer: *std.Io.Writer) !void {
             switch (t) {
                 .right_paren => try writer.writeAll(")"),
                 .right_brace => try writer.writeAll("}"),
@@ -114,8 +114,8 @@ pub const Token = struct {
 
         pub const Constant = enum {
             nil,
-            @"false",
-            @"true",
+            false,
+            true,
         };
     };
 };

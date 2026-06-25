@@ -434,4 +434,3 @@ test "count flat" {
     try std.testing.expectEqual(1, m4.count());
     try std.testing.expectEqual(1, m5.count());
 }
-
