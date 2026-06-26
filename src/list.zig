@@ -12,6 +12,16 @@ pub fn List(comptime T: type) type {
 
         pub const Bucket = std.ArrayList(T);
 
+        fn deinitBucket(b: *Bucket, gpa: std.mem.Allocator) void {
+            const TypeInfo = switch (@typeInfo(T)) {
+                .pointer => |info| info.child,
+                else => T,
+            };
+
+            if (std.meta.hasFn(TypeInfo, "deinit")) for (b.items) |*v|
+                v.deinit(gpa);
+        }
+
         /// Drop this reference. The underlying nodes/buckets are freed only once their
         /// last reference is released.
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
@@ -31,7 +41,7 @@ pub fn List(comptime T: type) type {
             /// Release this node's bucket, then recurse into the tail. With refcounting
             /// this tears down the whole chain when it becomes unshared.
             pub fn deinit(ll: *LL, gpa: std.mem.Allocator) void {
-                ll.bucket.deinit(gpa);
+                ll.bucket.deinitWithCb(gpa, deinitBucket);
 
                 if (ll.node_tail) |*t|
                     t.deinit(gpa);
@@ -132,7 +142,7 @@ pub fn List(comptime T: type) type {
             new_bucket.appendSliceAssumeCapacity(values);
 
             var bucket = try RC(Bucket).init(gpa, new_bucket);
-            bucket.value.?.count = 0;
+            bucket.inner.?.count = 0;
             return bucket;
         }
 

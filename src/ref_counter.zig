@@ -7,7 +7,7 @@ const borrow_errors = error{
 
 pub fn RC(comptime T: type) type {
     return struct {
-        value: ?*Inner,
+        inner: ?*Inner,
 
         const Self = @This();
 
@@ -16,38 +16,50 @@ pub fn RC(comptime T: type) type {
         }
 
         pub fn get(self: Self) !T {
-            if (self.value) |value| {
-                return value.value;
+            if (self.inner) |inner| {
+                return inner.value;
             }
 
             return error.FreedReference;
         }
 
         pub fn getPtr(self: Self) !*T {
-            if (self.value) |value| {
-                return &value.value;
+            if (self.inner) |inner| {
+                return &inner.value;
             }
 
             return error.FreedReference;
         }
 
         pub fn getUnwrap(self: Self) T {
-            return self.value.?.value;
+            return self.inner.?.value;
         }
 
         pub fn getPtrUnwrap(self: Self) *T {
-            return &self.value.?.value;
+            return &self.inner.?.value;
         }
 
         pub fn borrow(self: Self) !Self {
-            const value = self.value orelse return error.BorrowOfFreedReference;
-            return .{ .value = value._borrow() };
+            const value = self.inner orelse return error.BorrowOfFreedReference;
+            return .{ .inner = value._borrow() };
         }
 
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
-            var value = self.value orelse return;
+            var value = self.inner orelse return;
             value._deinit(gpa);
-            self.value = null;
+            self.inner = null;
+        }
+
+        pub fn deinitWithCb(self: *Self, gpa: std.mem.Allocator, fun: *const fn(*T, gpa: std.mem.Allocator) void,) void {
+            var inner = self.inner orelse return;
+            fun(&inner.value, gpa);
+            inner._deinit(gpa);
+            self.inner = null;
+        }
+
+        pub fn count(self: Self) usize {
+            const v = self.inner orelse return 1;
+            return v.count;
         }
 
         const Inner = struct {
@@ -72,7 +84,7 @@ pub fn RC(comptime T: type) type {
 
                 const self = try gpa.create(Inner);
                 self.* = .{ .value = value };
-                return .{ .value = self };
+                return .{ .inner = self };
             }
 
             fn _borrow(self: *Inner) *Inner {

@@ -141,9 +141,12 @@ pub const VM = struct {
         return vm.chunk.bytecode.items.len - 2;
     }
 
-    fn mathOp(vm: *VM, op: Instructions) !void {
-        const v2 = vm.stack.pop().?;
-        const v1 = vm.stack.pop().?;
+    fn mathOp(vm: *VM, gpa: std.mem.Allocator, op: Instructions) !void {
+        var v2 = vm.stack.pop().?;
+        var v1 = vm.stack.pop().?;
+
+        defer v1.deinit(gpa);
+        defer v2.deinit(gpa);
 
         const v: Value = switch (v1) {
             .number => |n1| switch (v2) {
@@ -167,8 +170,8 @@ pub const VM = struct {
 
     fn loadConstant(vm: *VM, gpa: std.mem.Allocator) !void {
         const i = vm.chunk.bytecode.items[vm.ip + 1];
-        const v = vm.chunk.constants.items[i];
-        try vm.stack.append(gpa, v);
+        var v = vm.chunk.constants.items[i];
+        try vm.stackAppend(gpa, &v);
         vm.ip += 1;
     }
 
@@ -177,8 +180,9 @@ pub const VM = struct {
         vm.ip += offset;
     }
 
-    fn jumpIfFalse(vm: *VM) void {
-        const v = vm.stack.pop().?;
+    fn jumpIfFalse(vm: *VM, gpa: std.mem.Allocator) void {
+        var v = vm.stack.pop().?;
+        defer v.deinit(gpa);
         if (v.isTruthy()) {
             // don't jump
             vm.ip += 2;
@@ -194,13 +198,17 @@ pub const VM = struct {
         try vm.globals.append(gpa, v.borrow());
     }
 
+    fn stackAppend(vm: *VM, gpa: std.mem.Allocator, v: *Value) !void {
+        try vm.stack.append(gpa, v.borrow());
+    }
+
     fn getGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
         const i = vm.chunk.bytecode.items[vm.ip + 1];
         if (i >= vm.globals.items.len)
             return error.UndefinedGlobal;
 
-        const v = vm.globals.items[i];
-        try vm.stack.append(gpa, v);
+        var v = vm.globals.items[i];
+        try vm.stackAppend(gpa, &v);
         vm.ip += 1;
     }
 
@@ -211,8 +219,8 @@ pub const VM = struct {
 
     fn getLocal(vm: *VM, gpa: std.mem.Allocator) !void {
         const i = vm.chunk.bytecode.items[vm.ip + 1];
-        const v = vm.chunk.locals.items[i];
-        try vm.stack.append(gpa, v);
+        var v = vm.chunk.locals.items[i];
+        try vm.stackAppend(gpa, &v);
         vm.ip += 1;
     }
 
@@ -238,7 +246,7 @@ pub const VM = struct {
         while (vm.ip < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
             try switch (instruction) {
-                .add, .sub, .mul, .div => vm.mathOp(instruction),
+                .add, .sub, .mul, .div => vm.mathOp(gpa, instruction),
                 .set_global => vm.setGlobal(gpa),
                 .get_global => vm.getGlobal(gpa),
                 .set_local => vm.setLocal(gpa),
@@ -246,8 +254,11 @@ pub const VM = struct {
                 .pop_local => vm.popLocal(gpa),
                 .load_constant => vm.loadConstant(gpa),
                 .jump => vm.jump(),
-                .jump_if_false => vm.jumpIfFalse(),
-                .pop => _ = vm.stack.pop(),
+                .jump_if_false => vm.jumpIfFalse(gpa),
+                .pop => {
+                    var v = vm.stack.pop().?;
+                    v.deinit(gpa);
+                },
                 .list => vm.makeList(gpa),
                 else => return error.NotImplemented,
             };
