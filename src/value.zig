@@ -19,6 +19,13 @@ pub const Value = union(enum) {
         }
     }
 
+    pub fn borrow(self: *Value) Value {
+        return switch (self.*) {
+            .obj => |*obj| .{ .obj = obj.borrow() catch unreachable },
+            else => self.*,
+        };
+    }
+
     pub fn asInt(v: Value, comptime T: type) !T {
         return switch (v) {
             .number => |n| if (n == @trunc(n)) @intFromFloat(n) else error.FloatNotAnInt,

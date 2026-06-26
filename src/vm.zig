@@ -190,8 +190,8 @@ pub const VM = struct {
     }
 
     fn setGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
-        const v = vm.stack.getLast();
-        try vm.globals.append(gpa, v);
+        var v = vm.stack.getLast();
+        try vm.globals.append(gpa, v.borrow());
     }
 
     fn getGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
@@ -205,8 +205,8 @@ pub const VM = struct {
     }
 
     fn setLocal(vm: *VM, gpa: std.mem.Allocator) !void {
-        const v = vm.stack.getLast();
-        try vm.chunk.locals.append(gpa, v);
+        var v = vm.stack.getLast();
+        try vm.chunk.locals.append(gpa, v.borrow());
     }
 
     fn getLocal(vm: *VM, gpa: std.mem.Allocator) !void {
@@ -216,8 +216,11 @@ pub const VM = struct {
         vm.ip += 1;
     }
 
-    fn popLocal(vm: *VM) void {
+    fn popLocal(vm: *VM, gpa: std.mem.Allocator) void {
         const index = vm.chunk.bytecode.items[vm.ip + 1];
+        for (vm.chunk.locals.items[vm.chunk.locals.items.len - index..]) |*v|
+            v.deinit(gpa);
+
         vm.chunk.locals.items.len -= index;
         vm.ip += 1;
     }
@@ -240,7 +243,7 @@ pub const VM = struct {
                 .get_global => vm.getGlobal(gpa),
                 .set_local => vm.setLocal(gpa),
                 .get_local => vm.getLocal(gpa),
-                .pop_local => vm.popLocal(),
+                .pop_local => vm.popLocal(gpa),
                 .load_constant => vm.loadConstant(gpa),
                 .jump => vm.jump(),
                 .jump_if_false => vm.jumpIfFalse(),
