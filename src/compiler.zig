@@ -200,6 +200,9 @@ pub const Compiler = struct {
         try patchJump(j2, vm);
     }
 
+    fn compileFor(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
+    }
+
     fn compileList(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM, line: usize) !void {
         for (1..args.len+1) |i|
             try c.compile(gpa, args[args.len - i], vm);
@@ -232,6 +235,7 @@ pub const Compiler = struct {
                 .operator => |op| c.compileOperator(gpa, op, cons[1..], vm, a.line),
                 .special_fns => |fn_| switch (fn_) {
                     .@"if" => c.compileIf(gpa, cons[1..], vm),
+                    .@"for" => c.compileFor(gpa, cons[1..], vm),
                     .list => c.compileList(gpa, cons[1..], vm, a.line),
                     else => return error.NotImplemented,
                 },
