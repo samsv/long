@@ -70,7 +70,8 @@ pub const VM = struct {
         return low + high;
     }
 
-    fn printSlice(slice: []const Value, writer: *std.Io.Writer) !void {
+    fn printSlice(slice: []const Value, name: []const u8, writer: *std.Io.Writer) !void {
+        try writer.print("===== {s} =====\n", .{name});
         try writer.writeByte('[');
         for (slice, 0..) |value, i| {
             try value.format(writer);
@@ -81,18 +82,19 @@ pub const VM = struct {
     }
 
     pub fn printStack(vm: VM, writer: *std.Io.Writer) !void {
-        try writer.writeAll("===== Stack =====\n");
-        try printSlice(vm.stack.items, writer);
+        try printSlice(vm.stack.items, "Stack", writer);
     }
 
     pub fn printLocals(vm: VM, writer: *std.Io.Writer) !void {
-        try writer.writeAll("===== Locals =====\n");
-        try printSlice(vm.chunk.locals.items, writer);
+        try printSlice(vm.chunk.locals.items, "Locals", writer);
     }
 
     pub fn printGlobals(vm: VM, writer: *std.Io.Writer) !void {
-        try writer.writeAll("===== Globals =====\n");
-        try printSlice(vm.globals.items, writer);
+        try printSlice(vm.globals.items, "Globals", writer);
+    }
+
+    pub fn printConstants(vm: VM, writer: *std.Io.Writer) !void {
+        try printSlice(vm.chunk.constants.items, "Constants", writer);
     }
 
     pub fn printInstructions(vm: VM, writer: *std.Io.Writer) !void {
@@ -110,12 +112,12 @@ pub const VM = struct {
                     try writer.print("{} [ {s} ] offset {}\n", .{ i, @tagName(instruction), offset });
                     i += 3;
                 },
-                .pop_local, .list => {
+                .list => {
                     const n = vm.chunk.bytecode.items[i + 1];
                     try writer.print("{} [ {s} ] size {} \n", .{ i, @tagName(instruction), n });
                     i += 2;
                 },
-                .load_constant, .get_global, .get_local => {
+                .pop_local, .load_constant, .get_global, .get_local => {
                     const index = vm.chunk.bytecode.items[i + 1];
                     try writer.print("{} [ {s} ] index {}\n", .{ i, @tagName(instruction), index });
                     i += 2;
@@ -226,7 +228,7 @@ pub const VM = struct {
 
     fn popLocal(vm: *VM, gpa: std.mem.Allocator) void {
         const index = vm.chunk.bytecode.items[vm.ip + 1];
-        for (vm.chunk.locals.items[vm.chunk.locals.items.len - index..]) |*v|
+        for (vm.chunk.locals.items[vm.chunk.locals.items.len - index ..]) |*v|
             v.deinit(gpa);
 
         vm.chunk.locals.items.len -= index;
@@ -236,7 +238,7 @@ pub const VM = struct {
     fn makeList(vm: *VM, gpa: std.mem.Allocator) !void {
         const n = vm.chunk.bytecode.items[vm.ip + 1];
         const values = try gpa.alloc(Value, n);
-        @memcpy(values, vm.stack.items[vm.stack.items.len - n..vm.stack.items.len]);
+        @memcpy(values, vm.stack.items[vm.stack.items.len - n .. vm.stack.items.len]);
         vm.stack.items.len -= n;
         try vm.stack.append(gpa, try Value.initList(gpa, values));
         vm.ip += 1;

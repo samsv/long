@@ -29,7 +29,7 @@ fn expectId(s: *Scanner) !Token {
     if (std.meta.activeTag(token.kind) == .literal and std.meta.activeTag(token.kind.literal) == .identifier)
         return token;
 
-    std.log.err("Expected identifier, found token {f}", .{ token });
+    std.log.err("Expected identifier, found token {f}", .{token});
     return Error.UnexpectedToken;
 }
 
@@ -127,7 +127,7 @@ fn parseFor(gpa: std.mem.Allocator, s: *Scanner, for_token: Token) !SExpr {
     list.appendAssumeCapacity(.{ .cons = loop_cond });
 
     try expect(s, .{ .keywords = .do });
-    const body = try parseBlock(gpa, s, &[_]Token.Kind{ .{ .keywords = .end } }, for_token.line);
+    const body = try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, for_token.line);
     list.appendAssumeCapacity(body);
 
     return .{ .cons = list };

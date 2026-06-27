@@ -50,7 +50,11 @@ pub fn RC(comptime T: type) type {
             self.inner = null;
         }
 
-        pub fn deinitWithCb(self: *Self, gpa: std.mem.Allocator, fun: *const fn(*T, gpa: std.mem.Allocator) void,) void {
+        pub fn deinitWithCb(
+            self: *Self,
+            gpa: std.mem.Allocator,
+            fun: *const fn (*T, gpa: std.mem.Allocator) void,
+        ) void {
             var inner = self.inner orelse return;
             fun(&inner.value, gpa);
             inner._deinit(gpa);

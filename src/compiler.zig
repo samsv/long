@@ -209,15 +209,27 @@ pub const Compiler = struct {
         try patchJump(j2, vm);
     }
 
-    fn compileFor(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
+    fn compileFor(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM, line: usize) !void {
         try c.initScope(gpa);
         defer c.deinitScope(gpa, vm) catch unreachable;
 
-        _ = args;
+        // for binding
+        const binding = args[0].cons;
+        try c.locals.?.add(gpa, " i ");
+        _ = try vm.addConstant(gpa, .{ .number = 0 });
+        try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
+
+        try c.compile(gpa, binding.items[1], vm);
+        try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
+        try c.locals.?.add(gpa, " list ");
+
+        // for condition
+
+        // for body
     }
 
     fn compileList(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM, line: usize) !void {
-        for (1..args.len+1) |i|
+        for (1..args.len + 1) |i|
             try c.compile(gpa, args[args.len - i], vm);
 
         try vm.addBytes(gpa, @intFromEnum(VM.Instructions.list), @intCast(args.len), line);
@@ -248,7 +260,7 @@ pub const Compiler = struct {
                 .operator => |op| c.compileOperator(gpa, op, cons[1..], vm, a.line),
                 .special_fns => |fn_| switch (fn_) {
                     .@"if" => c.compileIf(gpa, cons[1..], vm),
-                    .@"for" => c.compileFor(gpa, cons[1..], vm),
+                    .@"for" => c.compileFor(gpa, cons[1..], vm, a.line),
                     .list => c.compileList(gpa, cons[1..], vm, a.line),
                     else => return error.NotImplemented,
                 },
