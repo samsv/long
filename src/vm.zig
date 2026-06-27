@@ -107,7 +107,7 @@ pub const VM = struct {
                     try writer.print("{} [ {s} ]\n", .{ i, @tagName(instruction) });
                     i += 1;
                 },
-                .jump, .jump_if_false => {
+                .jump, .jump_back, .jump_if_false => {
                     const offset = vm.getOffset(i + 1);
                     try writer.print("{} [ {s} ] offset {}\n", .{ i, @tagName(instruction), offset });
                     i += 3;
@@ -135,6 +135,12 @@ pub const VM = struct {
         try vm.addByte(gpa, @intFromEnum(Instructions.jump), line);
         try vm.addBytes(gpa, 255, 255, line);
         return vm.chunk.bytecode.items.len - 2;
+    }
+
+    pub fn addJumpBack(vm: *VM, gpa: std.mem.Allocator, to: usize, line: usize) !void {
+        try vm.addByte(gpa, @intFromEnum(Instructions.jump_back), line);
+        const offset: u16 = @intCast(vm.chunk.bytecode.items.len - to);
+        try vm.addBytes(gpa, @truncate(offset), @truncate(offset >> 8), line);
     }
 
     pub fn addJumpIfFalse(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
@@ -180,6 +186,11 @@ pub const VM = struct {
     fn jump(vm: *VM) !void {
         const offset = vm.getOffset(vm.ip + 1);
         vm.ip += offset;
+    }
+
+    fn jumpBack(vm: *VM) !void {
+        const offset = vm.getOffset(vm.ip + 1);
+        vm.ip -= offset;
     }
 
     fn jumpIfFalse(vm: *VM, gpa: std.mem.Allocator) void {
@@ -256,6 +267,7 @@ pub const VM = struct {
                 .pop_local => vm.popLocal(gpa),
                 .load_constant => vm.loadConstant(gpa),
                 .jump => vm.jump(),
+                .jump_back => vm.jumpBack(),
                 .jump_if_false => vm.jumpIfFalse(gpa),
                 .pop => {
                     var v = vm.stack.pop().?;
@@ -282,6 +294,7 @@ pub const VM = struct {
         negate,
         pop,
         jump,
+        jump_back,
         jump_if_false,
         list,
     };

@@ -224,8 +224,15 @@ pub const Compiler = struct {
         try c.locals.?.add(gpa, " list ");
 
         // for condition
+        const loop_start = vm.chunk.bytecode.items.len;
+        const j1 = try vm.addJumpIfFalse(gpa, 0);
 
         // for body
+
+        // end
+        try vm.addJumpBack(gpa, loop_start, line);
+        try patchJump(j1, vm);
+
     }
 
     fn compileList(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM, line: usize) !void {
