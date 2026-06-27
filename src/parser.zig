@@ -23,6 +23,16 @@ fn expectClose(s: *Scanner, open: Token, kind: Token.Kind) !void {
     };
 }
 
+fn expectId(s: *Scanner) !Token {
+    const token = try s.next() orelse return Error.EOF;
+
+    if (std.meta.activeTag(token.kind) == .literal and std.meta.activeTag(token.kind.literal) == .identifier)
+        return token;
+
+    std.log.err("Expected identifier, found token {f}", .{ token });
+    return Error.UnexpectedToken;
+}
+
 fn expect(s: *Scanner, kind: Token.Kind) !void {
     _ = try expectToken(s, kind);
     return;
@@ -101,6 +111,26 @@ fn parseList(gpa: std.mem.Allocator, s: *Scanner, left_bracket: Token, close_tok
     });
 
     return parseContainer(&list, gpa, s, left_bracket, close_token);
+}
+
+fn parseFor(gpa: std.mem.Allocator, s: *Scanner, for_token: Token) !SExpr {
+    var list: std.ArrayList(SExpr) = try .initCapacity(gpa, 3);
+    errdefer list.deinit(gpa);
+    list.appendAssumeCapacity(.{ .atom = for_token });
+
+    var loop_cond: std.ArrayList(SExpr) = try .initCapacity(gpa, 2);
+    errdefer loop_cond.deinit(gpa);
+
+    loop_cond.appendAssumeCapacity(.{ .atom = try expectId(s) });
+    try expect(s, .{ .keywords = .in });
+    loop_cond.appendAssumeCapacity(try expr(gpa, s, 0));
+    list.appendAssumeCapacity(.{ .cons = loop_cond });
+
+    try expect(s, .{ .keywords = .do });
+    const body = try parseBlock(gpa, s, &[_]Token.Kind{ .{ .keywords = .end } }, for_token.line);
+    list.appendAssumeCapacity(body);
+
+    return .{ .cons = list };
 }
 
 fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
@@ -217,6 +247,7 @@ pub fn expr(gpa: std.mem.Allocator, s: *Scanner, min_prec: u8) anyerror!SExpr {
     return switch (token.kind) {
         .special_fns => |fn_| switch (fn_) {
             .@"if" => parseIf(gpa, s, token),
+            .@"for" => parseFor(gpa, s, token),
             .list => parseList(gpa, s, try expectToken(s, .{ .operator = .left_paren }), .right_paren),
             else => error.NotImplemented,
         },

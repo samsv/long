@@ -55,7 +55,6 @@ pub fn main(init: std.process.Init) !void {
 
     {
         var scanner = try Scanner.init(
-            // this will fail at runtime, as k is not a global.
             \\y = if x = true do
             \\    k = 5
             \\    l = if k do
@@ -102,10 +101,12 @@ pub fn main(init: std.process.Init) !void {
 
     {
         std.debug.print("\n", .{});
-        var scanner = try Scanner.init("x = [1, 2, 3]");
+        var scanner = try Scanner.init("for x in [1, 2, 3] do x end");
 
         var sexpr = try parser.expr(gpa, &scanner, 0);
         defer sexpr.deinit(gpa);
+
+        try stdout_writer.print("{f}\n", .{sexpr});
 
         var vm = vm_.VM.init();
         defer vm.deint(gpa);
@@ -114,7 +115,7 @@ pub fn main(init: std.process.Init) !void {
         defer compiler.deinit(gpa);
 
         try compiler.compile(gpa, sexpr, &vm);
-        try vm.run(gpa);
+        //try vm.run(gpa);
 
         try vm.printStack(stdout_writer);
         try stdout_writer.writeByte('\n');

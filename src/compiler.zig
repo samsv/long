@@ -110,6 +110,18 @@ pub const Compiler = struct {
         return if (std.meta.activeTag(u) == tag) @field(u, @tagName(tag)) else error.UnexpectedValue;
     }
 
+    fn expectId(v: SExpr) ![]const u8 {
+        const atom = try expect(v, .atom);
+        const literal = try expect(atom.kind, .literal);
+        const id = try expect(literal, .identifier);
+        return id;
+    }
+
+    fn expectKeyword(v: SExpr, kw: Token.Keywords) !void {
+        const atom = try expect(v, .atom);
+        _ = try expect(atom.kind, kw);
+    }
+
     fn compileEqual(
         c: *Compiler,
         gpa: std.mem.Allocator,
@@ -117,10 +129,7 @@ pub const Compiler = struct {
         vm: *VM,
         line: usize,
     ) !void {
-        const atom = try expect(args[0], .atom);
-        const literal = try expect(atom.kind, .literal);
-        const id = try expect(literal, .identifier);
-
+        const id = try expectId(args[0]);
         try c.compile(gpa, args[1], vm);
 
         if (c.locals) |local| {
@@ -201,6 +210,10 @@ pub const Compiler = struct {
     }
 
     fn compileFor(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
+        try c.initScope(gpa);
+        defer c.deinitScope(gpa, vm) catch unreachable;
+
+        _ = args;
     }
 
     fn compileList(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM, line: usize) !void {
