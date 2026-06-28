@@ -76,6 +76,7 @@ pub fn main(init: std.process.Init) !void {
         defer sexpr.deinit(gpa);
 
         try stdout_writer.print("{f}\n", .{sexpr});
+        try stdout_writer.flush();
 
         var vm = vm_.VM.init();
         defer vm.deint(gpa);
@@ -84,7 +85,8 @@ pub fn main(init: std.process.Init) !void {
         defer compiler.deinit(gpa);
 
         try compiler.compile(gpa, sexpr, &vm);
-        //try vm.run(gpa);
+        try vm.run(gpa);
+
         try vm.printInstructions(stdout_writer);
         try stdout_writer.writeByte('\n');
 

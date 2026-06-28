@@ -28,7 +28,10 @@ pub const Globals = struct {
     }
 
     pub fn get(g: Globals, id: []const u8) !usize {
-        return g.name_indexes.get(id) orelse error.UndefinedVariable;
+        return g.name_indexes.get(id) orelse {
+            std.log.err("Variable {s} not found.\n", .{id});
+            return error.UndefinedVariable;
+        };
     }
 };
 
@@ -215,24 +218,39 @@ pub const Compiler = struct {
 
         // for binding
         const binding = args[0].cons;
-        try c.locals.?.add(gpa, " i ");
-        _ = try vm.addConstant(gpa, .{ .number = 0 });
-        try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
 
         try c.compile(gpa, binding.items[1], vm);
+        try vm.addByte(gpa, @intFromEnum(VM.Instructions.iter_create), line);
         try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
-        try c.locals.?.add(gpa, " list ");
+        try c.locals.?.add(gpa, " list_iter ");
+        try vm.addByte(gpa, @intFromEnum(VM.Instructions.pop), line);
 
         // for condition
+        try c.initScope(gpa);
+        defer c.deinitScope(gpa, vm) catch unreachable;
+
         const loop_start = vm.chunk.bytecode.items.len;
+
+        const idx = c.locals.?.get(" list_iter ").?;
+        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.get_local), @intCast(idx), line);
+        try vm.addByte(gpa, @intFromEnum(VM.Instructions.iter_next), line);
+
+        const id = try expectId(binding.items[0]);
+        try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
+        try c.locals.?.add(gpa, id);
+
         const j1 = try vm.addJumpIfFalse(gpa, 0);
 
         // for body
+        try c.compile(gpa, args[1], vm);
 
         // end
+        // manually clear loop stack for next iteration
+        const n: u8 = @intCast(c.locals.?.name_indexes.count());
+        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.pop_local), n, 0);
+
         try vm.addJumpBack(gpa, loop_start, line);
         try patchJump(j1, vm);
-
     }
 
     fn compileList(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM, line: usize) !void {

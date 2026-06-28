@@ -105,7 +105,7 @@ pub const VM = struct {
         while (i < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[i]);
             switch (instruction) {
-                .add, .sub, .mul, .div, .negate, .set_global, .set_local, .pop => {
+                .add, .sub, .mul, .div, .negate, .set_global, .set_local, .pop, .iter_create, .iter_next => {
                     try writer.print("{} [ {s} ]\n", .{ i, @tagName(instruction) });
                     i += 1;
                 },
@@ -208,6 +208,29 @@ pub const VM = struct {
         }
     }
 
+    fn iterCreate(vm: *VM, gpa: std.mem.Allocator) !void {
+        var list = vm.stack.pop().?;
+        defer list.deinit(gpa);
+
+        const iter = try list.createIterator(gpa);
+        try vm.stack.append(gpa, iter);
+    }
+
+    fn iterNext(vm: *VM, gpa: std.mem.Allocator) !void {
+        var maybe_iter = vm.stack.pop().?;
+        defer maybe_iter.deinit(gpa);
+        var iter = try switch (maybe_iter) {
+            .obj => |obj| switch (obj.getPtrUnwrap().*) {
+                .iterator => |*iter| iter,
+                else => error.NotIterator,
+            },
+            else => error.NotIterator,
+        };
+
+        var next = iter.next();
+        try vm.stackAppend(gpa, &next);
+    }
+
     fn setGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
         var v = vm.stack.getLast();
         try vm.globals.append(gpa, v.borrow());
@@ -271,6 +294,8 @@ pub const VM = struct {
                 .jump => vm.jump(),
                 .jump_back => vm.jumpBack(),
                 .jump_if_false => vm.jumpIfFalse(gpa),
+                .iter_create => vm.iterCreate(gpa),
+                .iter_next => vm.iterNext(gpa),
                 .pop => {
                     var v = vm.stack.pop().?;
                     v.deinit(gpa);
@@ -292,6 +317,8 @@ pub const VM = struct {
         set_local,
         get_local,
         pop_local,
+        iter_create,
+        iter_next,
         load_constant,
         negate,
         pop,

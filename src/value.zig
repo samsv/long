@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const Obj = @import("object.zig").Obj;
+const Iterator = @import("object.zig").Iterator;
 const RC = @import("ref_counter.zig").RC;
 
 pub const Value = union(enum) {
@@ -46,10 +47,11 @@ pub const Value = union(enum) {
     }
 
     pub fn initList(gpa: std.mem.Allocator, values: []Value) !Value {
-        const obj = try RC(Obj).init(gpa, try Obj.initList(gpa, values));
-        return .{
-            .obj = obj,
-        };
+        var list = try Obj.initList(gpa, values);
+        errdefer list.deinit(gpa);
+
+        const obj = try RC(Obj).init(gpa, list);
+        return .{ .obj = obj };
     }
 
     pub fn format(value: Value, writer: *std.Io.Writer) !void {
@@ -58,5 +60,13 @@ pub const Value = union(enum) {
             .obj => |o| writer.print("{f}", .{o.getUnwrap()}),
             inline else => |v| writer.print("{}", .{v}),
         };
+    }
+
+    pub fn createIterator(value: Value, gpa: std.mem.Allocator) !Value {
+        var iter = try Iterator.init(value);
+        errdefer iter.deinit(gpa);
+
+        const obj = try RC(Obj).init(gpa, .{ .iterator = iter });
+        return .{ .obj = obj };
     }
 };
