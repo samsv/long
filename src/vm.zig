@@ -5,19 +5,16 @@ pub const Chunk = struct {
     bytecode: std.ArrayList(u8),
     lines: std.ArrayList(usize),
     constants: std.ArrayList(Value),
-    locals: std.ArrayList(Value),
 
     pub const empty: Chunk = .{
         .bytecode = .empty,
         .lines = .empty,
         .constants = .empty,
-        .locals = .empty,
     };
 
     pub fn deinit(chunk: *Chunk, gpa: std.mem.Allocator) void {
         chunk.bytecode.deinit(gpa);
         chunk.constants.deinit(gpa);
-        chunk.locals.deinit(gpa);
         chunk.lines.deinit(gpa);
     }
 };
@@ -26,12 +23,14 @@ pub const VM = struct {
     chunk: Chunk,
     globals: std.ArrayList(Value),
     stack: std.ArrayList(Value),
+    locals: std.ArrayList(Value),
     ip: usize,
 
     pub fn init() VM {
         return .{
             .chunk = .empty,
             .stack = .empty,
+            .locals = .empty,
             .globals = .empty,
             .ip = 0,
         };
@@ -39,9 +38,12 @@ pub const VM = struct {
 
     pub fn deint(vm: *VM, gpa: std.mem.Allocator) void {
         for (vm.stack.items) |*v| v.deinit(gpa);
+        for (vm.locals.items) |*v| v.deinit(gpa);
         for (vm.globals.items) |*v| v.deinit(gpa);
+
         vm.stack.deinit(gpa);
         vm.chunk.deinit(gpa);
+        vm.locals.deinit(gpa);
         vm.globals.deinit(gpa);
     }
 
@@ -86,7 +88,7 @@ pub const VM = struct {
     }
 
     pub fn printLocals(vm: VM, writer: *std.Io.Writer) !void {
-        try printSlice(vm.chunk.locals.items, "Locals", writer);
+        try printSlice(vm.locals.items, "Locals", writer);
     }
 
     pub fn printGlobals(vm: VM, writer: *std.Io.Writer) !void {
@@ -227,22 +229,22 @@ pub const VM = struct {
 
     fn setLocal(vm: *VM, gpa: std.mem.Allocator) !void {
         var v = vm.stack.getLast();
-        try vm.chunk.locals.append(gpa, v.borrow());
+        try vm.locals.append(gpa, v.borrow());
     }
 
     fn getLocal(vm: *VM, gpa: std.mem.Allocator) !void {
         const i = vm.chunk.bytecode.items[vm.ip + 1];
-        var v = vm.chunk.locals.items[i];
+        var v = vm.locals.items[i];
         try vm.stackAppend(gpa, &v);
         vm.ip += 1;
     }
 
     fn popLocal(vm: *VM, gpa: std.mem.Allocator) void {
         const index = vm.chunk.bytecode.items[vm.ip + 1];
-        for (vm.chunk.locals.items[vm.chunk.locals.items.len - index ..]) |*v|
+        for (vm.locals.items[vm.locals.items.len - index ..]) |*v|
             v.deinit(gpa);
 
-        vm.chunk.locals.items.len -= index;
+        vm.locals.items.len -= index;
         vm.ip += 1;
     }
 
