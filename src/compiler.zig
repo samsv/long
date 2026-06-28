@@ -348,3 +348,28 @@ test "if" {
         try std.testing.expectEqual(cs[1], vm.stack.items[0]);
     }
 }
+
+test "for loop" {
+    const parser = @import("parser.zig");
+    const Scanner = @import("scanner.zig").Scanner;
+
+    const gpa = std.testing.allocator;
+
+    var scanner = try Scanner.init("for x in [1, 2, 3] do x end");
+    var sexpr = try parser.expr(gpa, &scanner, 0);
+    defer sexpr.deinit(gpa);
+
+    var vm = VM.init();
+    defer vm.deint(gpa);
+
+    var compiler = Compiler.init();
+    defer compiler.deinit(gpa);
+
+    try compiler.compile(gpa, sexpr, &vm);
+    try vm.run(gpa);
+
+    try std.testing.expectEqual(3, vm.stack.items.len);
+    try std.testing.expectEqual(Value{ .number = 1 }, vm.stack.items[0]);
+    try std.testing.expectEqual(Value{ .number = 2 }, vm.stack.items[1]);
+    try std.testing.expectEqual(Value{ .number = 3 }, vm.stack.items[2]);
+}
