@@ -1,11 +1,13 @@
 const std = @import("std");
+const parser = @import("parser.zig");
 const VM = @import("vm.zig").VM;
-const scanner_ = @import("scanner.zig");
-const Token = scanner_.Token;
+const VMBuilder = @import("vm.zig").VMBuilder;
+const Token = @import("scanner.zig").Token;
 const Literal = Token.Literal;
 const Operator = Token.Operator;
 const Value = @import("value.zig").Value;
 const SExpr = @import("sexpr.zig").SExpr;
+const Scanner = @import("scanner.zig").Scanner;
 
 pub const Globals = struct {
     name_indexes: std.StringArrayHashMapUnmanaged(usize),
@@ -84,17 +86,17 @@ pub const Compiler = struct {
             locals.deinit(gpa);
     }
 
-    fn compileID(c: Compiler, gpa: std.mem.Allocator, id: []const u8, line: usize, vm: *VM) !void {
+    fn compileID(c: Compiler, gpa: std.mem.Allocator, id: []const u8, line: usize, builder: *VMBuilder) !void {
         if (c.locals) |local| if (local.get(id)) |idx| {
-            try vm.addBytes(gpa, @intFromEnum(VM.Instructions.get_local), @intCast(idx), line);
+            try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_local), @intCast(idx), line);
             return;
         };
 
         const idx = try c.globals.get(id);
-        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.get_global), @intCast(idx), line);
+        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_global), @intCast(idx), line);
     }
 
-    fn compileLiteral(c: Compiler, gpa: std.mem.Allocator, literal: Literal, line: usize, vm: *VM) !void {
+    fn compileLiteral(c: Compiler, gpa: std.mem.Allocator, literal: Literal, line: usize, builder: *VMBuilder) !void {
         const value: Value = switch (literal) {
             .number => |n| .{ .number = n },
             .string => unreachable,
@@ -103,10 +105,10 @@ pub const Compiler = struct {
                 .false => Value.False,
                 .nil => .nil,
             },
-            .identifier => |id| return c.compileID(gpa, id, line, vm),
+            .identifier => |id| return c.compileID(gpa, id, line, builder),
         };
 
-        _ = try vm.addConstant(gpa, value);
+        _ = try builder.addConstant(gpa, value);
     }
 
     fn expect(u: anytype, comptime tag: std.meta.Tag(@TypeOf(u))) !@FieldType(@TypeOf(u), @tagName(tag)) {
@@ -129,17 +131,17 @@ pub const Compiler = struct {
         c: *Compiler,
         gpa: std.mem.Allocator,
         args: []const SExpr,
-        vm: *VM,
+        builder: *VMBuilder,
         line: usize,
     ) !void {
         const id = try expectId(args[0]);
-        try c.compile(gpa, args[1], vm);
+        try c.compileBuilder(gpa, args[1], builder);
 
         if (c.locals) |local| {
-            try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
+            try builder.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
             try local.add(gpa, id);
         } else {
-            try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_global), line);
+            try builder.addByte(gpa, @intFromEnum(VM.Instructions.set_global), line);
             try c.globals.add(gpa, id);
         }
     }
@@ -149,7 +151,7 @@ pub const Compiler = struct {
         gpa: std.mem.Allocator,
         op: Operator,
         args: []const SExpr,
-        vm: *VM,
+        builder: *VMBuilder,
         line: usize,
     ) !void {
         const instruction = switch (op) {
@@ -157,18 +159,18 @@ pub const Compiler = struct {
             .minus => if (args.len == 1) VM.Instructions.negate else VM.Instructions.sub,
             .slash => VM.Instructions.div,
             .star => VM.Instructions.mul,
-            .equal => return c.compileEqual(gpa, args, vm, line),
+            .equal => return c.compileEqual(gpa, args, builder, line),
             else => unreachable,
         };
 
-        for (args) |a| try c.compile(gpa, a, vm);
-        try vm.addByte(gpa, @intFromEnum(instruction), line);
+        for (args) |a| try c.compileBuilder(gpa, a, builder);
+        try builder.addByte(gpa, @intFromEnum(instruction), line);
     }
 
-    fn patchJump(ji: usize, vm: *VM) !void {
-        const offset = vm.chunk.bytecode.items.len - ji;
+    fn patchJump(ji: usize, builder: *VMBuilder) !void {
+        const offset = builder.vm.chunk.bytecode.items.len - ji;
         if (offset > std.math.maxInt(u16)) return error.JumpTooLong;
-        vm.patchJump(ji, @intCast(offset));
+        builder.patchJump(ji, @intCast(offset));
     }
 
     fn initScope(c: *Compiler, gpa: std.mem.Allocator) !void {
@@ -177,143 +179,156 @@ pub const Compiler = struct {
         c.locals = local;
     }
 
-    fn deinitScope(c: *Compiler, gpa: std.mem.Allocator, vm: *VM) !void {
+    fn deinitScope(c: *Compiler, gpa: std.mem.Allocator, builder: *VMBuilder) !void {
         var local = c.locals orelse return;
 
         const n: u8 = @intCast(local.name_indexes.count());
-        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.pop_local), n, 0);
+        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.pop_local), n, 0);
 
         c.locals = local.next;
         local.deinit(gpa);
         gpa.destroy(local);
     }
 
-    fn compileIf(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
+    fn compileIf(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, builder: *VMBuilder) !void {
         // cond
         try c.initScope(gpa);
-        defer c.deinitScope(gpa, vm) catch unreachable;
+        defer c.deinitScope(gpa, builder) catch unreachable;
 
-        try c.compile(gpa, args[0], vm);
-
-        // true branch
-        const j1 = try vm.addJumpIfFalse(gpa, 0);
+        try c.compileBuilder(gpa, args[0], builder);
 
         // true branch
-        try c.compile(gpa, args[1], vm);
+        const j1 = try builder.addJumpIfFalse(gpa, 0);
+
+        // true branch
+        try c.compileBuilder(gpa, args[1], builder);
 
         // false branch
-        const j2 = try vm.addJump(gpa, 0);
-        try patchJump(j1, vm);
+        const j2 = try builder.addJump(gpa, 0);
+        try patchJump(j1, builder);
         if (args.len == 3)
-            try c.compile(gpa, args[2], vm)
+            try c.compileBuilder(gpa, args[2], builder)
         else
-            _ = try vm.addConstant(gpa, .nil);
+            _ = try builder.addConstant(gpa, .nil);
 
-        try patchJump(j2, vm);
+        try patchJump(j2, builder);
     }
 
-    fn compileFor(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM, line: usize) !void {
+    fn compileFor(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, builder: *VMBuilder, line: usize) !void {
         try c.initScope(gpa);
-        defer c.deinitScope(gpa, vm) catch unreachable;
+        defer c.deinitScope(gpa, builder) catch unreachable;
 
         // for binding
         const binding = args[0].cons;
 
-        try c.compile(gpa, binding.items[1], vm);
-        try vm.addByte(gpa, @intFromEnum(VM.Instructions.iter_create), line);
-        try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
+        try c.compileBuilder(gpa, binding.items[1], builder);
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.iter_create), line);
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
         try c.locals.?.add(gpa, " list_iter ");
-        try vm.addByte(gpa, @intFromEnum(VM.Instructions.pop), line);
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.pop), line);
 
         // for condition
         try c.initScope(gpa);
-        defer c.deinitScope(gpa, vm) catch unreachable;
+        defer c.deinitScope(gpa, builder) catch unreachable;
 
-        const loop_start = vm.chunk.bytecode.items.len;
+        const loop_start = builder.vm.chunk.bytecode.items.len;
 
         const idx = c.locals.?.get(" list_iter ").?;
-        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.get_local), @intCast(idx), line);
-        try vm.addByte(gpa, @intFromEnum(VM.Instructions.iter_next), line);
+        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_local), @intCast(idx), line);
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.iter_next), line);
 
         const id = try expectId(binding.items[0]);
-        try vm.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
         try c.locals.?.add(gpa, id);
 
-        const j1 = try vm.addJumpIfFalse(gpa, 0);
+        const j1 = try builder.addJumpIfFalse(gpa, 0);
 
         // for body
-        try c.compile(gpa, args[1], vm);
+        try c.compileBuilder(gpa, args[1], builder);
 
         // end
         // manually clear loop stack for next iteration
         const n: u8 = @intCast(c.locals.?.name_indexes.count());
-        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.pop_local), n, 0);
+        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.pop_local), n, 0);
 
-        try vm.addJumpBack(gpa, loop_start, line);
-        try patchJump(j1, vm);
+        try builder.addJumpBack(gpa, loop_start, line);
+        try patchJump(j1, builder);
     }
 
-    fn compileList(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM, line: usize) !void {
+    fn compileList(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, builder: *VMBuilder, line: usize) !void {
         for (1..args.len + 1) |i|
-            try c.compile(gpa, args[args.len - i], vm);
+            try c.compileBuilder(gpa, args[args.len - i], builder);
 
-        try vm.addBytes(gpa, @intFromEnum(VM.Instructions.list), @intCast(args.len), line);
+        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.list), @intCast(args.len), line);
     }
 
-    fn compileDo(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, vm: *VM) !void {
+    fn compileDo(c: *Compiler, gpa: std.mem.Allocator, args: []const SExpr, builder: *VMBuilder) !void {
         try c.initScope(gpa);
-        defer c.deinitScope(gpa, vm) catch unreachable;
+        defer c.deinitScope(gpa, builder) catch unreachable;
 
         for (args, 0..) |s, i| {
-            try c.compile(gpa, s, vm);
+            try c.compileBuilder(gpa, s, builder);
             if (i < args.len - 1)
-                try vm.addByte(gpa, @intFromEnum(VM.Instructions.pop), 0);
+                try builder.addByte(gpa, @intFromEnum(VM.Instructions.pop), 0);
         }
     }
 
-    fn compileAtom(c: Compiler, gpa: std.mem.Allocator, token: Token, vm: *VM) !void {
+    fn compileAtom(c: Compiler, gpa: std.mem.Allocator, token: Token, builder: *VMBuilder) !void {
         switch (token.kind) {
-            .literal => |literal| try c.compileLiteral(gpa, literal, token.line, vm),
+            .literal => |literal| try c.compileLiteral(gpa, literal, token.line, builder),
             else => unreachable,
         }
     }
 
-    fn compileCons(c: *Compiler, gpa: std.mem.Allocator, cons: []const SExpr, vm: *VM) !void {
+    fn compileCons(c: *Compiler, gpa: std.mem.Allocator, cons: []const SExpr, builder: *VMBuilder) !void {
         if (cons.len == 0) return;
         try switch (cons[0]) {
             .atom => |a| switch (a.kind) {
-                .operator => |op| c.compileOperator(gpa, op, cons[1..], vm, a.line),
+                .operator => |op| c.compileOperator(gpa, op, cons[1..], builder, a.line),
                 .special_fns => |fn_| switch (fn_) {
-                    .@"if" => c.compileIf(gpa, cons[1..], vm),
-                    .@"for" => c.compileFor(gpa, cons[1..], vm, a.line),
-                    .list => c.compileList(gpa, cons[1..], vm, a.line),
+                    .@"if" => c.compileIf(gpa, cons[1..], builder),
+                    .@"for" => c.compileFor(gpa, cons[1..], builder, a.line),
+                    .list => c.compileList(gpa, cons[1..], builder, a.line),
                     else => return error.NotImplemented,
                 },
                 .keywords => |k| switch (k) {
-                    .do => c.compileDo(gpa, cons[1..], vm),
+                    .do => c.compileDo(gpa, cons[1..], builder),
                     else => unreachable,
                 },
                 else => unreachable,
             },
             .cons => |cs| {
-                try c.compileCons(gpa, cs.items, vm);
-                for (cons) |sexpr| try c.compile(gpa, sexpr, vm);
+                try c.compileCons(gpa, cs.items, builder);
+                for (cons) |sexpr| try c.compileBuilder(gpa, sexpr, builder);
             },
         };
     }
 
-    pub fn compile(c: *Compiler, gpa: std.mem.Allocator, sexpr: SExpr, vm: *VM) anyerror!void {
+    pub fn compileBuilder(c: *Compiler, gpa: std.mem.Allocator, sexpr: SExpr, builder: *VMBuilder) anyerror!void {
         try switch (sexpr) {
-            .atom => |token| c.compileAtom(gpa, token, vm),
-            .cons => |cons| c.compileCons(gpa, cons.items, vm),
+            .atom => |token| c.compileAtom(gpa, token, builder),
+            .cons => |cons| c.compileCons(gpa, cons.items, builder),
         };
+    }
+
+    pub fn compile(gpa: std.mem.Allocator, source: []const u8) !VM {
+        var scanner = try Scanner.init(source);
+
+        var sexpr = try parser.expr(gpa, &scanner, 0);
+        defer sexpr.deinit(gpa);
+
+        var builder = VMBuilder.init();
+
+        var compiler = init();
+        defer compiler.deinit(gpa);
+
+        try compiler.compileBuilder(gpa, sexpr, &builder);
+
+        return builder.build();
     }
 };
 
 test "if" {
-    const parser = @import("parser.zig");
-    const Scanner = @import("scanner.zig").Scanner;
-
     const gpa = std.testing.allocator;
 
     const test_cases = [_]struct { []const u8, Value }{
@@ -331,45 +346,26 @@ test "if" {
     };
 
     for (test_cases) |cs| {
-        var scanner = try Scanner.init(cs[0]);
-        var sexpr = try parser.expr(gpa, &scanner, 0);
-        defer sexpr.deinit(gpa);
-
-        var vm = VM.init();
+        var vm = try Compiler.compile(gpa, cs[0]);
         defer vm.deint(gpa);
 
-        var compiler = Compiler.init();
-        defer compiler.deinit(gpa);
-
-        try compiler.compile(gpa, sexpr, &vm);
         try vm.run(gpa);
 
-        try std.testing.expectEqual(1, vm.stack.items.len);
-        try std.testing.expectEqual(cs[1], vm.stack.items[0]);
+        try std.testing.expectEqual(1, vm.stack.len());
+        try std.testing.expectEqual(cs[1], vm.stack.get(0));
     }
 }
 
 test "for loop" {
-    const parser = @import("parser.zig");
-    const Scanner = @import("scanner.zig").Scanner;
-
     const gpa = std.testing.allocator;
 
-    var scanner = try Scanner.init("for x in [1, 2, 3] do x end");
-    var sexpr = try parser.expr(gpa, &scanner, 0);
-    defer sexpr.deinit(gpa);
-
-    var vm = VM.init();
+    var vm = try Compiler.compile(gpa, "for x in [1, 2, 3] do x end");
     defer vm.deint(gpa);
 
-    var compiler = Compiler.init();
-    defer compiler.deinit(gpa);
-
-    try compiler.compile(gpa, sexpr, &vm);
     try vm.run(gpa);
 
-    try std.testing.expectEqual(3, vm.stack.items.len);
-    try std.testing.expectEqual(Value{ .number = 1 }, vm.stack.items[0]);
-    try std.testing.expectEqual(Value{ .number = 2 }, vm.stack.items[1]);
-    try std.testing.expectEqual(Value{ .number = 3 }, vm.stack.items[2]);
+    try std.testing.expectEqual(3, vm.stack.len());
+    try std.testing.expectEqual(Value{ .number = 1 }, vm.stack.get(0));
+    try std.testing.expectEqual(Value{ .number = 2 }, vm.stack.get(1));
+    try std.testing.expectEqual(Value{ .number = 3 }, vm.stack.get(2));
 }

@@ -43,13 +43,15 @@ pub fn main(init: std.process.Init) !void {
         try stdout_writer.print("{f}\n", .{sexpr});
         try stdout_writer.flush();
 
-        var vm = vm_.VM.init();
-        defer vm.deint(gpa);
+        var builder = vm_.VMBuilder.init();
 
         var compiler = c.Compiler.init();
         defer compiler.deinit(gpa);
 
-        try compiler.compile(gpa, sexpr, &vm);
+        try compiler.compileBuilder(gpa, sexpr, &builder);
+
+        var vm = builder.build();
+        defer vm.deint(gpa);
 
         try vm.printInstructions(stdout_writer);
         try stdout_writer.writeByte('\n');
@@ -70,21 +72,9 @@ pub fn main(init: std.process.Init) !void {
 
     {
         std.debug.print("\n", .{});
-        var scanner = try Scanner.init("for x in [1, 2, 3] do x end");
-
-        var sexpr = try parser.expr(gpa, &scanner, 0);
-        defer sexpr.deinit(gpa);
-
-        try stdout_writer.print("{f}\n", .{sexpr});
-        try stdout_writer.flush();
-
-        var vm = vm_.VM.init();
+        var vm = try c.Compiler.compile(gpa, "for x in [1, 2, 3] do x end");
         defer vm.deint(gpa);
 
-        var compiler = c.Compiler.init();
-        defer compiler.deinit(gpa);
-
-        try compiler.compile(gpa, sexpr, &vm);
         try vm.run(gpa);
 
         try vm.printInstructions(stdout_writer);

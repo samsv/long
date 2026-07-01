@@ -19,11 +19,125 @@ pub const Chunk = struct {
     }
 };
 
+const Array = struct {
+    values: std.ArrayList(Value),
+
+    pub const empty: Array = .{ .values = .empty };
+
+    pub inline fn items(self: Array) []const Value {
+        return self.values.items;
+    }
+
+    pub inline fn len(self: Array) usize {
+        return self.values.items.len;
+    }
+
+    pub inline fn get(self: Array, i: usize) Value {
+        return self.values.items[i];
+    }
+
+    pub fn append(self: *Array, gpa: std.mem.Allocator, value: *Value) !void {
+        try self.values.append(gpa, value.borrow());
+    }
+
+    pub fn appendNoBorrow(self: *Array, gpa: std.mem.Allocator, value: Value) !void {
+        try self.values.append(gpa, value);
+    }
+
+    pub fn appendAssumeCapacity(self: *Array, value: *Value) void {
+        self.values.appendAssumeCapacity(value.borrow());
+    }
+
+    pub fn appendAssumeCapacityNoBorrow(self: *Array, value: Value) void {
+        self.values.appendAssumeCapacity(value);
+    }
+
+    pub fn deinit(self: *Array, gpa: std.mem.Allocator) void {
+        for (self.values.items) |*v|
+            v.deinit(gpa);
+        self.values.deinit(gpa);
+    }
+
+    pub fn pop(self: *Array) Value {
+        return self.values.pop().?;
+    }
+
+    pub fn last(self: *Array) Value {
+        return self.values.getLast();
+    }
+
+    pub fn remove(self: *Array, gpa: std.mem.Allocator) void {
+        var v = self.values.pop().?;
+        v.deinit(gpa);
+    }
+
+    pub fn removeN(self: *Array, gpa: std.mem.Allocator, n: usize) void {
+        for (self.values.items[self.values.items.len - n ..]) |*v|
+            v.deinit(gpa);
+
+        self.values.items.len -= n;
+    }
+};
+
+pub const VMBuilder = struct {
+    vm: VM,
+
+    pub fn init() VMBuilder {
+        return .{ .vm = VM.init() };
+    }
+
+    pub fn build(self: VMBuilder) VM {
+        return self.vm;
+    }
+
+    pub fn addByte(builder: *VMBuilder, gpa: std.mem.Allocator, b: u8, line: usize) !void {
+        try builder.vm.chunk.bytecode.append(gpa, b);
+        try builder.vm.chunk.lines.append(gpa, line);
+    }
+
+    pub fn addBytes(builder: *VMBuilder, gpa: std.mem.Allocator, b1: u8, b2: u8, line: usize) !void {
+        try builder.vm.chunk.bytecode.append(gpa, b1);
+        try builder.vm.chunk.bytecode.append(gpa, b2);
+        try builder.vm.chunk.lines.append(gpa, line);
+        try builder.vm.chunk.lines.append(gpa, line);
+    }
+
+    pub fn addConstant(builder: *VMBuilder, gpa: std.mem.Allocator, c: Value) !u8 {
+        try builder.vm.chunk.constants.append(gpa, c);
+        const i: u8 = @intCast(builder.vm.chunk.constants.items.len - 1);
+        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.load_constant), i, 0);
+        return i;
+    }
+
+    pub fn patchJump(builder: *VMBuilder, index: usize, value: u16) void {
+        builder.vm.chunk.bytecode.items[index] = @truncate(value);
+        builder.vm.chunk.bytecode.items[index + 1] = @truncate(value >> 8);
+    }
+
+    pub fn addJump(builder: *VMBuilder, gpa: std.mem.Allocator, line: usize) !usize {
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.jump), line);
+        try builder.addBytes(gpa, 255, 255, line);
+        return builder.vm.chunk.bytecode.items.len - 2;
+    }
+
+    pub fn addJumpBack(builder: *VMBuilder, gpa: std.mem.Allocator, to: usize, line: usize) !void {
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.jump_back), line);
+        const offset: u16 = @intCast(builder.vm.chunk.bytecode.items.len - to);
+        try builder.addBytes(gpa, @truncate(offset), @truncate(offset >> 8), line);
+    }
+
+    pub fn addJumpIfFalse(builder: *VMBuilder, gpa: std.mem.Allocator, line: usize) !usize {
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.jump_if_false), line);
+        try builder.addBytes(gpa, 255, 255, line);
+        return builder.vm.chunk.bytecode.items.len - 2;
+    }
+};
+
 pub const VM = struct {
     chunk: Chunk,
-    globals: std.ArrayList(Value),
-    stack: std.ArrayList(Value),
-    locals: std.ArrayList(Value),
+    globals: Array,
+    stack: Array,
+    locals: Array,
     ip: usize,
 
     pub fn init() VM {
@@ -37,33 +151,10 @@ pub const VM = struct {
     }
 
     pub fn deint(vm: *VM, gpa: std.mem.Allocator) void {
-        for (vm.stack.items) |*v| v.deinit(gpa);
-        for (vm.locals.items) |*v| v.deinit(gpa);
-        for (vm.globals.items) |*v| v.deinit(gpa);
-
         vm.stack.deinit(gpa);
         vm.chunk.deinit(gpa);
         vm.locals.deinit(gpa);
         vm.globals.deinit(gpa);
-    }
-
-    pub fn addByte(vm: *VM, gpa: std.mem.Allocator, b: u8, line: usize) !void {
-        try vm.chunk.bytecode.append(gpa, b);
-        try vm.chunk.lines.append(gpa, line);
-    }
-
-    pub fn addBytes(vm: *VM, gpa: std.mem.Allocator, b1: u8, b2: u8, line: usize) !void {
-        try vm.chunk.bytecode.append(gpa, b1);
-        try vm.chunk.bytecode.append(gpa, b2);
-        try vm.chunk.lines.append(gpa, line);
-        try vm.chunk.lines.append(gpa, line);
-    }
-
-    pub fn addConstant(vm: *VM, gpa: std.mem.Allocator, c: Value) !u8 {
-        try vm.chunk.constants.append(gpa, c);
-        const i: u8 = @intCast(vm.chunk.constants.items.len - 1);
-        try vm.addBytes(gpa, @intFromEnum(Instructions.load_constant), i, 0);
-        return i;
     }
 
     fn getOffset(vm: VM, i: usize) u16 {
@@ -84,15 +175,15 @@ pub const VM = struct {
     }
 
     pub fn printStack(vm: VM, writer: *std.Io.Writer) !void {
-        try printSlice(vm.stack.items, "Stack", writer);
+        try printSlice(vm.stack.items(), "Stack", writer);
     }
 
     pub fn printLocals(vm: VM, writer: *std.Io.Writer) !void {
-        try printSlice(vm.locals.items, "Locals", writer);
+        try printSlice(vm.locals.items(), "Locals", writer);
     }
 
     pub fn printGlobals(vm: VM, writer: *std.Io.Writer) !void {
-        try printSlice(vm.globals.items, "Globals", writer);
+        try printSlice(vm.globals.items(), "Globals", writer);
     }
 
     pub fn printConstants(vm: VM, writer: *std.Io.Writer) !void {
@@ -128,32 +219,9 @@ pub const VM = struct {
         }
     }
 
-    pub fn patchJump(vm: *VM, index: usize, value: u16) void {
-        vm.chunk.bytecode.items[index] = @truncate(value);
-        vm.chunk.bytecode.items[index + 1] = @truncate(value >> 8);
-    }
-
-    pub fn addJump(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
-        try vm.addByte(gpa, @intFromEnum(Instructions.jump), line);
-        try vm.addBytes(gpa, 255, 255, line);
-        return vm.chunk.bytecode.items.len - 2;
-    }
-
-    pub fn addJumpBack(vm: *VM, gpa: std.mem.Allocator, to: usize, line: usize) !void {
-        try vm.addByte(gpa, @intFromEnum(Instructions.jump_back), line);
-        const offset: u16 = @intCast(vm.chunk.bytecode.items.len - to);
-        try vm.addBytes(gpa, @truncate(offset), @truncate(offset >> 8), line);
-    }
-
-    pub fn addJumpIfFalse(vm: *VM, gpa: std.mem.Allocator, line: usize) !usize {
-        try vm.addByte(gpa, @intFromEnum(Instructions.jump_if_false), line);
-        try vm.addBytes(gpa, 255, 255, line);
-        return vm.chunk.bytecode.items.len - 2;
-    }
-
     fn mathOp(vm: *VM, gpa: std.mem.Allocator, op: Instructions) !void {
-        var v2 = vm.stack.pop().?;
-        var v1 = vm.stack.pop().?;
+        var v2 = vm.stack.pop();
+        var v1 = vm.stack.pop();
 
         defer v1.deinit(gpa);
         defer v2.deinit(gpa);
@@ -175,13 +243,13 @@ pub const VM = struct {
             },
         };
 
-        vm.stack.appendAssumeCapacity(v);
+        vm.stack.appendAssumeCapacityNoBorrow(v);
     }
 
     fn loadConstant(vm: *VM, gpa: std.mem.Allocator) !void {
         const i = vm.chunk.bytecode.items[vm.ip + 1];
         var v = vm.chunk.constants.items[i];
-        try vm.stackAppend(gpa, &v);
+        try vm.stack.append(gpa, &v);
         vm.ip += 1;
     }
 
@@ -196,7 +264,7 @@ pub const VM = struct {
     }
 
     fn jumpIfFalse(vm: *VM, gpa: std.mem.Allocator) void {
-        var v = vm.stack.pop().?;
+        var v = vm.stack.pop();
         defer v.deinit(gpa);
         if (v.isTruthy()) {
             // don't jump
@@ -209,15 +277,15 @@ pub const VM = struct {
     }
 
     fn iterCreate(vm: *VM, gpa: std.mem.Allocator) !void {
-        var list = vm.stack.pop().?;
+        var list = vm.stack.pop();
         defer list.deinit(gpa);
 
         const iter = try list.createIterator(gpa);
-        try vm.stack.append(gpa, iter);
+        try vm.stack.appendNoBorrow(gpa, iter);
     }
 
     fn iterNext(vm: *VM, gpa: std.mem.Allocator) !void {
-        var maybe_iter = vm.stack.pop().?;
+        var maybe_iter = vm.stack.pop();
         defer maybe_iter.deinit(gpa);
         var iter = try switch (maybe_iter) {
             .obj => |obj| switch (obj.getPtrUnwrap().*) {
@@ -228,55 +296,48 @@ pub const VM = struct {
         };
 
         var next = iter.next();
-        try vm.stackAppend(gpa, &next);
+        try vm.stack.append(gpa, &next);
     }
 
     fn setGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
-        var v = vm.stack.getLast();
-        try vm.globals.append(gpa, v.borrow());
-    }
-
-    fn stackAppend(vm: *VM, gpa: std.mem.Allocator, v: *Value) !void {
-        try vm.stack.append(gpa, v.borrow());
+        var v = vm.stack.last();
+        try vm.globals.append(gpa, &v);
     }
 
     fn getGlobal(vm: *VM, gpa: std.mem.Allocator) !void {
         const i = vm.chunk.bytecode.items[vm.ip + 1];
-        if (i >= vm.globals.items.len)
+        if (i >= vm.globals.len())
             return error.UndefinedGlobal;
 
-        var v = vm.globals.items[i];
-        try vm.stackAppend(gpa, &v);
+        var v = vm.globals.get(i);
+        try vm.stack.append(gpa, &v);
         vm.ip += 1;
     }
 
     fn setLocal(vm: *VM, gpa: std.mem.Allocator) !void {
-        var v = vm.stack.getLast();
-        try vm.locals.append(gpa, v.borrow());
+        var v = vm.stack.last();
+        try vm.locals.append(gpa, &v);
     }
 
     fn getLocal(vm: *VM, gpa: std.mem.Allocator) !void {
         const i = vm.chunk.bytecode.items[vm.ip + 1];
-        var v = vm.locals.items[i];
-        try vm.stackAppend(gpa, &v);
+        var v = vm.locals.get(i);
+        try vm.stack.append(gpa, &v);
         vm.ip += 1;
     }
 
     fn popLocal(vm: *VM, gpa: std.mem.Allocator) void {
         const index = vm.chunk.bytecode.items[vm.ip + 1];
-        for (vm.locals.items[vm.locals.items.len - index ..]) |*v|
-            v.deinit(gpa);
-
-        vm.locals.items.len -= index;
+        vm.locals.removeN(gpa, index);
         vm.ip += 1;
     }
 
     fn makeList(vm: *VM, gpa: std.mem.Allocator) !void {
         const n = vm.chunk.bytecode.items[vm.ip + 1];
         const values = try gpa.alloc(Value, n);
-        @memcpy(values, vm.stack.items[vm.stack.items.len - n .. vm.stack.items.len]);
-        vm.stack.items.len -= n;
-        try vm.stack.append(gpa, try Value.initList(gpa, values));
+        @memcpy(values, vm.stack.items()[vm.stack.len() - n ..]);
+        vm.stack.values.items.len -= n;
+        try vm.stack.appendNoBorrow(gpa, try Value.initList(gpa, values));
         vm.ip += 1;
     }
 
@@ -296,10 +357,7 @@ pub const VM = struct {
                 .jump_if_false => vm.jumpIfFalse(gpa),
                 .iter_create => vm.iterCreate(gpa),
                 .iter_next => vm.iterNext(gpa),
-                .pop => {
-                    var v = vm.stack.pop().?;
-                    v.deinit(gpa);
-                },
+                .pop => vm.stack.remove(gpa),
                 .list => vm.makeList(gpa),
                 else => return error.NotImplemented,
             };
