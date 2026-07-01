@@ -225,7 +225,6 @@ pub const Compiler = struct {
         try builder.addByte(gpa, @intFromEnum(VM.Instructions.iter_create), line);
         try builder.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
         try c.locals.?.add(gpa, " list_iter ");
-        try builder.addByte(gpa, @intFromEnum(VM.Instructions.pop), line);
 
         // for condition
         try c.initScope(gpa);
@@ -242,6 +241,10 @@ pub const Compiler = struct {
         try c.locals.?.add(gpa, id);
 
         const j1 = try builder.addJumpIfFalse(gpa, 0);
+
+        // pop last value from for loop. For a map function, move this before
+        // const loop_start = builder.vm.chunk.bytecode.items.len;
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.pop), line);
 
         // for body
         try c.compileBuilder(gpa, args[1], builder);
@@ -359,13 +362,16 @@ test "if" {
 test "for loop" {
     const gpa = std.testing.allocator;
 
-    var vm = try Compiler.compile(gpa, "for x in [1, 2, 3] do x end");
+    var vm = try Compiler.compile(gpa,
+    \\ for x in [1, 2, 3] do
+    \\      k = x + 2
+    \\      k
+    \\ end",
+    );
     defer vm.deint(gpa);
 
     try vm.run(gpa);
 
-    try std.testing.expectEqual(3, vm.stack.len());
-    try std.testing.expectEqual(Value{ .number = 1 }, vm.stack.get(0));
-    try std.testing.expectEqual(Value{ .number = 2 }, vm.stack.get(1));
-    try std.testing.expectEqual(Value{ .number = 3 }, vm.stack.get(2));
+    try std.testing.expectEqual(1, vm.stack.len());
+    try std.testing.expectEqual(Value{ .number = 5 }, vm.stack.get(0));
 }
