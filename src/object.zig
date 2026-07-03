@@ -1,7 +1,23 @@
 const std = @import("std");
+const Chunk = @import("vm.zig").Chunk;
 const RC = @import("ref_counter.zig").RC;
 const Value = @import("value.zig").Value;
 const List = @import("list.zig").List(Value);
+
+pub const Function = struct {
+    chunk: Chunk,
+    up_values: std.ArrayList(Value),
+    name: []const u8,
+
+    pub fn deinit(self: *Function, gpa: std.mem.Allocator) void {
+        self.chunk.deinit(gpa);
+        self.up_values.deinit(gpa);
+    }
+
+    pub fn format(function: Function, writer: *std.Io.Writer) !void {
+        try writer.print("{s}", .{ function.name });
+    }
+};
 
 pub const Iterator = union(enum) {
     list: List.Iterator,
@@ -34,6 +50,7 @@ pub const Iterator = union(enum) {
 };
 
 pub const Obj = union(enum) {
+    function: Function,
     list: List,
     iterator: Iterator,
 
@@ -67,6 +84,7 @@ pub const Obj = union(enum) {
                 try writer.writeByte(']');
             },
             .iterator => |iter| try iter.format(writer),
+            .function => |function| try function.format(writer),
         }
     }
 };

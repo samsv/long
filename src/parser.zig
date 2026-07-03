@@ -94,9 +94,9 @@ fn parseContainer(
     return .{ .cons = list.* };
 }
 
-fn parseParens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: SExpr) !SExpr {
+fn parseParens(gpa: std.mem.Allocator, s: *Scanner, left_paren: Token, lhs: ?SExpr) !SExpr {
     var list: std.ArrayList(SExpr) = .empty;
-    try list.append(gpa, lhs);
+    if (lhs) |l| try list.append(gpa, l);
 
     return parseContainer(&list, gpa, s, left_paren, .right_paren);
 }
@@ -128,6 +128,27 @@ fn parseFor(gpa: std.mem.Allocator, s: *Scanner, for_token: Token) !SExpr {
 
     try expect(s, .{ .keywords = .do });
     const body = try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, for_token.line);
+    list.appendAssumeCapacity(body);
+
+    return .{ .cons = list };
+}
+
+fn parseFun(gpa: std.mem.Allocator, s: *Scanner, fun_token: Token) !SExpr {
+    var list: std.ArrayList(SExpr) = try .initCapacity(gpa, 4);
+    errdefer list.deinit(gpa);
+    list.appendAssumeCapacity(.{ .atom = fun_token });
+
+    const id = try expectId(s);
+    list.appendAssumeCapacity(.{ .atom = id });
+
+    const left_paren = try expectToken(s, .{ .operator = .left_paren });
+    var args = try parseParens(gpa, s, left_paren, null);
+    errdefer args.deinit(gpa);
+    list.appendAssumeCapacity(args);
+
+    try expect(s, .{ .operator = .equal });
+
+    const body = try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, fun_token.line);
     list.appendAssumeCapacity(body);
 
     return .{ .cons = list };
@@ -248,6 +269,7 @@ pub fn expr(gpa: std.mem.Allocator, s: *Scanner, min_prec: u8) anyerror!SExpr {
         .special_fns => |fn_| switch (fn_) {
             .@"if" => parseIf(gpa, s, token),
             .@"for" => parseFor(gpa, s, token),
+            .fun => parseFun(gpa, s, token),
             .list => parseList(gpa, s, try expectToken(s, .{ .operator = .left_paren }), .right_paren),
             else => error.NotImplemented,
         },
@@ -260,7 +282,7 @@ pub fn expr(gpa: std.mem.Allocator, s: *Scanner, min_prec: u8) anyerror!SExpr {
 
 fn prefixPrec(op: Operator) !Precedence {
     return switch (op) {
-        .minus => .{ .left = 11, .right = null },
+        .minus => .{ .left = 13, .right = null },
         else => error.OperatorNotPrefix,
     };
 }
@@ -270,11 +292,16 @@ fn infixPrec(op: Operator) !Precedence {
         .equal => .{ .left = 1, .right = 2 },
         .comma => .{ .left = 3, .right = 4 },
         .pipe => .{ .left = 6, .right = 5 },
-        .plus, .minus => .{ .left = 7, .right = 8 },
-        .star, .slash => .{ .left = 9, .right = 10 },
-        .dot => .{ .left = 16, .right = 15 },
-        .left_paren, .left_bracket => .{ .left = 13, .right = null },
-        else => error.OperatorNotInfix,
+        .greater,
+        .greater_equal,
+        .less,
+        .less_equal,
+        .bang_equal,
+        .equal_equal => .{ .left = 7, .right = 8 },
+        .plus, .minus => .{ .left = 9, .right = 10 },
+        .star, .slash => .{ .left = 11, .right = 12 },
+        .dot => .{ .left = 18, .right = 17 },
+        .left_paren, .left_bracket => .{ .left = 15, .right = null },
     };
 }
 

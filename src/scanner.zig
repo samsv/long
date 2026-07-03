@@ -91,7 +91,7 @@ pub const Token = struct {
 
     pub const SpecialFns = enum {
         class,
-        def,
+        fun,
         @"for",
         @"if",
         list,

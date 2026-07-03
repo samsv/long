@@ -113,4 +113,19 @@ pub fn main(init: std.process.Init) !void {
 
         std.debug.print("bye\n\n", .{});
     }
+
+    {
+        var scanner = try Scanner.init(
+            \\fun fib(x) =
+            \\    if x == 0 do 0
+            \\    else if x == 1 do 1
+            \\    else fib(x - 1) + fib(x - 2)
+            \\end
+        );
+
+        var sexpr = try parser.expr(gpa, &scanner, 0);
+        defer sexpr.deinit(gpa);
+        try stdout_writer.print("{f}\n", .{sexpr});
+        try stdout_writer.flush();
+    }
 }

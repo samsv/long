@@ -19,7 +19,7 @@ pub const Chunk = struct {
     }
 };
 
-const Array = struct {
+pub const Array = struct {
     values: std.ArrayList(Value),
 
     pub const empty: Array = .{ .values = .empty };
@@ -139,6 +139,7 @@ pub const VM = struct {
     stack: Array,
     locals: Array,
     ip: usize,
+    prev_chunk: ?*Chunk,
 
     pub fn init() VM {
         return .{
@@ -146,6 +147,7 @@ pub const VM = struct {
             .stack = .empty,
             .locals = .empty,
             .globals = .empty,
+            .prev_chunk = null,
             .ip = 0,
         };
     }
@@ -196,7 +198,7 @@ pub const VM = struct {
         while (i < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[i]);
             switch (instruction) {
-                .add, .sub, .mul, .div, .negate, .set_global, .set_local, .pop, .iter_create, .iter_next => {
+                .add, .sub, .mul, .div, .negate, .set_global, .set_local, .pop, .iter_create, .iter_next, .call => {
                     try writer.print("{} [ {s} ]\n", .{ i, @tagName(instruction) });
                     i += 1;
                 },
@@ -341,11 +343,30 @@ pub const VM = struct {
         vm.ip += 1;
     }
 
+    fn call(vm: *VM, gpa: std.mem.Allocator) !void {
+        var value = vm.stack.pop();
+        defer value.deinit(gpa);
+
+        const function = switch (value) {
+            .obj => |*obj| switch (obj.getUnwrap()) {
+                .function => |fn_| fn_,
+                else => return error.NotCallable,
+            },
+            else => return error.NotCallable,
+        };
+
+        vm.prev_chunk = &vm.chunk;
+        vm.chunk = function.chunk;
+
+        // TODO! Add upvalues to locals stack
+    }
+
     pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {
         while (vm.ip < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
             try switch (instruction) {
                 .add, .sub, .mul, .div => vm.mathOp(gpa, instruction),
+                .call => vm.call(gpa),
                 .set_global => vm.setGlobal(gpa),
                 .get_global => vm.getGlobal(gpa),
                 .set_local => vm.setLocal(gpa),
@@ -370,6 +391,7 @@ pub const VM = struct {
         sub,
         mul,
         div,
+        call,
         set_global,
         get_global,
         set_local,
