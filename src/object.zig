@@ -29,7 +29,7 @@ pub const Iterator = union(enum) {
     }
 
     pub fn format(self: Iterator, writer: *std.Io.Writer) !void {
-        try writer.print("{s} iterator", .{ @tagName(self) });
+        try writer.print("{s} iterator", .{@tagName(self)});
     }
 };
 

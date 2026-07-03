@@ -80,6 +80,24 @@ pub fn main(init: std.process.Init) !void {
         try vm.printInstructions(stdout_writer);
         try stdout_writer.writeByte('\n');
 
+        try vm.printStack(stdout_writer);
+        try stdout_writer.writeByte('\n');
+        try stdout_writer.flush();
+    }
+
+    {
+        std.debug.print("\n", .{});
+        var vm = try c.Compiler.compile(gpa,
+            \\ x = 5
+            \\ x + 2
+        );
+        defer vm.deint(gpa);
+
+        try vm.run(gpa);
+
+        try vm.printInstructions(stdout_writer);
+        try stdout_writer.writeByte('\n');
+
         try vm.printConstants(stdout_writer);
         try stdout_writer.writeByte('\n');
 

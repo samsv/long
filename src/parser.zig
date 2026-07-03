@@ -176,7 +176,7 @@ fn parseBlock(
         try list.append(gpa, e);
 
         for (end_token_kinds) |k|
-            if (try peek(s, k))
+            if (try check(s, k)) |_|
                 break :loop;
     }
     return .{ .cons = list };

@@ -317,15 +317,27 @@ pub const Compiler = struct {
     pub fn compile(gpa: std.mem.Allocator, source: []const u8) !VM {
         var scanner = try Scanner.init(source);
 
-        var sexpr = try parser.expr(gpa, &scanner, 0);
-        defer sexpr.deinit(gpa);
+        var sexprs: std.ArrayList(SExpr) = .empty;
+        defer {
+            for (sexprs.items) |*sexpr| sexpr.deinit(gpa);
+            sexprs.deinit(gpa);
+        }
+
+        while (try scanner.peek()) |_| {
+            const sexpr = try parser.expr(gpa, &scanner, 0);
+            try sexprs.append(gpa, sexpr);
+        }
 
         var builder = VMBuilder.init();
 
         var compiler = init();
         defer compiler.deinit(gpa);
 
-        try compiler.compileBuilder(gpa, sexpr, &builder);
+        for (sexprs.items, 0..) |sexpr, i| {
+            try compiler.compileBuilder(gpa, sexpr, &builder);
+            if (i < sexprs.items.len - 1)
+                try builder.addByte(gpa, @intFromEnum(VM.Instructions.pop), 0);
+        }
 
         return builder.build();
     }
@@ -363,10 +375,10 @@ test "for loop" {
     const gpa = std.testing.allocator;
 
     var vm = try Compiler.compile(gpa,
-    \\ for x in [1, 2, 3] do
-    \\      k = x + 2
-    \\      k
-    \\ end",
+        \\ for x in [1, 2, 3] do
+        \\      k = x + 2
+        \\      k
+        \\ end",
     );
     defer vm.deint(gpa);
 
