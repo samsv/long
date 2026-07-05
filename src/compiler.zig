@@ -328,7 +328,7 @@ pub const Compiler = struct {
             try sexprs.append(gpa, sexpr);
         }
 
-        var builder = VMBuilder.init();
+        var builder = try VMBuilder.init(gpa);
 
         var compiler = init();
         defer compiler.deinit(gpa);
@@ -378,7 +378,7 @@ test "for loop" {
         \\ for x in [1, 2, 3] do
         \\      k = x + 2
         \\      k
-        \\ end",
+        \\ end
     );
     defer vm.deint(gpa);
 

@@ -82,8 +82,8 @@ pub const Array = struct {
 pub const VMBuilder = struct {
     vm: VM,
 
-    pub fn init() VMBuilder {
-        return .{ .vm = VM.init() };
+    pub fn init(gpa: std.mem.Allocator) !VMBuilder {
+        return .{ .vm = try VM.init(gpa) };
     }
 
     pub fn build(self: VMBuilder) VM {
@@ -135,19 +135,19 @@ pub const VMBuilder = struct {
 
 pub const VM = struct {
     chunk: Chunk,
-    globals: Array,
+    globals: *Array,
     stack: Array,
     locals: Array,
     ip: usize,
-    prev_chunk: ?*Chunk,
 
-    pub fn init() VM {
+    pub fn init(gpa: std.mem.Allocator) !VM {
+        const globals = try gpa.create(Array);
+        globals.* = .empty;
         return .{
             .chunk = .empty,
             .stack = .empty,
             .locals = .empty,
-            .globals = .empty,
-            .prev_chunk = null,
+            .globals = globals,
             .ip = 0,
         };
     }
@@ -157,6 +157,7 @@ pub const VM = struct {
         vm.chunk.deinit(gpa);
         vm.locals.deinit(gpa);
         vm.globals.deinit(gpa);
+        gpa.destroy(vm.globals);
     }
 
     fn getOffset(vm: VM, i: usize) u16 {
@@ -355,13 +356,23 @@ pub const VM = struct {
             else => return error.NotCallable,
         };
 
-        vm.prev_chunk = &vm.chunk;
-        vm.chunk = function.chunk;
+        var fn_vm: VM = .{
+            .chunk = function.chunk,
+            .globals = vm.globals,
+            .locals = .empty, // add upvalues and arguments here
+            .stack = .empty,
+            .ip = 0,
+        };
+        defer fn_vm.stack.deinit(gpa);
+        defer fn_vm.locals.deinit(gpa);
+
+        try fn_vm.run(gpa);
+
 
         // TODO! Add upvalues to locals stack
     }
 
-    pub fn run(vm: *VM, gpa: std.mem.Allocator) !void {
+    pub fn run(vm: *VM, gpa: std.mem.Allocator) anyerror!void {
         while (vm.ip < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
             try switch (instruction) {

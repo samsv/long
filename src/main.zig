@@ -43,7 +43,7 @@ pub fn main(init: std.process.Init) !void {
         try stdout_writer.print("{f}\n", .{sexpr});
         try stdout_writer.flush();
 
-        var builder = vm_.VMBuilder.init();
+        var builder = try vm_.VMBuilder.init(gpa);
 
         var compiler = c.Compiler.init();
         defer compiler.deinit(gpa);
