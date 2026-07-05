@@ -127,7 +127,7 @@ fn parseFor(gpa: std.mem.Allocator, s: *Scanner, for_token: Token) !SExpr {
     list.appendAssumeCapacity(.{ .cons = loop_cond });
 
     try expect(s, .{ .keywords = .do });
-    const body = try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, for_token.line);
+    const body, _ = try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, for_token.line);
     list.appendAssumeCapacity(body);
 
     return .{ .cons = list };
@@ -148,7 +148,7 @@ fn parseFun(gpa: std.mem.Allocator, s: *Scanner, fun_token: Token) !SExpr {
 
     try expect(s, .{ .operator = .equal });
 
-    const body = try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, fun_token.line);
+    const body, _ = try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, fun_token.line);
     list.appendAssumeCapacity(body);
 
     return .{ .cons = list };
@@ -158,7 +158,7 @@ fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
     const cond = try expr(gpa, s, 0);
     try expect(s, .{ .keywords = .do });
 
-    const true_branch = try parseBlock(
+    const true_branch, const term = try parseBlock(
         gpa,
         s,
         &[_]Token.Kind{ .{ .keywords = .@"else" }, .{ .keywords = .end } },
@@ -167,11 +167,13 @@ fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
     var list: std.ArrayList(SExpr) = .empty;
     try list.appendSlice(gpa, &.{ .{ .atom = token }, cond, true_branch });
 
-    if (try check(s, .{ .keywords = .@"else" })) |else_token| {
+    if (std.meta.eql(term.kind, Token.Kind{ .keywords = .@"else" })) {
         const false_branch = if (try check(s, .{ .special_fns = .@"if" })) |if_token|
             try parseIf(gpa, s, if_token)
-        else
-            try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, else_token.line);
+        else blk: {
+            const fb, _ = try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, term.line);
+            break :blk fb;
+        };
         try list.append(gpa, false_branch);
     }
 
@@ -183,7 +185,7 @@ fn parseBlock(
     s: *Scanner,
     end_token_kinds: []const Token.Kind,
     line: usize,
-) !SExpr {
+) !struct { SExpr, Token } {
     var list: std.ArrayList(SExpr) = .empty;
     try list.append(gpa, .{
         .atom = .{
@@ -192,15 +194,15 @@ fn parseBlock(
         },
     });
 
-    loop: while (true) {
+    const term: Token = loop: while (true) {
         const e = try expr(gpa, s, 0);
         try list.append(gpa, e);
 
         for (end_token_kinds) |k|
-            if (try check(s, k)) |_|
-                break :loop;
-    }
-    return .{ .cons = list };
+            if (try check(s, k)) |tok|
+                break :loop tok;
+    };
+    return .{ .{ .cons = list }, term };
 }
 
 fn parseOperator(gpa: std.mem.Allocator, s: *Scanner, start_token: Token, min_prec: u8) !SExpr {
