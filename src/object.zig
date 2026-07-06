@@ -15,7 +15,7 @@ pub const Function = struct {
     }
 
     pub fn format(function: Function, writer: *std.Io.Writer) !void {
-        try writer.print("{s}", .{ function.name });
+        try writer.print("{s}", .{function.name});
     }
 };
 

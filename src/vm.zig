@@ -368,7 +368,6 @@ pub const VM = struct {
 
         try fn_vm.run(gpa);
 
-
         // TODO! Add upvalues to locals stack
     }
 
