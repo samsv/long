@@ -199,7 +199,19 @@ pub const VM = struct {
         while (i < vm.chunk.bytecode.items.len) {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[i]);
             switch (instruction) {
-                .add, .sub, .mul, .div, .negate, .set_global, .set_local, .pop, .iter_create, .iter_next, .call => {
+                .add,
+                .sub,
+                .mul,
+                .div,
+                .negate,
+                .set_global,
+                .set_local,
+                .pop,
+                .iter_create,
+                .iter_next,
+                .call,
+                .equals,
+                => {
                     try writer.print("{} [ {s} ]\n", .{ i, @tagName(instruction) });
                     i += 1;
                 },
@@ -247,6 +259,16 @@ pub const VM = struct {
         };
 
         vm.stack.appendAssumeCapacityNoBorrow(v);
+    }
+
+    fn equals(vm: *VM, gpa: std.mem.Allocator) void {
+        var v2 = vm.stack.pop();
+        var v1 = vm.stack.pop();
+
+        defer v1.deinit(gpa);
+        defer v2.deinit(gpa);
+
+        vm.stack.appendAssumeCapacityNoBorrow(.{ .boolean = v1.eql(v2) });
     }
 
     fn loadConstant(vm: *VM, gpa: std.mem.Allocator) !void {
@@ -376,6 +398,7 @@ pub const VM = struct {
             const instruction: Instructions = @enumFromInt(vm.chunk.bytecode.items[vm.ip]);
             try switch (instruction) {
                 .add, .sub, .mul, .div => vm.mathOp(gpa, instruction),
+                .equals => vm.equals(gpa),
                 .call => vm.call(gpa),
                 .set_global => vm.setGlobal(gpa),
                 .get_global => vm.getGlobal(gpa),
@@ -401,6 +424,7 @@ pub const VM = struct {
         sub,
         mul,
         div,
+        equals,
         call,
         set_global,
         get_global,

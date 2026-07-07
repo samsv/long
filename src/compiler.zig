@@ -155,6 +155,18 @@ pub const Compiler = struct {
         try c.addVar(gpa, id, line, builder);
     }
 
+    fn compileEqualEqual(
+        c: *Compiler,
+        gpa: std.mem.Allocator,
+        args: []const SExpr,
+        builder: *VMBuilder,
+        line: usize,
+    ) !void {
+        try c.compileBuilder(gpa, args[0], builder);
+        try c.compileBuilder(gpa, args[1], builder);
+        try builder.addByte(gpa, @intFromEnum(VM.Instructions.equals), line);
+    }
+
     fn compileOperator(
         c: *Compiler,
         gpa: std.mem.Allocator,
@@ -169,6 +181,7 @@ pub const Compiler = struct {
             .slash => VM.Instructions.div,
             .star => VM.Instructions.mul,
             .equal => return c.compileEqual(gpa, args, builder, line),
+            .equal_equal => return c.compileEqualEqual(gpa, args, builder, line),
             else => unreachable,
         };
 
@@ -294,15 +307,17 @@ pub const Compiler = struct {
     ) !void {
         const name = try expectId(args[0]);
 
+        var fn_builder = try VMBuilder.init(gpa);
+
         var compiler = init();
         defer compiler.deinit(gpa);
 
         // start vm for the function chunk
-        var fn_builder = try VMBuilder.init(gpa);
         // get args names
         var arg_names: std.ArrayList([]const u8) = try .initCapacity(gpa, args[1].cons.items.len);
         for (args[1].cons.items) |a| {
             const arg_name = try expectId(a);
+            try compiler.globals.add(gpa, arg_name);
             arg_names.appendAssumeCapacity(arg_name);
         }
 
@@ -313,6 +328,20 @@ pub const Compiler = struct {
         const fun = try Value.initFunction(gpa, name, fn_builder.build().chunk, .empty, arg_names);
         _ = try builder.addConstant(gpa, fun);
         try c.addVar(gpa, name, line, builder);
+    }
+
+    fn compileCall(
+        c: *Compiler,
+        gpa: std.mem.Allocator,
+        args: []const SExpr,
+        builder: *VMBuilder,
+        line: usize,
+    ) !void {
+        _ = c;
+        _ = gpa;
+        _ = args;
+        _ = builder;
+        _ = line;
     }
 
     fn compileAtom(c: Compiler, gpa: std.mem.Allocator, token: Token, builder: *VMBuilder) !void {
@@ -338,7 +367,11 @@ pub const Compiler = struct {
                     .do => c.compileDo(gpa, cons[1..], builder),
                     else => unreachable,
                 },
-                else => unreachable,
+                .literal => c.compileCall(gpa, cons[1..], builder, a.line),
+                else => {
+                    std.log.err("Not implemented {f}\n", .{a});
+                    return error.NotImplemented;
+                },
             },
             .cons => |cs| {
                 try c.compileCons(gpa, cs.items, builder);

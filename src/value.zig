@@ -82,4 +82,14 @@ pub const Value = union(enum) {
         const obj = try RC(Obj).init(gpa, .{ .iterator = iter });
         return .{ .obj = obj };
     }
+
+    pub fn eql(v1: Value, v2: Value) bool {
+        return switch (v1) {
+            .obj => |o1| switch (v2) {
+                .obj => |o2| std.meta.eql(o1.getUnwrap(), o2.getUnwrap()),
+                else => false,
+            },
+            else => std.meta.eql(v1, v2),
+        };
+    }
 };
