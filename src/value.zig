@@ -3,6 +3,7 @@ const std = @import("std");
 const Obj = @import("object.zig").Obj;
 const Iterator = @import("object.zig").Iterator;
 const RC = @import("ref_counter.zig").RC;
+const Chunk = @import("vm.zig").Chunk;
 
 pub const Value = union(enum) {
     number: f64,
@@ -51,6 +52,18 @@ pub const Value = union(enum) {
         errdefer list.deinit(gpa);
 
         const obj = try RC(Obj).init(gpa, list);
+        return .{ .obj = obj };
+    }
+
+    pub fn initFunction(
+        gpa: std.mem.Allocator,
+        name: []const u8,
+        chunk: Chunk,
+        upvalues: std.ArrayList(Value),
+        args: std.ArrayList([]const u8),
+    ) !Value {
+        const fun = Obj.initFunction(name, chunk, upvalues, args);
+        const obj = try RC(Obj).init(gpa, fun);
         return .{ .obj = obj };
     }
 

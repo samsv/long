@@ -120,6 +120,7 @@ pub fn main(init: std.process.Init) !void {
             \\    if x == 0 do 0
             \\    else if x == 1 do 1
             \\    else fib(x - 1) + fib(x - 2)
+            \\    end
             \\end
         );
 

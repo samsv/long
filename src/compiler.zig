@@ -127,6 +127,22 @@ pub const Compiler = struct {
         _ = try expect(atom.kind, kw);
     }
 
+    fn addVar(
+        c: *Compiler,
+        gpa: std.mem.Allocator,
+        id: []const u8,
+        line: usize,
+        builder: *VMBuilder,
+    ) !void {
+        if (c.locals) |local| {
+            try builder.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
+            try local.add(gpa, id);
+        } else {
+            try builder.addByte(gpa, @intFromEnum(VM.Instructions.set_global), line);
+            try c.globals.add(gpa, id);
+        }
+    }
+
     fn compileEqual(
         c: *Compiler,
         gpa: std.mem.Allocator,
@@ -136,14 +152,7 @@ pub const Compiler = struct {
     ) !void {
         const id = try expectId(args[0]);
         try c.compileBuilder(gpa, args[1], builder);
-
-        if (c.locals) |local| {
-            try builder.addByte(gpa, @intFromEnum(VM.Instructions.set_local), line);
-            try local.add(gpa, id);
-        } else {
-            try builder.addByte(gpa, @intFromEnum(VM.Instructions.set_global), line);
-            try c.globals.add(gpa, id);
-        }
+        try c.addVar(gpa, id, line, builder);
     }
 
     fn compileOperator(
@@ -276,6 +285,36 @@ pub const Compiler = struct {
         }
     }
 
+    fn compileFun(
+        c: *Compiler,
+        gpa: std.mem.Allocator,
+        args: []const SExpr,
+        builder: *VMBuilder,
+        line: usize,
+    ) !void {
+        const name = try expectId(args[0]);
+
+        var compiler = init();
+        defer compiler.deinit(gpa);
+
+        // start vm for the function chunk
+        var fn_builder = try VMBuilder.init(gpa);
+        // get args names
+        var arg_names: std.ArrayList([]const u8) = try .initCapacity(gpa, args[1].cons.items.len);
+        for (args[1].cons.items) |a| {
+            const arg_name = try expectId(a);
+            arg_names.appendAssumeCapacity(arg_name);
+        }
+
+        // compile the body into a new VM
+        try compiler.compileBuilder(gpa, args[2], &fn_builder);
+
+        // create then function and add it to the stack
+        const fun = try Value.initFunction(gpa, name, fn_builder.build().chunk, .empty, arg_names);
+        _ = try builder.addConstant(gpa, fun);
+        try c.addVar(gpa, name, line, builder);
+    }
+
     fn compileAtom(c: Compiler, gpa: std.mem.Allocator, token: Token, builder: *VMBuilder) !void {
         switch (token.kind) {
             .literal => |literal| try c.compileLiteral(gpa, literal, token.line, builder),
@@ -292,6 +331,7 @@ pub const Compiler = struct {
                     .@"if" => c.compileIf(gpa, cons[1..], builder),
                     .@"for" => c.compileFor(gpa, cons[1..], builder, a.line),
                     .list => c.compileList(gpa, cons[1..], builder, a.line),
+                    .fun => c.compileFun(gpa, cons[1..], builder, a.line),
                     else => return error.NotImplemented,
                 },
                 .keywords => |k| switch (k) {

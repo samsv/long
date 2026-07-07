@@ -5,13 +5,18 @@ const Value = @import("value.zig").Value;
 const List = @import("list.zig").List(Value);
 
 pub const Function = struct {
-    chunk: Chunk,
-    up_values: std.ArrayList(Value),
     name: []const u8,
+    chunk: Chunk,
+    upvalues: std.ArrayList(Value),
+    args: std.ArrayList([]const u8),
 
     pub fn deinit(self: *Function, gpa: std.mem.Allocator) void {
         self.chunk.deinit(gpa);
-        self.up_values.deinit(gpa);
+        defer self.upvalues.deinit(gpa);
+        defer self.args.deinit(gpa);
+
+        for (self.upvalues.items) |*up| up.deinit(gpa);
+        for (self.args.items) |a| gpa.free(a);
     }
 
     pub fn format(function: Function, writer: *std.Io.Writer) !void {
@@ -63,6 +68,22 @@ pub const Obj = union(enum) {
     pub fn initList(gpa: std.mem.Allocator, values: []Value) !Obj {
         return .{
             .list = try List.initOwned(gpa, values),
+        };
+    }
+
+    pub fn initFunction(
+        name: []const u8,
+        chunk: Chunk,
+        upvalues: std.ArrayList(Value),
+        args: std.ArrayList([]const u8),
+    ) Obj {
+        return .{
+            .function = .{
+                .chunk = chunk,
+                .name = name,
+                .upvalues = upvalues,
+                .args = args,
+            },
         };
     }
 
