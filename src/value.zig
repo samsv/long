@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const Obj = @import("object.zig").Obj;
-const Iterator = @import("iterator.zig").Iterator;
-const RC = @import("ref_counter.zig").RC;
+const Iterator = @import("obj/iterator.zig").Iterator;
+const RC = @import("obj/ref_counter.zig").RC;
 const VM = @import("vm.zig").VM;
 
 pub const Value = union(enum) {

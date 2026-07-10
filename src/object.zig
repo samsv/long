@@ -1,10 +1,10 @@
 const std = @import("std");
 const VM = @import("vm.zig").VM;
-const Function = @import("function.zig").Function;
-const RC = @import("ref_counter.zig").RC;
+const Function = @import("obj/function.zig").Function;
+const RC = @import("obj/ref_counter.zig").RC;
 const Value = @import("value.zig").Value;
-const List = @import("list.zig").List(Value);
-const Iterator = @import("iterator.zig").Iterator;
+const List = @import("obj/list.zig").List(Value);
+const Iterator = @import("obj/iterator.zig").Iterator;
 
 pub const Obj = union(enum) {
     function: Function,

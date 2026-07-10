@@ -1,5 +1,5 @@
 const std = @import("std");
-const Value = @import("value.zig").Value;
+const Value = @import("../value.zig").Value;
 const List = @import("list.zig").List(Value);
 
 pub const Iterator = union(enum) {

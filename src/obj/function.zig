@@ -1,6 +1,6 @@
 const std = @import("std");
-const VM = @import("vm.zig").VM;
-const Value = @import("value.zig").Value;
+const VM = @import("../vm.zig").VM;
+const Value = @import("../value.zig").Value;
 
 pub const Function = struct {
     name: []const u8,
