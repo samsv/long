@@ -13,6 +13,8 @@ pub const Chunk = struct {
     };
 
     pub fn deinit(chunk: *Chunk, gpa: std.mem.Allocator) void {
+        for (chunk.constants.items) |*v| v.deinit(gpa);
+
         chunk.bytecode.deinit(gpa);
         chunk.constants.deinit(gpa);
         chunk.lines.deinit(gpa);

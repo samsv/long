@@ -316,7 +316,7 @@ pub const Compiler = struct {
         // get args names
         var arg_names: std.ArrayList([]const u8) = try .initCapacity(gpa, args[1].cons.items.len);
         for (args[1].cons.items) |a| {
-            const arg_name = try expectId(a);
+            const arg_name = try gpa.dupe(u8, try expectId(a));
             try compiler.globals.add(gpa, arg_name);
             arg_names.appendAssumeCapacity(arg_name);
         }
@@ -325,7 +325,10 @@ pub const Compiler = struct {
         try compiler.compileBuilder(gpa, args[2], &fn_builder);
 
         // create then function and add it to the stack
-        const fun = try Value.initFunction(gpa, name, fn_builder.build().chunk, .empty, arg_names);
+        const fn_vm = fn_builder.build();
+        gpa.destroy(fn_vm.globals);
+
+        const fun = try Value.initFunction(gpa, name, fn_vm.chunk, .empty, arg_names);
         _ = try builder.addConstant(gpa, fun);
         try c.addVar(gpa, name, line, builder);
     }
