@@ -389,15 +389,17 @@ pub const VM = struct {
             },
             else => return error.NotCallable,
         };
+        defer function.vm.stack.deinit(gpa);
+        defer function.vm.locals.deinit(gpa);
 
         const arg_count = vm.chunk.bytecode.items[vm.ip + 1];
         const args = vm.stack.items()[vm.stack.len() - arg_count ..];
 
-        function.vm.globals.values.clearRetainingCapacity();
+        function.vm.globals.removeN(gpa, function.vm.globals.len());
         try function.vm.globals.values.appendSlice(gpa, args);
         try function.vm.run(gpa);
 
-        vm.stack.removeN(gpa, arg_count);
+        vm.stack.values.items.len -= arg_count;
         vm.stack.appendAssumeCapacityNoBorrow(function.vm.stack.pop());
 
         vm.ip += 1;

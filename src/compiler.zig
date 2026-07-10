@@ -468,3 +468,36 @@ test "for loop" {
     try std.testing.expectEqual(1, vm.stack.len());
     try std.testing.expectEqual(Value{ .number = 5 }, vm.stack.get(0));
 }
+
+test "functions" {
+    const gpa = std.testing.allocator;
+
+    const test_cases = [_]struct { []const u8, Value }{
+        .{ "fun f(x) = x + 1 end f(2)", .{ .number = 3 } },
+        .{ "fun add(x, y) = x + y end add(3, 4)", .{ .number = 7 } },
+        .{ "fun f(x) = x + 1 end f(f(2))", .{ .number = 4 } },
+        .{
+            \\ fun h(x) =
+            \\      k = x + 1
+            \\      k
+            \\ end
+            \\ h(2)
+        , .{ .number = 3 } },
+    };
+
+    for (test_cases) |cs| {
+        var vm = try Compiler.compile(gpa, cs[0]);
+        defer vm.deint(gpa);
+
+        try vm.run(gpa);
+
+        try std.testing.expectEqual(1, vm.stack.len());
+        try std.testing.expectEqual(cs[1], vm.stack.get(0));
+    }
+
+    var vm = try Compiler.compile(gpa, "fun g(x) = x end g([1, 2, 3])");
+    defer vm.deint(gpa);
+    try vm.run(gpa);
+    try std.testing.expectEqual(1, vm.stack.len());
+    try std.testing.expect(vm.stack.get(0) == .obj);
+}
