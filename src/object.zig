@@ -1,17 +1,17 @@
 const std = @import("std");
-const Chunk = @import("vm.zig").Chunk;
+const VM = @import("vm.zig").VM;
 const RC = @import("ref_counter.zig").RC;
 const Value = @import("value.zig").Value;
 const List = @import("list.zig").List(Value);
 
 pub const Function = struct {
     name: []const u8,
-    chunk: Chunk,
+    vm: VM,
     upvalues: std.ArrayList(Value),
     args: std.ArrayList([]const u8),
 
     pub fn deinit(self: *Function, gpa: std.mem.Allocator) void {
-        self.chunk.deinit(gpa);
+        self.vm.deint(gpa);
         defer self.upvalues.deinit(gpa);
         defer self.args.deinit(gpa);
 
@@ -73,13 +73,13 @@ pub const Obj = union(enum) {
 
     pub fn initFunction(
         name: []const u8,
-        chunk: Chunk,
+        vm: VM,
         upvalues: std.ArrayList(Value),
         args: std.ArrayList([]const u8),
     ) Obj {
         return .{
             .function = .{
-                .chunk = chunk,
+                .vm = vm,
                 .name = name,
                 .upvalues = upvalues,
                 .args = args,

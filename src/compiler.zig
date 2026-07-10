@@ -326,9 +326,7 @@ pub const Compiler = struct {
 
         // create then function and add it to the stack
         const fn_vm = fn_builder.build();
-        gpa.destroy(fn_vm.globals);
-
-        const fun = try Value.initFunction(gpa, name, fn_vm.chunk, .empty, arg_names);
+        const fun = try Value.initFunction(gpa, name, fn_vm, .empty, arg_names);
         _ = try builder.addConstant(gpa, fun);
         try c.addVar(gpa, name, line, builder);
     }
@@ -336,15 +334,16 @@ pub const Compiler = struct {
     fn compileCall(
         c: *Compiler,
         gpa: std.mem.Allocator,
+        fn_name: []const u8,
         args: []const SExpr,
         builder: *VMBuilder,
         line: usize,
     ) !void {
-        _ = c;
-        _ = gpa;
-        _ = args;
-        _ = builder;
-        _ = line;
+        for (args) |value|
+            try c.compileBuilder(gpa, value, builder);
+
+        try c.compileID(gpa, fn_name, line, builder);
+        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.call), @intCast(args.len), line);
     }
 
     fn compileAtom(c: Compiler, gpa: std.mem.Allocator, token: Token, builder: *VMBuilder) !void {
@@ -370,7 +369,13 @@ pub const Compiler = struct {
                     .do => c.compileDo(gpa, cons[1..], builder),
                     else => unreachable,
                 },
-                .literal => c.compileCall(gpa, cons[1..], builder, a.line),
+                .literal => |literal| switch (literal) {
+                    .identifier => |fn_name| c.compileCall(gpa, fn_name, cons[1..], builder, a.line),
+                    else => {
+                        std.log.err("Value '{f}' not callable\n", .{a});
+                        return error.NotCallable;
+                    },
+                },
                 else => {
                     std.log.err("Not implemented {f}\n", .{a});
                     return error.NotImplemented;

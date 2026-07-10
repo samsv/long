@@ -9,6 +9,24 @@ const vm_ = zsv.vm;
 const obj = zsv.obj;
 const Value = zsv.Value;
 
+fn printVM(vm: vm_.VM, stdout_writer: *std.Io.Writer) !void {
+        try vm.printInstructions(stdout_writer);
+        try stdout_writer.writeByte('\n');
+
+        try vm.printConstants(stdout_writer);
+        try stdout_writer.writeByte('\n');
+
+        try vm.printLocals(stdout_writer);
+        try stdout_writer.writeByte('\n');
+
+        try vm.printGlobals(stdout_writer);
+        try stdout_writer.writeByte('\n');
+
+        try vm.printStack(stdout_writer);
+        try stdout_writer.writeByte('\n');
+        try stdout_writer.flush();
+}
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
 
@@ -116,12 +134,10 @@ pub fn main(init: std.process.Init) !void {
 
     {
         const text =
-            \\fun fib(x) =
-            \\    if x == 0 do 0
-            \\    else if x == 1 do 1
-            \\    else fib(x - 1) + fib(x - 2)
-            \\    end
+            \\fun f(x) =
+            \\    x + 1
             \\end
+            \\f(2)
         ;
 
         var scanner = try Scanner.init(text);
@@ -136,20 +152,8 @@ pub fn main(init: std.process.Init) !void {
 
         try vm.run(gpa);
 
-        try vm.printInstructions(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printConstants(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printLocals(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printGlobals(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printStack(stdout_writer);
-        try stdout_writer.writeByte('\n');
-        try stdout_writer.flush();
+        const fn_vm = vm.globals.get(0).obj.getUnwrap().function.vm;
+        try printVM(fn_vm, stdout_writer);
+        try printVM(vm, stdout_writer);
     }
 }

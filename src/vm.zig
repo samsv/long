@@ -30,6 +30,12 @@ pub const Array = struct {
         return self.values.items;
     }
 
+    pub fn initFrom(gpa: std.mem.Allocator, values: []const Value) !Array {
+        var arr: std.ArrayList(Value) = try .initCapacity(gpa, values.len);
+        arr.appendSliceAssumeCapacity(values);
+        return .{ .values = arr };
+    }
+
     pub inline fn len(self: Array) usize {
         return self.values.items.len;
     }
@@ -211,7 +217,6 @@ pub const VM = struct {
                 .pop,
                 .iter_create,
                 .iter_next,
-                .call,
                 .equals,
                 => {
                     try writer.print("{} [ {s} ]\n", .{ i, @tagName(instruction) });
@@ -230,6 +235,11 @@ pub const VM = struct {
                 .pop_local, .load_constant, .get_global, .get_local => {
                     const index = vm.chunk.bytecode.items[i + 1];
                     try writer.print("{} [ {s} ] index {}\n", .{ i, @tagName(instruction), index });
+                    i += 2;
+                },
+                .call => {
+                    const n = vm.chunk.bytecode.items[i + 1];
+                    try writer.print("{} [ {s} ] args {} \n", .{ i, @tagName(instruction), n });
                     i += 2;
                 },
             }
@@ -372,7 +382,7 @@ pub const VM = struct {
         var value = vm.stack.pop();
         defer value.deinit(gpa);
 
-        const function = switch (value) {
+        var function = switch (value) {
             .obj => |*obj| switch (obj.getUnwrap()) {
                 .function => |fn_| fn_,
                 else => return error.NotCallable,
@@ -380,17 +390,17 @@ pub const VM = struct {
             else => return error.NotCallable,
         };
 
-        var fn_vm: VM = .{
-            .chunk = function.chunk,
-            .globals = vm.globals,
-            .locals = .empty, // add upvalues and arguments here
-            .stack = .empty,
-            .ip = 0,
-        };
-        defer fn_vm.stack.deinit(gpa);
-        defer fn_vm.locals.deinit(gpa);
+        const arg_count = vm.chunk.bytecode.items[vm.ip + 1];
+        const args = vm.stack.items()[vm.stack.len() - arg_count ..];
 
-        try fn_vm.run(gpa);
+        function.vm.globals.values.clearRetainingCapacity();
+        try function.vm.globals.values.appendSlice(gpa, args);
+        try function.vm.run(gpa);
+
+        vm.stack.removeN(gpa, arg_count);
+        vm.stack.appendAssumeCapacityNoBorrow(function.vm.stack.pop());
+
+        vm.ip += 1;
 
         // TODO! Add upvalues to locals stack
     }
