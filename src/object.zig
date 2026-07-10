@@ -1,58 +1,10 @@
 const std = @import("std");
 const VM = @import("vm.zig").VM;
+const Function = @import("function.zig").Function;
 const RC = @import("ref_counter.zig").RC;
 const Value = @import("value.zig").Value;
 const List = @import("list.zig").List(Value);
-
-pub const Function = struct {
-    name: []const u8,
-    vm: VM,
-    upvalues: std.ArrayList(Value),
-    args: std.ArrayList([]const u8),
-
-    pub fn deinit(self: *Function, gpa: std.mem.Allocator) void {
-        self.vm.deint(gpa);
-        defer self.upvalues.deinit(gpa);
-        defer self.args.deinit(gpa);
-
-        for (self.upvalues.items) |*up| up.deinit(gpa);
-        for (self.args.items) |a| gpa.free(a);
-    }
-
-    pub fn format(function: Function, writer: *std.Io.Writer) !void {
-        try writer.print("{s}", .{function.name});
-    }
-};
-
-pub const Iterator = union(enum) {
-    list: List.Iterator,
-
-    pub fn init(from: Value) !Iterator {
-        return switch (from) {
-            .obj => |obj| switch (obj.getPtrUnwrap().*) {
-                .list => |*l| .{ .list = l.iter() },
-                else => error.TypeNotIterable,
-            },
-            else => error.TypeNotIterable,
-        };
-    }
-
-    pub fn deinit(self: *Iterator, gpa: std.mem.Allocator) void {
-        switch (self.*) {
-            inline else => |*iter| iter.deinit(gpa),
-        }
-    }
-
-    pub fn next(self: *Iterator) Value {
-        return switch (self.*) {
-            inline else => |*iter| iter.next(),
-        } orelse .nil;
-    }
-
-    pub fn format(self: Iterator, writer: *std.Io.Writer) !void {
-        try writer.print("{s} iterator", .{@tagName(self)});
-    }
-};
+const Iterator = @import("iterator.zig").Iterator;
 
 pub const Obj = union(enum) {
     function: Function,

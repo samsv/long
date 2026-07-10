@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const Obj = @import("object.zig").Obj;
-const Iterator = @import("object.zig").Iterator;
+const Iterator = @import("iterator.zig").Iterator;
 const RC = @import("ref_counter.zig").RC;
 const VM = @import("vm.zig").VM;
 
