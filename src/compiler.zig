@@ -377,13 +377,14 @@ pub const Compiler = struct {
                     },
                 },
                 else => {
-                    std.log.err("Not implemented {f}\n", .{a});
-                    return error.NotImplemented;
+                    std.log.err("Value '{f}' not callable\n", .{a});
+                    return error.NotCallable;
                 },
             },
             .cons => |cs| {
+                for (cons[1..]) |sexpr| try c.compileBuilder(gpa, sexpr, builder);
                 try c.compileCons(gpa, cs.items, builder);
-                for (cons) |sexpr| try c.compileBuilder(gpa, sexpr, builder);
+                try builder.addBytes(gpa, @intFromEnum(VM.Instructions.call), @intCast(cons.len - 1), 0);
             },
         };
     }
@@ -482,7 +483,21 @@ test "functions" {
             \\      k
             \\ end
             \\ h(2)
-        , .{ .number = 3 } },
+            ,
+            .{ .number = 3 },
+        },
+        .{
+            \\fun f() =
+            \\  fun g(x) =
+            \\      x + 4
+            \\  end
+            \\
+            \\  g
+            \\end
+            \\ f()(5)
+            ,
+            .{ .number = 9 },
+        },
     };
 
     for (test_cases) |cs| {

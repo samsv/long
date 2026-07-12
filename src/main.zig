@@ -10,21 +10,21 @@ const obj = zsv.obj;
 const Value = zsv.Value;
 
 fn printVM(vm: vm_.VM, stdout_writer: *std.Io.Writer) !void {
-        try vm.printInstructions(stdout_writer);
-        try stdout_writer.writeByte('\n');
+    try vm.printInstructions(stdout_writer);
+    try stdout_writer.writeByte('\n');
 
-        try vm.printConstants(stdout_writer);
-        try stdout_writer.writeByte('\n');
+    try vm.printConstants(stdout_writer);
+    try stdout_writer.writeByte('\n');
 
-        try vm.printLocals(stdout_writer);
-        try stdout_writer.writeByte('\n');
+    try vm.printLocals(stdout_writer);
+    try stdout_writer.writeByte('\n');
 
-        try vm.printGlobals(stdout_writer);
-        try stdout_writer.writeByte('\n');
+    try vm.printGlobals(stdout_writer);
+    try stdout_writer.writeByte('\n');
 
-        try vm.printStack(stdout_writer);
-        try stdout_writer.writeByte('\n');
-        try stdout_writer.flush();
+    try vm.printStack(stdout_writer);
+    try stdout_writer.writeByte('\n');
+    try stdout_writer.flush();
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -134,18 +134,25 @@ pub fn main(init: std.process.Init) !void {
 
     {
         const text =
-            \\fun f(x) =
-            \\    x + 1
+            \\fun f() =
+            \\ y = 4
+            \\  fun g(x) =
+            \\      x + y
+            \\  end
+            \\
+            \\  g
             \\end
-            \\f(2)
+            \\ f()(5)
         ;
 
         var scanner = try Scanner.init(text);
 
-        var sexpr = try parser.expr(gpa, &scanner, 0);
-        defer sexpr.deinit(gpa);
-        try stdout_writer.print("{f}\n", .{sexpr});
-        try stdout_writer.flush();
+        while (try scanner.peek()) |_| {
+            var sexpr = try parser.expr(gpa, &scanner, 0);
+            defer sexpr.deinit(gpa);
+            try stdout_writer.print("{f}\n", .{sexpr});
+            try stdout_writer.flush();
+        }
 
         var vm = try c.Compiler.compile(gpa, text);
         defer vm.deint(gpa);
