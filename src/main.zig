@@ -135,9 +135,8 @@ pub fn main(init: std.process.Init) !void {
     {
         const text =
             \\fun f() =
-            \\ y = 4
             \\  fun g(x) =
-            \\      x + y
+            \\      x + 4
             \\  end
             \\
             \\  g
@@ -159,7 +158,7 @@ pub fn main(init: std.process.Init) !void {
 
         try vm.run(gpa);
 
-        const fn_vm = vm.globals.get(0).obj.getUnwrap().function.vm;
+        const fn_vm = vm.globals.get(0).obj.getUnwrap().closure.getFunction().vm;
         try printVM(fn_vm, stdout_writer);
         try printVM(vm, stdout_writer);
     }

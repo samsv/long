@@ -326,8 +326,8 @@ pub const Compiler = struct {
 
         // create then function and add it to the stack
         const fn_vm = fn_builder.build();
-        const fun = try Value.initFunction(gpa, name, fn_vm, .empty, arg_names);
-        _ = try builder.addConstant(gpa, fun);
+        const fun = try Value.initFunction(gpa, name, fn_vm, arg_names);
+        _ = try builder.addClosure(gpa, fun);
         try c.addVar(gpa, name, line, builder);
     }
 

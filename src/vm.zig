@@ -110,6 +110,13 @@ pub const VMBuilder = struct {
         try builder.vm.chunk.lines.append(gpa, line);
     }
 
+    pub fn addClosure(builder: *VMBuilder, gpa: std.mem.Allocator, c: Value) !u8 {
+        try builder.vm.chunk.constants.append(gpa, c);
+        const i: u8 = @intCast(builder.vm.chunk.constants.items.len - 1);
+        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.load_function), i, 0);
+        return i;
+    }
+
     pub fn addConstant(builder: *VMBuilder, gpa: std.mem.Allocator, c: Value) !u8 {
         try builder.vm.chunk.constants.append(gpa, c);
         const i: u8 = @intCast(builder.vm.chunk.constants.items.len - 1);
@@ -212,6 +219,7 @@ pub const VM = struct {
                 .mul,
                 .div,
                 .negate,
+                .load_function,
                 .set_global,
                 .set_local,
                 .pop,
@@ -281,6 +289,14 @@ pub const VM = struct {
         defer v2.deinit(gpa);
 
         vm.stack.appendAssumeCapacityNoBorrow(.{ .boolean = v1.eql(v2) });
+    }
+
+    fn loadClosure(vm: *VM, gpa: std.mem.Allocator) !void {
+        const i = vm.chunk.bytecode.items[vm.ip + 1];
+        var v = vm.chunk.constants.items[i];
+
+        try vm.stack.appendNoBorrow(gpa, try v.toClosure(gpa));
+        vm.ip += 1;
     }
 
     fn loadConstant(vm: *VM, gpa: std.mem.Allocator) !void {
@@ -385,6 +401,7 @@ pub const VM = struct {
         var function = switch (value) {
             .obj => |*obj| switch (obj.getUnwrap()) {
                 .function => |fn_| fn_,
+                .closure => |cls| cls.getFunction(),
                 else => return error.NotCallable,
             },
             else => return error.NotCallable,
@@ -420,6 +437,7 @@ pub const VM = struct {
                 .get_local => vm.getLocal(gpa),
                 .pop_local => vm.popLocal(gpa),
                 .load_constant => vm.loadConstant(gpa),
+                .load_function => vm.loadClosure(gpa),
                 .jump => vm.jump(),
                 .jump_back => vm.jumpBack(),
                 .jump_if_false => vm.jumpIfFalse(gpa),
@@ -440,6 +458,7 @@ pub const VM = struct {
         div,
         equals,
         call,
+        load_function,
         set_global,
         get_global,
         set_local,

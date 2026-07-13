@@ -47,6 +47,17 @@ pub const Value = union(enum) {
         };
     }
 
+    pub fn toClosure(v: *Value, gpa: std.mem.Allocator) !Value {
+        return .{
+            .obj = try RC(Obj).init(gpa, .{
+                .closure = .{
+                    .function = try v.obj.borrow(),
+                    .upvalues = .empty,
+                },
+            }),
+        };
+    }
+
     pub fn initList(gpa: std.mem.Allocator, values: []Value) !Value {
         var list = try Obj.initList(gpa, values);
         errdefer list.deinit(gpa);
@@ -59,10 +70,9 @@ pub const Value = union(enum) {
         gpa: std.mem.Allocator,
         name: []const u8,
         vm: VM,
-        upvalues: std.ArrayList(Value),
         args: std.ArrayList([]const u8),
     ) !Value {
-        const fun = Obj.initFunction(name, vm, upvalues, args);
+        const fun = Obj.initFunction(name, vm, args);
         const obj = try RC(Obj).init(gpa, fun);
         return .{ .obj = obj };
     }
@@ -72,6 +82,15 @@ pub const Value = union(enum) {
             .nil => writer.writeAll("nil"),
             .obj => |o| writer.print("{f}", .{o.getUnwrap()}),
             inline else => |v| writer.print("{}", .{v}),
+        };
+    }
+
+    pub fn clone(value: Value, gpa: std.mem.Allocator) !Value {
+        return switch (value) {
+            .obj => |o| .{
+                .obj = try RC(Obj).init(gpa, o.getUnwrap()),
+            },
+            else => value,
         };
     }
 
