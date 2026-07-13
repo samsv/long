@@ -134,14 +134,14 @@ pub fn main(init: std.process.Init) !void {
 
     {
         const text =
-            \\fun f() =
-            \\  fun g(x) =
-            \\      x + 4
+            \\fun f(x) =
+            \\  fun g[x](y) =
+            \\      x + y
             \\  end
             \\
             \\  g
             \\end
-            \\ f()(5)
+            //\\ f(4)(5)
         ;
 
         var scanner = try Scanner.init(text);
