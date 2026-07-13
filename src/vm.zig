@@ -85,13 +85,20 @@ pub const Array = struct {
 
         self.values.items.len -= n;
     }
+
+    pub fn clear(self: *Array, gpa: std.mem.Allocator) void {
+        for (self.values.items) |*v|
+            v.deinit(gpa);
+
+        self.values.clearRetainingCapacity();
+    }
 };
 
 pub const VMBuilder = struct {
     vm: VM,
 
-    pub fn init(gpa: std.mem.Allocator) !VMBuilder {
-        return .{ .vm = try VM.init(gpa) };
+    pub fn init() VMBuilder {
+        return .{ .vm = VM.init() };
     }
 
     pub fn build(self: VMBuilder) VM {
@@ -150,19 +157,17 @@ pub const VMBuilder = struct {
 
 pub const VM = struct {
     chunk: Chunk,
-    globals: *Array,
+    globals: Array,
     stack: Array,
     locals: Array,
     ip: usize,
 
-    pub fn init(gpa: std.mem.Allocator) !VM {
-        const globals = try gpa.create(Array);
-        globals.* = .empty;
+    pub fn init() VM {
         return .{
             .chunk = .empty,
             .stack = .empty,
             .locals = .empty,
-            .globals = globals,
+            .globals = .empty,
             .ip = 0,
         };
     }
@@ -172,7 +177,6 @@ pub const VM = struct {
         vm.chunk.deinit(gpa);
         vm.locals.deinit(gpa);
         vm.globals.deinit(gpa);
-        gpa.destroy(vm.globals);
     }
 
     fn getOffset(vm: VM, i: usize) u16 {
@@ -398,30 +402,29 @@ pub const VM = struct {
         var value = vm.stack.pop();
         defer value.deinit(gpa);
 
-        var function = switch (value) {
+        const closure = switch (value) {
             .obj => |*obj| switch (obj.getUnwrap()) {
-                .function => |fn_| fn_,
-                .closure => |cls| cls.getFunction(),
+                .closure => |cls| cls,
                 else => return error.NotCallable,
             },
             else => return error.NotCallable,
         };
+        var function = closure.getFunction();
         defer function.vm.stack.deinit(gpa);
         defer function.vm.locals.deinit(gpa);
+        defer function.vm.globals.deinit(gpa);
 
         const arg_count = vm.chunk.bytecode.items[vm.ip + 1];
         const args = vm.stack.items()[vm.stack.len() - arg_count ..];
 
-        function.vm.globals.removeN(gpa, function.vm.globals.len());
         try function.vm.globals.values.appendSlice(gpa, args);
+        try function.vm.globals.values.appendSlice(gpa, closure.upvalues.items);
         try function.vm.run(gpa);
 
         vm.stack.values.items.len -= arg_count;
         vm.stack.appendAssumeCapacityNoBorrow(function.vm.stack.pop());
 
         vm.ip += 1;
-
-        // TODO! Add upvalues to locals stack
     }
 
     pub fn run(vm: *VM, gpa: std.mem.Allocator) anyerror!void {

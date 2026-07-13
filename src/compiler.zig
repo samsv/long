@@ -307,7 +307,7 @@ pub const Compiler = struct {
     ) !void {
         const name = try expectId(args[0]);
 
-        var fn_builder = try VMBuilder.init(gpa);
+        var fn_builder = VMBuilder.init();
 
         var compiler = init();
         defer compiler.deinit(gpa);
@@ -410,7 +410,7 @@ pub const Compiler = struct {
             try sexprs.append(gpa, sexpr);
         }
 
-        var builder = try VMBuilder.init(gpa);
+        var builder = VMBuilder.init();
 
         var compiler = init();
         defer compiler.deinit(gpa);
