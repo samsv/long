@@ -37,8 +37,8 @@ g(6) # 11
 
 `f` must be compiled to something similar to
 ```
-load_constant 0 # load g
 get_global 0 # adds x to the stack
+load_constant 0 # load g
 create_closure 1 # create closure with one upvalue
 set_global 1 # set g as global
 pop
@@ -99,20 +99,22 @@ will ever be freed.
 To fix it, we may treat `is_even` and `is_odd` as a group of functions, with the following structure
 ```c
 typedef struct {
-    rc_t(function_t) function;
-    array_t(value_t) upvalues;
-} closure_t;
-
-typedef struct {
-    rc_t(array_t(closure_t)) group;
+    // upvalues[0 .. n_group_members-1]: rc_t(function_t), in block order
+    // upvalues[n_group_members ..]:     every member's captured upvalues, concatenated;
+    //                                   each member's offset is baked into its
+    //                                   get_upvalue operands at compile time
+    rc_t(array_t(value_t)) upvalues;
     size_t index;
 } closure_member_t;
 ```
 
-Now, when calling a `closure_member_t`, we first add the arguments to the functions global array, then its upvalues, then, for each member of the group,
-we reconstruct a `closure_member_t` with a borrow of the group plus the member's index, and add it to the globals array. A slot therefore never contains
-a raw `closure_t`: every callable value is a `closure_member_t`, so every call receives the group and can rebuild the sibling slots for the next frame.
-When the call returns the frame is released, and the borrows with it. References to the group only ever live on the call stack, which is why no cycle forms.
+Now, when calling a `closure_member_t`, we create a new `vm_t` for the call. The arguments are moved into its globals array and the handle is kept alive
+until the call returns. The vm reads upvalues directly from the shared array, without copying or borrowing them. This is safe because the handle outlives the
+call and a group is never modified after `create_group`.
+
+`get_upvalue k` pushes a borrow of `upvalues[k]`, with `k` baked in at compile time. `get_member j` rebuilds the sibling `closure_member_t` from the shared
+array plus the index `j`, and calling it is a regular `call`. A member may rebuild itself, which enables recursion. As such, no cycle can form: the array
+holds only functions and captured values, which reference nothing back, and rebuilt members are released when the call returns.
 
 A flat function
 ```
@@ -125,14 +127,11 @@ Would compile to a `closure_member_t` with only itself at the group and no upval
 So, when compiling the function group for `is_even`, `is_odd`, we'd get the following bytecode:
 
 ```
+# load upvalues here
 load_constant 1 # load is_odd
-# also load upvalues here
-create_closure 0 # create closure with 0 upvalues
 load_constant 0 # load is_even
-# also load upvalues here
-create_closure 0 # create closure with 0 upvalues
-# now is_even and is_odd are on the stack
-create_group 2 # create a function group of size 2, place each closure_member_t on the stack
+# now is_even, is_odd and upvalues are on the stack
+create_group 2 0 # create a function group of size 2, with 0 upvalues
 set_global 0 # set is_even member as global
 pop
 set_global 1 # set is_odd member as global
@@ -150,8 +149,32 @@ jump 0x08 # finish
 get_global 0
 load_constant 2 # load 1
 sub
-get_global 2 # load is_odd. is_even is at slot_1
+get_member 1 # load is_odd. is_even is at slot 0
 call 1 # call is_odd
+```
+
+With that, our old function `f`
+```
+fun f(x) =
+    fun g(y) =
+        x + y
+    end
+
+    g
+end
+
+g = f(5)
+g(6) # 11
+```
+
+will be compiled to something similar to
+```
+get_global 0 # adds x to the stack
+load_constant 0 # load g
+create_group 1 1 # create closure with one upvalue and self
+set_global 1 # set g as global
+pop
+get_global 1 # return g
 ```
 
 ## Intermediary Representation
