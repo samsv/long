@@ -160,6 +160,7 @@ pub const VM = struct {
     globals: Array,
     stack: Array,
     locals: Array,
+    upvalues: Array,
     ip: usize,
 
     pub fn init() VM {
@@ -168,6 +169,7 @@ pub const VM = struct {
             .stack = .empty,
             .locals = .empty,
             .globals = .empty,
+            .upvalues = .empty,
             .ip = 0,
         };
     }
@@ -177,6 +179,7 @@ pub const VM = struct {
         vm.chunk.deinit(gpa);
         vm.locals.deinit(gpa);
         vm.globals.deinit(gpa);
+        vm.upvalues.deinit(gpa);
     }
 
     fn getOffset(vm: VM, i: usize) u16 {
@@ -352,8 +355,8 @@ pub const VM = struct {
             else => error.NotIterator,
         };
 
-        var next = iter.next();
-        try vm.stack.append(gpa, &next);
+        const next = iter.next();
+        try vm.stack.appendNoBorrow(gpa, next);
     }
 
     fn setGlobal(vm: *VM, gpa: std.mem.Allocator) !void {

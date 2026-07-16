@@ -1,6 +1,7 @@
 const std = @import("std");
 const List = @import("list.zig").List;
-const RC = @import("ref_counter.zig").RC;
+const ref_counter = @import("ref_counter.zig");
+const RC = ref_counter.RC;
 
 /// Hashing and equality context for key type `K`.
 pub fn Ctx(comptime K: type) type {
@@ -27,6 +28,18 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
         pub const KV = struct {
             key: K,
             value: ?V,
+
+            pub fn borrow(self: *KV) KV {
+                return .{
+                    .key = ref_counter.borrowValue(K, self.key),
+                    .value = if (self.value) |v| ref_counter.borrowValue(V, v) else null,
+                };
+            }
+
+            pub fn deinit(self: *KV, gpa: std.mem.Allocator) void {
+                ref_counter.deinitValue(K, &self.key, gpa);
+                if (self.value) |*v| ref_counter.deinitValue(V, v, gpa);
+            }
         };
 
         /// A located set item together with the layer depth it was found at.
@@ -308,7 +321,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
 
         /// Non-borrowing iterator over the live key/value pairs; valid while the map is alive.
         pub fn iterNoBorrow(self: Self) Iterator {
-            return Iterator.initNoBorrow(self);
+            return Iterator.initNoBorrow(self.map.getUnwrap());
         }
 
         /// Iterator over the map values.
@@ -317,8 +330,13 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             depth: DepthIterator,
 
             /// Borrowing iterator over `map`; release with `deinit`.
-            pub fn init(map: *Map) Iterator {
-                return if (map.depth == 0) .{ .flat = FlatIterator.init(map) } else .{ .depth = DepthIterator.init(map) };
+            pub fn init(self: *Self) Iterator {
+                const root = borrow(self.*).?;
+                const map = root.map.getUnwrap();
+                return if (map.depth == 0)
+                    .{ .flat = FlatIterator.init(root, map) }
+                else
+                    .{ .depth = DepthIterator.init(root, map) };
             }
 
             /// Release the borrowed map reference.
@@ -343,22 +361,25 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
 
         /// A special iterator for maps with depth 0.
         const FlatIterator = struct {
+            root: ?Self,
             map: Map,
             index: usize,
 
-            pub fn init(map: *Map) FlatIterator {
+            pub fn init(root: Self, map: Map) FlatIterator {
                 return .{
+                    .root = root,
                     .map = map,
                     .index = 0,
                 };
             }
 
-            pub fn deinit(iterator: FlatIterator, gpa: std.mem.Allocator) void {
-                iterator.map.deinit(gpa);
+            pub fn deinit(iterator: *FlatIterator, gpa: std.mem.Allocator) void {
+                if (iterator.root) |*r| r.deinit(gpa);
             }
 
             pub fn initNoBorrow(map: Map) FlatIterator {
                 return .{
+                    .root = null,
                     .map = map,
                     .index = 0,
                 };
@@ -367,35 +388,39 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             pub fn next(itr: *FlatIterator) ?KV {
                 const dense = itr.map.set.dense;
                 const item = dense.get(itr.index) orelse return null;
-                const kv = item.value;
+                var kv = item.value;
                 itr.index += 1;
-                return if (kv.value) |_| kv else itr.next();
+                if (kv.value == null) return itr.next();
+                return if (itr.root != null) kv.borrow() else kv;
             }
         };
 
         /// Iterates the live, unique key/value pairs across all layers: the topmost non-null
         /// value for a key wins, and tombstones / shadowed entries are skipped.
         const DepthIterator = struct {
+            root: ?Self,
             parent: Map,
             map: ?Map,
             index: usize,
             depth: u8,
 
-            pub fn init(map: *Map) DepthIterator {
+            pub fn init(root: Self, map: Map) DepthIterator {
                 return .{
-                    .parent = borrow(map).?,
+                    .root = root,
+                    .parent = map,
                     .map = map,
                     .index = 0,
                     .depth = 0,
                 };
             }
 
-            pub fn deinit(iterator: DepthIterator, gpa: std.mem.Allocator) void {
-                iterator.parent.deinit(gpa);
+            pub fn deinit(iterator: *DepthIterator, gpa: std.mem.Allocator) void {
+                if (iterator.root) |*r| r.deinit(gpa);
             }
 
             pub fn initNoBorrow(map: Map) DepthIterator {
                 return .{
+                    .root = null,
                     .parent = map,
                     .map = map,
                     .index = 0,
@@ -420,10 +445,9 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                     .item => |item| item,
                     else => return iterator.next(),
                 };
-                return if (item.depth == iterator.depth)
-                    item.item.value
-                else
-                    iterator.next();
+                if (item.depth != iterator.depth) return iterator.next();
+                var out = item.item.value;
+                return if (iterator.root != null) out.borrow() else out;
             }
         };
 
@@ -438,6 +462,17 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             pub const Item = struct {
                 sparse_index: usize,
                 value: KV,
+
+                pub fn borrow(self: *SparseSet.Item) SparseSet.Item {
+                    return .{
+                        .sparse_index = self.sparse_index,
+                        .value = self.value.borrow(),
+                    };
+                }
+
+                pub fn deinit(self: *SparseSet.Item, gpa: std.mem.Allocator) void {
+                    self.value.deinit(gpa);
+                }
             };
 
             /// Build a set with `size` sparse slots, populated from `values`.
@@ -513,7 +548,8 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
                 const tail_offset = self.sparse.getUnwrap().items[item.sparse_index].?;
 
                 const new_bucket = try gpa.dupe(SparseSet.Item, self.dense.list.getPtrUnwrap().bucket.getPtrUnwrap().items);
-                new_bucket[tail_offset] = item;
+                for (new_bucket, 0..) |*v, i|
+                    v.* = if (i == tail_offset) ref_counter.borrowValue(SparseSet.Item, item) else v.borrow();
 
                 const new_dense = try List(SparseSet.Item).initOwned(gpa, new_bucket);
                 const new_sparse = try self.sparse.borrow();

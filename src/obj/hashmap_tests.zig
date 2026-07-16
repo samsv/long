@@ -434,3 +434,229 @@ test "count flat" {
     try std.testing.expectEqual(1, m4.count());
     try std.testing.expectEqual(1, m5.count());
 }
+
+const RC = @import("ref_counter.zig").RC;
+
+const Payload = struct {
+    data: []u8,
+
+    pub fn deinit(self: *Payload, gpa: std.mem.Allocator) void {
+        gpa.free(self.data);
+    }
+};
+
+const Counted = struct {
+    rc: RC(Payload),
+
+    fn init(gpa: std.mem.Allocator, byte: u8) !Counted {
+        const data = try gpa.alloc(u8, 1);
+        errdefer gpa.free(data);
+        data[0] = byte;
+        return .{ .rc = try RC(Payload).init(gpa, .{ .data = data }) };
+    }
+
+    fn value(self: Counted) u8 {
+        return self.rc.getUnwrap().data[0];
+    }
+
+    pub fn deinit(self: *Counted, gpa: std.mem.Allocator) void {
+        self.rc.deinit(gpa);
+    }
+
+    pub fn borrow(self: *Counted) Counted {
+        return .{ .rc = self.rc.borrow() catch unreachable };
+    }
+};
+
+const CountedCtx = Ctx(u32){ .eql = u32Eql, .hash = u32Hash };
+const CountedMap = HashMap(u32, Counted, CountedCtx);
+
+test "Ref counted init borrows values" {
+    const gpa = std.testing.allocator;
+
+    var v1 = try Counted.init(gpa, 1);
+    var v2 = try Counted.init(gpa, 2);
+    var map = try CountedMap.init(gpa, &[_]CountedMap.KV{
+        .{ .key = 1, .value = v1 },
+        .{ .key = 2, .value = v2 },
+    });
+    v1.deinit(gpa);
+    v2.deinit(gpa);
+
+    try std.testing.expectEqual(@as(u8, 1), map.get(1).?.value.?.value());
+    try std.testing.expectEqual(@as(u8, 2), map.get(2).?.value.?.value());
+    try std.testing.expect(map.get(3) == null);
+
+    map.deinit(gpa);
+}
+
+test "Ref counted put borrows and overwrites" {
+    const gpa = std.testing.allocator;
+
+    var empty = try CountedMap.init(gpa, &[_]CountedMap.KV{});
+    defer empty.deinit(gpa);
+
+    var a = try Counted.init(gpa, 10);
+    var m1 = try empty.put(gpa, 1, a);
+    a.deinit(gpa);
+    defer m1.deinit(gpa);
+
+    var b = try Counted.init(gpa, 20);
+    var m2 = try m1.put(gpa, 1, b);
+    b.deinit(gpa);
+    defer m2.deinit(gpa);
+
+    try std.testing.expectEqual(@as(u8, 10), m1.get(1).?.value.?.value());
+    try std.testing.expectEqual(@as(u8, 20), m2.get(1).?.value.?.value());
+}
+
+test "Ref counted delete" {
+    const gpa = std.testing.allocator;
+
+    var v1 = try Counted.init(gpa, 1);
+    var v2 = try Counted.init(gpa, 2);
+    var map = try CountedMap.init(gpa, &[_]CountedMap.KV{
+        .{ .key = 1, .value = v1 },
+        .{ .key = 2, .value = v2 },
+    });
+    v1.deinit(gpa);
+    v2.deinit(gpa);
+    defer map.deinit(gpa);
+
+    var deleted = try map.delete(gpa, 1);
+    defer deleted.deinit(gpa);
+
+    try std.testing.expect(deleted.get(1) == null);
+    try std.testing.expectEqual(@as(u8, 2), deleted.get(2).?.value.?.value());
+    try std.testing.expectEqual(@as(u8, 1), map.get(1).?.value.?.value());
+}
+
+test "Ref counted grow and layering" {
+    const gpa = std.testing.allocator;
+
+    var map = try CountedMap.init(gpa, &[_]CountedMap.KV{});
+    defer map.deinit(gpa);
+
+    var i: u32 = 0;
+    while (i < 40) : (i += 1) {
+        var v = try Counted.init(gpa, @intCast(i));
+        const next = try map.put(gpa, i, v);
+        v.deinit(gpa);
+        map.deinit(gpa);
+        map = next;
+    }
+
+    i = 0;
+    while (i < 40) : (i += 1)
+        try std.testing.expectEqual(@as(u8, @intCast(i)), map.get(i).?.value.?.value());
+}
+
+test "Ref counted flat iterator borrows entries" {
+    const gpa = std.testing.allocator;
+
+    var v1 = try Counted.init(gpa, 1);
+    var v2 = try Counted.init(gpa, 2);
+    var map = try CountedMap.init(gpa, &[_]CountedMap.KV{
+        .{ .key = 1, .value = v1 },
+        .{ .key = 2, .value = v2 },
+    });
+    v1.deinit(gpa);
+    v2.deinit(gpa);
+
+    var iterator = map.iter();
+    map.deinit(gpa);
+
+    var seen: usize = 0;
+    var sum: usize = 0;
+    while (iterator.next()) |kv| : (seen += 1) {
+        var e = kv;
+        sum += e.value.?.value();
+        e.deinit(gpa);
+    }
+    iterator.deinit(gpa);
+
+    try std.testing.expectEqual(@as(usize, 2), seen);
+    try std.testing.expectEqual(@as(usize, 3), sum);
+}
+
+test "Ref counted depth iterator borrows entries" {
+    const gpa = std.testing.allocator;
+
+    var map = try CountedMap.init(gpa, &[_]CountedMap.KV{});
+    defer map.deinit(gpa);
+
+    var i: u32 = 0;
+    while (i < 40) : (i += 1) {
+        var v = try Counted.init(gpa, @intCast(i));
+        const next = try map.put(gpa, i, v);
+        v.deinit(gpa);
+        map.deinit(gpa);
+        map = next;
+    }
+
+    var ov = try Counted.init(gpa, 200);
+    var layered = try map.put(gpa, 5, ov);
+    ov.deinit(gpa);
+
+    try std.testing.expect(layered.depth() > 0);
+
+    var iterator = layered.iter();
+    layered.deinit(gpa);
+
+    var seen: usize = 0;
+    var found_overwritten = false;
+    while (iterator.next()) |kv| : (seen += 1) {
+        var e = kv;
+        if (e.key == 5) found_overwritten = e.value.?.value() == 200;
+        e.deinit(gpa);
+    }
+    iterator.deinit(gpa);
+
+    try std.testing.expectEqual(@as(usize, 40), seen);
+    try std.testing.expect(found_overwritten);
+}
+
+test "Ref counted allocation failures" {
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        var fa = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        const gpa = fa.allocator();
+
+        const completed = blk: {
+            var v1 = Counted.init(gpa, 1) catch break :blk false;
+            defer v1.deinit(gpa);
+            var v2 = Counted.init(gpa, 2) catch break :blk false;
+            defer v2.deinit(gpa);
+
+            var m0 = CountedMap.init(gpa, &[_]CountedMap.KV{
+                .{ .key = 1, .value = v1 },
+                .{ .key = 2, .value = v2 },
+            }) catch break :blk false;
+            defer m0.deinit(gpa);
+
+            var v3 = Counted.init(gpa, 3) catch break :blk false;
+            defer v3.deinit(gpa);
+            var m1 = m0.put(gpa, 3, v3) catch break :blk false;
+            defer m1.deinit(gpa);
+
+            var v4 = Counted.init(gpa, 4) catch break :blk false;
+            defer v4.deinit(gpa);
+            var m2 = m1.put(gpa, 1, v4) catch break :blk false;
+            defer m2.deinit(gpa);
+
+            var m3 = m2.delete(gpa, 2) catch break :blk false;
+            defer m3.deinit(gpa);
+
+            var itr = m3.iter();
+            defer itr.deinit(gpa);
+            while (itr.next()) |kv| {
+                var e = kv;
+                e.deinit(gpa);
+            }
+
+            break :blk true;
+        };
+
+        if (completed) break;
+    }
+}

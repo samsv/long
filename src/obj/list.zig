@@ -1,5 +1,6 @@
 const std = @import("std");
-const RC = @import("ref_counter.zig").RC;
+const ref_counter = @import("ref_counter.zig");
+const RC = ref_counter.RC;
 
 /// Persistent, immutable, reference-counted list of shared array buckets.
 /// Each `LL` node views a window of a bucket and links to a tail node, so derived
@@ -12,14 +13,16 @@ pub fn List(comptime T: type) type {
 
         pub const Bucket = std.ArrayList(T);
 
-        fn deinitBucket(b: *Bucket, gpa: std.mem.Allocator) void {
-            const TypeInfo = switch (@typeInfo(T)) {
-                .pointer => |info| info.child,
-                else => T,
-            };
+        fn deinitValue(v: *T, gpa: std.mem.Allocator) void {
+            ref_counter.deinitValue(T, v, gpa);
+        }
 
-            if (std.meta.hasFn(TypeInfo, "deinit")) for (b.items) |*v|
-                v.deinit(gpa);
+        fn deinitBucket(b: *Bucket, gpa: std.mem.Allocator) void {
+            for (b.items) |*v| deinitValue(v, gpa);
+        }
+
+        fn borrowValue(v: T) T {
+            return ref_counter.borrowValue(T, v);
         }
 
         /// Drop this reference. The underlying nodes/buckets are freed only once their
@@ -55,19 +58,25 @@ pub fn List(comptime T: type) type {
         pub fn initOwned(gpa: std.mem.Allocator, values: []T) !Self {
             var bucket = Bucket.fromOwnedSlice(values);
             var bucket_ref = RC(Bucket).init(gpa, bucket) catch |e| {
+                deinitBucket(&bucket, gpa);
                 bucket.deinit(gpa);
                 return e;
             };
-            defer bucket_ref.deinit(gpa);
+            defer bucket_ref.deinitWithCb(gpa, deinitBucket);
 
-            return initFromBucket(gpa, bucket_ref, null, bucket.items.len - 1, bucket.items.len);
+            const start_index = if (bucket.items.len > 0) bucket.items.len - 1 else 0;
+            return initFromBucket(gpa, bucket_ref, null, start_index, bucket.items.len);
         }
 
         /// Build a single detached `LL` node from a copy of `values` (the caller wraps it in an `RC`).
         pub fn initRaw(gpa: std.mem.Allocator, values: []const T) !LL {
             var bucket: Bucket = .empty;
-            try bucket.appendSlice(gpa, values);
-            errdefer bucket.deinit(gpa);
+            try bucket.ensureTotalCapacity(gpa, values.len);
+            errdefer {
+                deinitBucket(&bucket, gpa);
+                bucket.deinit(gpa);
+            }
+            for (values) |v| bucket.appendAssumeCapacity(borrowValue(v));
 
             const bucket_ref = try RC(Bucket).init(gpa, bucket);
             const ll: LL = .{
@@ -91,7 +100,7 @@ pub fn List(comptime T: type) type {
             len: usize,
         ) !Self {
             var b = bucket.borrow() catch unreachable;
-            errdefer b.deinit(gpa);
+            errdefer b.deinitWithCb(gpa, deinitBucket);
 
             return .{
                 .list = try RC(LL).init(gpa, .{
@@ -137,9 +146,12 @@ pub fn List(comptime T: type) type {
         fn createBucketWithCapacity(gpa: std.mem.Allocator, values: []const T, capacity: usize) !RC(Bucket) {
             var new_bucket: Bucket = .empty;
             try new_bucket.ensureTotalCapacity(gpa, capacity);
-            errdefer new_bucket.deinit(gpa);
+            errdefer {
+                deinitBucket(&new_bucket, gpa);
+                new_bucket.deinit(gpa);
+            }
 
-            new_bucket.appendSliceAssumeCapacity(values);
+            for (values) |v| new_bucket.appendAssumeCapacity(borrowValue(v));
 
             var bucket = try RC(Bucket).init(gpa, new_bucket);
             bucket.inner.?.count = 0;
@@ -193,13 +205,17 @@ pub fn List(comptime T: type) type {
                 const items = bucket_ref.getUnwrap().items;
                 const copy_slice = items[ll.start_index + 1 - ll.len .. ll.start_index + 1];
                 bucket_ref = try createBucketWithCapacity(gpa, copy_slice, copy_slice.len + 1);
-                bucket_ref.getPtrUnwrap().appendAssumeCapacity(item);
+                bucket_ref.getPtrUnwrap().appendAssumeCapacity(borrowValue(item));
                 return newHead(ll, gpa, bucket_ref);
             }
 
             // we have space to append to the bucket
-            try bucket.append(gpa, item);
-            errdefer _ = bucket.pop();
+            try bucket.ensureUnusedCapacity(gpa, 1);
+            bucket.appendAssumeCapacity(borrowValue(item));
+            errdefer {
+                var popped = bucket.pop().?;
+                deinitValue(&popped, gpa);
+            }
 
             return newHead(ll, gpa, bucket_ref);
         }
@@ -211,8 +227,8 @@ pub fn List(comptime T: type) type {
             var bucket_ref = ll.bucket;
 
             var bucket = bucket_ref.getPtrUnwrap();
-            try bucket.append(gpa, item);
-            errdefer _ = bucket.pop();
+            try bucket.ensureUnusedCapacity(gpa, 1);
+            bucket.appendAssumeCapacity(borrowValue(item));
 
             ll.len += 1;
             ll.start_index = bucket.items.len - 1;
@@ -335,6 +351,7 @@ pub fn List(comptime T: type) type {
             root: Self,
             ll: ?Self,
             current: usize,
+            borrowing: bool,
 
             /// Iterate `ll` without taking a reference. Do not pair with `deinit`.
             pub fn initNoBorrow(ll: Self) Iterator {
@@ -343,6 +360,7 @@ pub fn List(comptime T: type) type {
                     .root = ll,
                     .ll = current_ll,
                     .current = ll.list.getUnwrap().start_index,
+                    .borrowing = false,
                 };
             }
 
@@ -354,6 +372,7 @@ pub fn List(comptime T: type) type {
                     .root = b,
                     .ll = current_ll,
                     .current = ll.list.getUnwrap().start_index,
+                    .borrowing = true,
                 };
             }
 
@@ -371,7 +390,7 @@ pub fn List(comptime T: type) type {
                     iterator.current -= 1;
                 }
 
-                return item;
+                return if (iterator.borrowing) borrowValue(item) else item;
             }
 
             /// Release the reference taken by `init`.

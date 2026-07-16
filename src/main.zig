@@ -135,8 +135,8 @@ pub fn main(init: std.process.Init) !void {
     {
         const text =
             \\fun f(x) =
-            \\  fun g[x](y) =
-            \\      x + y
+            \\  fun g(y) =
+            \\      y
             \\  end
             \\
             \\  g

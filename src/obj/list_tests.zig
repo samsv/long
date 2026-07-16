@@ -1,5 +1,37 @@
 const std = @import("std");
 const List = @import("list.zig").List;
+const RC = @import("ref_counter.zig").RC;
+
+const Payload = struct {
+    data: []u8,
+
+    pub fn deinit(self: *Payload, gpa: std.mem.Allocator) void {
+        gpa.free(self.data);
+    }
+};
+
+const Counted = struct {
+    rc: RC(Payload),
+
+    fn init(gpa: std.mem.Allocator, byte: u8) !Counted {
+        const data = try gpa.alloc(u8, 1);
+        errdefer gpa.free(data);
+        data[0] = byte;
+        return .{ .rc = try RC(Payload).init(gpa, .{ .data = data }) };
+    }
+
+    fn value(self: Counted) u8 {
+        return self.rc.getUnwrap().data[0];
+    }
+
+    pub fn deinit(self: *Counted, gpa: std.mem.Allocator) void {
+        self.rc.deinit(gpa);
+    }
+
+    pub fn borrow(self: *Counted) Counted {
+        return .{ .rc = self.rc.borrow() catch unreachable };
+    }
+};
 
 test "Get" {
     const MyList = List(u32);
@@ -296,6 +328,209 @@ test "allocation failures" {
             defer j3.deinit(gpa);
             var d3 = j3.delete_at(gpa, 4) catch break :blk false;
             defer d3.deinit(gpa);
+
+            break :blk true;
+        };
+
+        if (completed) break;
+    }
+}
+
+test "initOwned with empty slice" {
+    const MyList = List(u32);
+    const gpa = std.testing.allocator;
+
+    const values = try gpa.alloc(u32, 0);
+    var list = try MyList.initOwned(gpa, values);
+    defer list.deinit(gpa);
+
+    try std.testing.expectEqual(@as(usize, 0), list.count());
+    try std.testing.expect(list.get(0) == null);
+    try std.testing.expect(list.head() == null);
+}
+
+test "Ref counted iterator borrows elements" {
+    const MyList = List(Counted);
+    const gpa = std.testing.allocator;
+
+    var values = [_]Counted{
+        try Counted.init(gpa, 1),
+        try Counted.init(gpa, 2),
+        try Counted.init(gpa, 3),
+    };
+    var list = try MyList.init(gpa, &values);
+    for (&values) |*v| v.deinit(gpa);
+
+    var iterator = list.iter();
+    list.deinit(gpa);
+
+    var expected: u8 = 3;
+    while (iterator.next()) |v| : (expected -= 1) {
+        var item = v;
+        try std.testing.expectEqual(expected, item.value());
+        item.deinit(gpa);
+    }
+    try std.testing.expectEqual(@as(u8, 0), expected);
+
+    iterator.deinit(gpa);
+}
+
+test "Ref counted init borrows values" {
+    const MyList = List(Counted);
+    const gpa = std.testing.allocator;
+
+    var values = [_]Counted{
+        try Counted.init(gpa, 1),
+        try Counted.init(gpa, 2),
+        try Counted.init(gpa, 3),
+    };
+
+    var list = try MyList.init(gpa, &values);
+
+    for (&values) |*v| v.deinit(gpa);
+
+    try std.testing.expectEqual(@as(u8, 3), list.get(0).?.value());
+    try std.testing.expectEqual(@as(u8, 2), list.get(1).?.value());
+    try std.testing.expectEqual(@as(u8, 1), list.get(2).?.value());
+
+    list.deinit(gpa);
+}
+
+test "Ref counted append borrows item" {
+    const MyList = List(Counted);
+    const gpa = std.testing.allocator;
+
+    var values = [_]Counted{
+        try Counted.init(gpa, 1),
+        try Counted.init(gpa, 2),
+    };
+    var list = try MyList.init(gpa, &values);
+    for (&values) |*v| v.deinit(gpa);
+    defer list.deinit(gpa);
+
+    var item_0 = try Counted.init(gpa, 4);
+    var appended_0 = try list.append(gpa, item_0);
+    item_0.deinit(gpa);
+    defer appended_0.deinit(gpa);
+
+    var item_1 = try Counted.init(gpa, 5);
+    var appended_1 = try list.append(gpa, item_1);
+    item_1.deinit(gpa);
+    defer appended_1.deinit(gpa);
+
+    try std.testing.expectEqual(@as(u8, 4), appended_0.get(0).?.value());
+    try std.testing.expectEqual(@as(u8, 5), appended_1.get(0).?.value());
+    try std.testing.expectEqual(@as(u8, 2), list.get(0).?.value());
+    try std.testing.expectEqual(@as(u8, 2), appended_1.get(1).?.value());
+}
+
+test "Ref counted append with chained node" {
+    const MyList = List(Counted);
+    const gpa = std.testing.allocator;
+
+    var values: [33]Counted = undefined;
+    for (&values, 0..) |*v, i| v.* = try Counted.init(gpa, @intCast(i));
+
+    var list = try MyList.init(gpa, &values);
+    for (&values) |*v| v.deinit(gpa);
+    defer list.deinit(gpa);
+
+    var item_a = try Counted.init(gpa, 100);
+    var a = try list.append(gpa, item_a);
+    item_a.deinit(gpa);
+    defer a.deinit(gpa);
+
+    var item_b = try Counted.init(gpa, 101);
+    var b = try list.append(gpa, item_b);
+    item_b.deinit(gpa);
+    defer b.deinit(gpa);
+
+    try std.testing.expectEqual(@as(u8, 101), b.get(0).?.value());
+    try std.testing.expectEqual(@as(u8, 32), b.get(1).?.value());
+    try std.testing.expectEqual(@as(u8, 0), b.get(33).?.value());
+    try std.testing.expectEqual(@as(usize, 34), b.count());
+}
+
+test "Ref counted insert, update, delete and tail" {
+    const MyList = List(Counted);
+    const gpa = std.testing.allocator;
+
+    var values = [_]Counted{
+        try Counted.init(gpa, 1),
+        try Counted.init(gpa, 2),
+        try Counted.init(gpa, 3),
+    };
+    var list = try MyList.init(gpa, &values);
+    for (&values) |*v| v.deinit(gpa);
+    defer list.deinit(gpa);
+
+    var ins = try Counted.init(gpa, 9);
+    var inserted = try list.insert_at(gpa, 1, ins);
+    ins.deinit(gpa);
+    defer inserted.deinit(gpa);
+
+    var upd = try Counted.init(gpa, 8);
+    var updated = try list.update(gpa, 1, upd);
+    upd.deinit(gpa);
+    defer updated.deinit(gpa);
+
+    var deleted = try list.delete_at(gpa, 1);
+    defer deleted.deinit(gpa);
+
+    var tl = (try list.tail(gpa)).?;
+    defer tl.deinit(gpa);
+
+    try std.testing.expectEqual(@as(u8, 9), inserted.get(1).?.value());
+    try std.testing.expectEqual(@as(u8, 8), updated.get(1).?.value());
+    try std.testing.expectEqual(@as(u8, 3), deleted.get(0).?.value());
+    try std.testing.expectEqual(@as(u8, 1), deleted.get(1).?.value());
+    try std.testing.expectEqual(@as(u8, 2), tl.get(0).?.value());
+}
+
+test "Ref counted allocation failures" {
+    const L = List(Counted);
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        var fa = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        const gpa = fa.allocator();
+
+        const completed = blk: {
+            var values: [3]Counted = undefined;
+            var created: usize = 0;
+            defer for (values[0..created]) |*v| v.deinit(gpa);
+            for (&values) |*v| {
+                v.* = Counted.init(gpa, 1) catch break :blk false;
+                created += 1;
+            }
+
+            var l0 = L.init(gpa, &values) catch break :blk false;
+            defer l0.deinit(gpa);
+
+            var item_0 = Counted.init(gpa, 4) catch break :blk false;
+            defer item_0.deinit(gpa);
+            var l1 = l0.append(gpa, item_0) catch break :blk false;
+            defer l1.deinit(gpa);
+
+            var item_1 = Counted.init(gpa, 5) catch break :blk false;
+            defer item_1.deinit(gpa);
+            var l2 = l0.append(gpa, item_1) catch break :blk false;
+            defer l2.deinit(gpa);
+
+            var item_2 = Counted.init(gpa, 9) catch break :blk false;
+            defer item_2.deinit(gpa);
+            var l3 = l1.insert_at(gpa, 2, item_2) catch break :blk false;
+            defer l3.deinit(gpa);
+
+            var item_3 = Counted.init(gpa, 8) catch break :blk false;
+            defer item_3.deinit(gpa);
+            var l4 = l3.update(gpa, 1, item_3) catch break :blk false;
+            defer l4.deinit(gpa);
+
+            var l5 = l3.delete_at(gpa, 1) catch break :blk false;
+            defer l5.deinit(gpa);
+
+            var t = (l3.tail(gpa) catch break :blk false) orelse break :blk false;
+            defer t.deinit(gpa);
 
             break :blk true;
         };
