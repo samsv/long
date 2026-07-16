@@ -85,15 +85,6 @@ pub const Value = union(enum) {
         };
     }
 
-    pub fn clone(value: Value, gpa: std.mem.Allocator) !Value {
-        return switch (value) {
-            .obj => |o| .{
-                .obj = try RC(Obj).init(gpa, o.getUnwrap()),
-            },
-            else => value,
-        };
-    }
-
     pub fn createIterator(value: Value, gpa: std.mem.Allocator) !Value {
         var iter = try Iterator.init(value);
         errdefer iter.deinit(gpa);

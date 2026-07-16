@@ -30,12 +30,6 @@ pub const Array = struct {
         return self.values.items;
     }
 
-    pub fn initFrom(gpa: std.mem.Allocator, values: []const Value) !Array {
-        var arr: std.ArrayList(Value) = try .initCapacity(gpa, values.len);
-        arr.appendSliceAssumeCapacity(values);
-        return .{ .values = arr };
-    }
-
     pub inline fn len(self: Array) usize {
         return self.values.items.len;
     }
