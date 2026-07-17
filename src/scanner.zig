@@ -8,7 +8,7 @@ pub const Token = struct {
     line: usize,
 
     pub fn format(t: Token, writer: *std.Io.Writer) !void {
-        try writer.print("{{\n\tKind {f}\n\tLine: {}\n}}", .{t.kind, t.line});
+        try writer.print("{{\n\tKind {f}\n\tLine: {}\n}}", .{ t.kind, t.line });
     }
 
     pub const Kind = union(enum) {

@@ -31,4 +31,3 @@ pub const Iterator = union(enum) {
         try writer.print("{s} iterator", .{@tagName(self)});
     }
 };
-
