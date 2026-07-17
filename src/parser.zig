@@ -134,16 +134,25 @@ fn parseFor(gpa: std.mem.Allocator, s: *Scanner, for_token: Token) !SExpr {
 }
 
 fn parseFun(gpa: std.mem.Allocator, s: *Scanner, fun_token: Token) !SExpr {
-    var list: std.ArrayList(SExpr) = try .initCapacity(gpa, 4);
-    errdefer list.deinit(gpa);
+    var list: std.ArrayList(SExpr) = try .initCapacity(gpa, 5);
+    errdefer {
+        for (list.items) |*sexpr|
+            sexpr.deinit(gpa);
+        list.deinit(gpa);
+    }
     list.appendAssumeCapacity(.{ .atom = fun_token });
 
     const id = try expectId(s);
     list.appendAssumeCapacity(.{ .atom = id });
 
+    if (try check(s, .{ .operator = .left_bracket })) |left_bracket| {
+        var args: std.ArrayList(SExpr) = .empty;
+        const closure_vals = try parseContainer(&args, gpa, s, left_bracket, .right_bracket);
+        list.appendAssumeCapacity(closure_vals);
+    }
+
     const left_paren = try expectToken(s, .{ .operator = .left_paren });
-    var args = try parseParens(gpa, s, left_paren, null);
-    errdefer args.deinit(gpa);
+    const args = try parseParens(gpa, s, left_paren, null);
     list.appendAssumeCapacity(args);
 
     try expect(s, .{ .operator = .equal });

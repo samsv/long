@@ -71,17 +71,20 @@ pub const Locals = struct {
 
 pub const Compiler = struct {
     globals: Globals,
+    upvalues: Locals,
     locals: ?*Locals,
 
     pub fn init() Compiler {
         return .{
             .globals = Globals.init(),
+            .upvalues = Locals.init(null),
             .locals = null,
         };
     }
 
     pub fn deinit(c: *Compiler, gpa: std.mem.Allocator) void {
         c.globals.deinit(gpa);
+        c.upvalues.deinit(gpa);
         if (c.locals) |locals|
             locals.deinit(gpa);
     }
@@ -91,6 +94,11 @@ pub const Compiler = struct {
             try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_local), @intCast(idx), line);
             return;
         };
+
+        if (c.upvalues.get(id)) |idx| {
+            try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_upvalue), @intCast(idx), line);
+            return;
+        }
 
         const idx = try c.globals.get(id);
         try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_global), @intCast(idx), line);
@@ -305,7 +313,8 @@ pub const Compiler = struct {
         builder: *VMBuilder,
         line: usize,
     ) !void {
-        const name = try expectId(args[0]);
+        var c_idx: usize = 0;
+        const name = try expectId(args[c_idx]);
 
         var fn_builder = VMBuilder.init();
 
@@ -313,21 +322,37 @@ pub const Compiler = struct {
         defer compiler.deinit(gpa);
 
         // start vm for the function chunk
+        // check if vm has closures and add it to upvalues
+        if (args.len == 4) {
+            c_idx += 1;
+            for (args[c_idx].cons.items) |a| {
+                const cls_name = try expectId(a);
+                try compiler.upvalues.add(gpa, cls_name);
+            }
+        }
+
         // get args names
-        var arg_names: std.ArrayList([]const u8) = try .initCapacity(gpa, args[1].cons.items.len);
-        for (args[1].cons.items) |a| {
-            const arg_name = try gpa.dupe(u8, try expectId(a));
-            try compiler.globals.add(gpa, arg_name);
-            arg_names.appendAssumeCapacity(arg_name);
+        c_idx += 1;
+        for (args[c_idx].cons.items) |a| {
+            try compiler.globals.add(gpa, try expectId(a));
         }
 
         // compile the body into a new VM
-        try compiler.compileBuilder(gpa, args[2], &fn_builder);
+        c_idx += 1;
+        try compiler.compileBuilder(gpa, args[c_idx], &fn_builder);
 
         // create then function and add it to the stack
         const fn_vm = fn_builder.build();
-        const fun = try Value.initFunction(gpa, name, fn_vm, arg_names);
-        _ = try builder.addClosure(gpa, fun);
+        const fun = try Value.initFunction(gpa, name, fn_vm);
+        for (compiler.upvalues.name_indexes.keys()) |k| {
+            try c.compileID(gpa, k, 0, builder);
+        }
+
+        _ = try builder.addClosure(
+            gpa,
+            if (args.len == 4) @intCast(args[1].cons.items.len) else 0,
+            fun,
+        );
         try c.addVar(gpa, name, line, builder);
     }
 

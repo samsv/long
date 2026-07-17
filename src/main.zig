@@ -19,6 +19,9 @@ fn printVM(vm: vm_.VM, stdout_writer: *std.Io.Writer) !void {
     try vm.printLocals(stdout_writer);
     try stdout_writer.writeByte('\n');
 
+    try vm.printUpvalues(stdout_writer);
+    try stdout_writer.writeByte('\n');
+
     try vm.printGlobals(stdout_writer);
     try stdout_writer.writeByte('\n');
 
@@ -40,108 +43,31 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
 
-    {
-        var scanner = try Scanner.init(
-            \\y = if x = true do
-            \\    k = 5
-            \\    l = if k do
-            \\        k + 4
-            \\    else
-            \\        k - 4
-            \\    end
-            \\    l + 2
-            \\else
-            \\    z = 5 + 1
-            \\    z
-            \\end
-        );
-
-        var sexpr = try parser.expr(gpa, &scanner, 0);
-        defer sexpr.deinit(gpa);
-        try stdout_writer.print("{f}\n", .{sexpr});
-        try stdout_writer.flush();
-
-        var builder = vm_.VMBuilder.init();
-
-        var compiler = c.Compiler.init();
-        defer compiler.deinit(gpa);
-
-        try compiler.compileBuilder(gpa, sexpr, &builder);
-
-        var vm = builder.build();
-        defer vm.deint(gpa);
-
-        try vm.printInstructions(stdout_writer);
-        try stdout_writer.writeByte('\n');
-        try stdout_writer.flush();
-
-        try vm.run(gpa);
-
-        try vm.printStack(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printLocals(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printGlobals(stdout_writer);
-        try stdout_writer.writeByte('\n');
-        try stdout_writer.flush();
-    }
-
-    {
-        std.debug.print("\n", .{});
-        var vm = try c.Compiler.compile(gpa, "for x in [1, 2, 3] do x end");
-        defer vm.deint(gpa);
-
-        try vm.run(gpa);
-
-        try vm.printInstructions(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printStack(stdout_writer);
-        try stdout_writer.writeByte('\n');
-        try stdout_writer.flush();
-    }
 
     {
         std.debug.print("\n", .{});
         var vm = try c.Compiler.compile(gpa,
-            \\ x = 5
-            \\ x + 2
+            \\ fun f(x) =
+            \\     x + 1
+            \\ end
+            \\ f(2)
         );
         defer vm.deint(gpa);
 
         try vm.run(gpa);
-
-        try vm.printInstructions(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printConstants(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printLocals(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printGlobals(stdout_writer);
-        try stdout_writer.writeByte('\n');
-
-        try vm.printStack(stdout_writer);
-        try stdout_writer.writeByte('\n');
-        try stdout_writer.flush();
-
-        std.debug.print("bye\n\n", .{});
+        try printVM(vm, stdout_writer);
     }
 
     {
         const text =
             \\fun f(x) =
-            \\  fun g(y) =
-            \\      y
+            \\  fun g[x](y) =
+            \\      x + y
             \\  end
             \\
             \\  g
             \\end
-            //\\ f(4)(5)
+            \\ f(4)(5)
         ;
 
         var scanner = try Scanner.init(text);
@@ -159,7 +85,37 @@ pub fn main(init: std.process.Init) !void {
         try vm.run(gpa);
 
         const fn_vm = vm.globals.get(0).obj.getUnwrap().closure.getFunction().vm;
+        const g_vm = fn_vm.chunk.constants.items[0].obj.getUnwrap().function.vm;
+
+        try printVM(g_vm, stdout_writer);
         try printVM(fn_vm, stdout_writer);
+        try printVM(vm, stdout_writer);
+    }
+
+    {
+        const text =
+            \\ x = 5
+            \\ fun f[x](y) =
+            \\      x + y
+            \\ end
+            \\ f(4)
+            \\ f(5)
+            \\ f(9)
+        ;
+
+        var scanner = try Scanner.init(text);
+
+        while (try scanner.peek()) |_| {
+            var sexpr = try parser.expr(gpa, &scanner, 0);
+            defer sexpr.deinit(gpa);
+            try stdout_writer.print("{f}\n", .{sexpr});
+            try stdout_writer.flush();
+        }
+
+        var vm = try c.Compiler.compile(gpa, text);
+        defer vm.deint(gpa);
+
+        try vm.run(gpa);
         try printVM(vm, stdout_writer);
     }
 }

@@ -47,12 +47,14 @@ pub const Value = union(enum) {
         };
     }
 
-    pub fn toClosure(v: *Value, gpa: std.mem.Allocator) !Value {
+    pub fn toClosure(v: *Value, gpa: std.mem.Allocator, upvalues_slice: []const Value) !Value {
+        var upvalues: std.ArrayList(Value) = try .initCapacity(gpa, upvalues_slice.len);
+        upvalues.appendSliceAssumeCapacity(upvalues_slice);
         return .{
             .obj = try RC(Obj).init(gpa, .{
                 .closure = .{
                     .function = try v.obj.borrow(),
-                    .upvalues = .empty,
+                    .upvalues = upvalues,
                 },
             }),
         };
@@ -70,9 +72,8 @@ pub const Value = union(enum) {
         gpa: std.mem.Allocator,
         name: []const u8,
         vm: VM,
-        args: std.ArrayList([]const u8),
     ) !Value {
-        const fun = Obj.initFunction(name, vm, args);
+        const fun = Obj.initFunction(name, vm);
         const obj = try RC(Obj).init(gpa, fun);
         return .{ .obj = obj };
     }
