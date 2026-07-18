@@ -73,12 +73,14 @@ pub const Compiler = struct {
     globals: Globals,
     upvalues: Locals,
     locals: ?*Locals,
+    name: []const u8,
 
-    pub fn init() Compiler {
+    pub fn init(name: []const u8) Compiler {
         return .{
             .globals = Globals.init(),
             .upvalues = Locals.init(null),
             .locals = null,
+            .name = name,
         };
     }
 
@@ -97,11 +99,12 @@ pub const Compiler = struct {
 
         if (c.upvalues.get(id)) |idx| {
             try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_upvalue), @intCast(idx), line);
-            return;
+        } else if (std.mem.eql(u8, id, c.name)) {
+            try builder.addByte(gpa, @intFromEnum(VM.Instructions.get_self), line);
+        } else {
+            const idx = try c.globals.get(id);
+            try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_global), @intCast(idx), line);
         }
-
-        const idx = try c.globals.get(id);
-        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_global), @intCast(idx), line);
     }
 
     fn compileLiteral(c: Compiler, gpa: std.mem.Allocator, literal: Literal, line: usize, builder: *VMBuilder) !void {
@@ -318,7 +321,7 @@ pub const Compiler = struct {
 
         var fn_builder = VMBuilder.init();
 
-        var compiler = init();
+        var compiler = init(name);
         defer compiler.deinit(gpa);
 
         // start vm for the function chunk
@@ -367,8 +370,12 @@ pub const Compiler = struct {
         for (args) |value|
             try c.compileBuilder(gpa, value, builder);
 
-        try c.compileID(gpa, fn_name, line, builder);
-        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.call), @intCast(args.len), line);
+        if (std.mem.eql(u8, fn_name, c.name)) {
+            try builder.addBytes(gpa, @intFromEnum(VM.Instructions.recur), @intCast(args.len), line);
+        } else {
+            try c.compileID(gpa, fn_name, line, builder);
+            try builder.addBytes(gpa, @intFromEnum(VM.Instructions.call), @intCast(args.len), line);
+        }
     }
 
     fn compileAtom(c: Compiler, gpa: std.mem.Allocator, token: Token, builder: *VMBuilder) !void {
@@ -437,7 +444,7 @@ pub const Compiler = struct {
 
         var builder = VMBuilder.init();
 
-        var compiler = init();
+        var compiler = init("");
         defer compiler.deinit(gpa);
 
         for (sexprs.items, 0..) |sexpr, i| {

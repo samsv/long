@@ -236,6 +236,7 @@ pub const VM = struct {
                 .iter_create,
                 .iter_next,
                 .equals,
+                .get_self,
                 => {
                     try writer.print("{} [ {s} ]\n", .{ i, @tagName(instruction) });
                     i += 1;
@@ -261,7 +262,7 @@ pub const VM = struct {
                     try writer.print("{} [ {s} ] index {}\n", .{ i, @tagName(instruction), index });
                     i += 2;
                 },
-                .call => {
+                .call, .recur => {
                     const n = vm.chunk.bytecode.items[i + 1];
                     try writer.print("{} [ {s} ] args {} \n", .{ i, @tagName(instruction), n });
                     i += 2;
@@ -387,6 +388,19 @@ pub const VM = struct {
         vm.ip += 1;
     }
 
+    fn getSelf(vm: *VM, gpa: std.mem.Allocator) !void {
+        var new_vm: VM = .init();
+
+        new_vm.chunk = vm.chunk;
+        new_vm.upvalues = vm.upvalues;
+
+        var function = try Value.initFunction(gpa, "", new_vm);
+        defer function.deinit(gpa);
+
+        const closure = try function.toClosure(gpa, new_vm.upvalues);
+        try vm.stack.appendNoBorrow(gpa, closure);
+    }
+
     fn setLocal(vm: *VM, gpa: std.mem.Allocator) !void {
         var v = vm.stack.last();
         try vm.locals.append(gpa, &v);
@@ -441,13 +455,34 @@ pub const VM = struct {
         const args = vm.stack.items()[vm.stack.len() - arg_count ..];
 
         try function.vm.globals.values.appendSlice(gpa, args);
-        try function.vm.globals.values.appendSlice(gpa, closure.upvalues.items);
         function.vm.upvalues = closure.upvalues.items;
 
         try function.vm.run(gpa);
 
         vm.stack.values.items.len -= arg_count;
         vm.stack.appendAssumeCapacityNoBorrow(function.vm.stack.pop());
+
+        vm.ip += 1;
+    }
+
+    fn recur(vm: *VM, gpa: std.mem.Allocator) !void {
+        var new_vm: VM = .init();
+        defer new_vm.stack.deinit(gpa);
+        defer new_vm.locals.deinit(gpa);
+        defer new_vm.globals.deinit(gpa);
+
+        new_vm.chunk = vm.chunk;
+        new_vm.upvalues = vm.upvalues;
+
+        const arg_count = vm.chunk.bytecode.items[vm.ip + 1];
+        const args = vm.stack.items()[vm.stack.len() - arg_count ..];
+
+        try new_vm.globals.values.appendSlice(gpa, args);
+
+        try new_vm.run(gpa);
+
+        vm.stack.values.items.len -= arg_count;
+        vm.stack.appendAssumeCapacityNoBorrow(new_vm.stack.pop());
 
         vm.ip += 1;
     }
@@ -459,8 +494,10 @@ pub const VM = struct {
                 .add, .sub, .mul, .div => vm.mathOp(gpa, instruction),
                 .equals => vm.equals(gpa),
                 .call => vm.call(gpa),
+                .recur => vm.recur(gpa),
                 .set_global => vm.setGlobal(gpa),
                 .get_global => vm.getGlobal(gpa),
+                .get_self => vm.getSelf(gpa),
                 .set_local => vm.setLocal(gpa),
                 .get_local => vm.getLocal(gpa),
                 .get_upvalue => vm.getUpvalue(gpa),
@@ -487,7 +524,9 @@ pub const VM = struct {
         div,
         equals,
         call,
+        recur,
         load_closure,
+        get_self,
         set_global,
         get_global,
         set_local,

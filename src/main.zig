@@ -117,4 +117,31 @@ pub fn main(init: std.process.Init) !void {
         try vm.run(gpa);
         try printVM(vm, stdout_writer);
     }
+
+    {
+        const text =
+            \\ fun fib(y) =
+            \\      if y == 0 do 0
+            \\      else if y == 1 do 1
+            \\      else fib(y - 1) + fib(y - 2)
+            \\      end
+            \\ end
+            \\ fib(10)
+        ;
+
+        var scanner = try Scanner.init(text);
+
+        while (try scanner.peek()) |_| {
+            var sexpr = try parser.expr(gpa, &scanner, 0);
+            defer sexpr.deinit(gpa);
+            try stdout_writer.print("{f}\n", .{sexpr});
+            try stdout_writer.flush();
+        }
+
+        var vm = try c.Compiler.compile(gpa, text);
+        defer vm.deint(gpa);
+
+        try vm.run(gpa);
+        try printVM(vm, stdout_writer);
+    }
 }
