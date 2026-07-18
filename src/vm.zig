@@ -1,34 +1,28 @@
 const std = @import("std");
 const Value = @import("value.zig").Value;
+const RC = @import("obj/ref_counter.zig").RC;
 
 pub const Chunk = struct {
     bytecode: std.ArrayList(u8),
     lines: std.ArrayList(usize),
     constants: std.ArrayList(Value),
+    functions: std.ArrayList(RC(VM)),
 
     pub const empty: Chunk = .{
         .bytecode = .empty,
         .lines = .empty,
         .constants = .empty,
+        .functions = .empty,
     };
 
     pub fn deinit(chunk: *Chunk, gpa: std.mem.Allocator) void {
         for (chunk.constants.items) |*v| v.deinit(gpa);
+        for (chunk.functions.items) |*f| f.deinit(gpa);
 
         chunk.bytecode.deinit(gpa);
         chunk.constants.deinit(gpa);
         chunk.lines.deinit(gpa);
-    }
-
-    pub fn clone(chunk: Chunk, gpa: std.mem.Allocator) !Chunk {
-        var new_consts: std.ArrayList(Value) = try .initCapacity(gpa, chunk.constants.items.len);
-        for (chunk.constants.items) |*c|
-            new_consts.appendAssumeCapacity(c.borrow());
-        return .{
-            .bytecode = try chunk.bytecode.clone(gpa),
-            .lines = try chunk.lines.clone(gpa),
-            .constants = new_consts,
-        };
+        chunk.functions.deinit(gpa);
     }
 };
 
@@ -128,9 +122,9 @@ pub const VMBuilder = struct {
         try builder.vm.chunk.lines.append(gpa, line);
     }
 
-    pub fn addClosure(builder: *VMBuilder, gpa: std.mem.Allocator, cls_args_n: u8, c: Value) !u8 {
-        try builder.vm.chunk.constants.append(gpa, c);
-        const i: u8 = @intCast(builder.vm.chunk.constants.items.len - 1);
+    pub fn addClosure(builder: *VMBuilder, gpa: std.mem.Allocator, cls_args_n: u8, fn_vm: VM) !u8 {
+        try builder.vm.chunk.functions.append(gpa, try RC(VM).init(gpa, fn_vm));
+        const i: u8 = @intCast(builder.vm.chunk.functions.items.len - 1);
         try builder.addBytes(gpa, @intFromEnum(VM.Instructions.load_closure), i, 0);
         try builder.addByte(gpa, cls_args_n, 0);
         return i;
@@ -168,6 +162,7 @@ pub const VMBuilder = struct {
 };
 
 pub const VM = struct {
+    name: []const u8,
     chunk: Chunk,
     globals: Array,
     stack: Array,
@@ -177,6 +172,7 @@ pub const VM = struct {
 
     pub fn init() VM {
         return .{
+            .name = "",
             .chunk = .empty,
             .stack = .empty,
             .locals = .empty,
@@ -186,18 +182,15 @@ pub const VM = struct {
         };
     }
 
-    pub fn deint(vm: *VM, gpa: std.mem.Allocator) void {
+    pub fn deinit(vm: *VM, gpa: std.mem.Allocator) void {
         vm.stack.deinit(gpa);
         vm.chunk.deinit(gpa);
         vm.locals.deinit(gpa);
         vm.globals.deinit(gpa);
     }
 
-    pub fn clone(self: VM, gpa: std.mem.Allocator) !VM {
-        var new_vm: VM = .init();
-        new_vm.upvalues = self.upvalues;
-        new_vm.chunk = try self.chunk.clone(gpa);
-        return new_vm;
+    pub fn format(vm: VM, writer: *std.Io.Writer) !void {
+        try writer.print("{s}", .{vm.name});
     }
 
     fn getOffset(vm: VM, i: usize) u16 {
@@ -254,7 +247,6 @@ pub const VM = struct {
                 .iter_create,
                 .iter_next,
                 .equals,
-                .get_self,
                 => {
                     try writer.print("{} [ {s} ]\n", .{ i, @tagName(instruction) });
                     i += 1;
@@ -280,7 +272,7 @@ pub const VM = struct {
                     try writer.print("{} [ {s} ] index {}\n", .{ i, @tagName(instruction), index });
                     i += 2;
                 },
-                .call, .recur => {
+                .call => {
                     const n = vm.chunk.bytecode.items[i + 1];
                     try writer.print("{} [ {s} ] args {} \n", .{ i, @tagName(instruction), n });
                     i += 2;
@@ -328,11 +320,12 @@ pub const VM = struct {
 
     fn loadClosure(vm: *VM, gpa: std.mem.Allocator) !void {
         const i = vm.chunk.bytecode.items[vm.ip + 1];
-        var function = vm.chunk.constants.items[i];
+        var function = vm.chunk.functions.items[i];
         const n_cls = vm.chunk.bytecode.items[vm.ip + 2];
 
-        try vm.stack.appendNoBorrow(gpa, try function.toClosure(
+        try vm.stack.appendNoBorrow(gpa, try Value.initClosure(
             gpa,
+            try function.borrow(),
             vm.stack.popN(n_cls),
         ));
         vm.ip += 2;
@@ -406,18 +399,6 @@ pub const VM = struct {
         vm.ip += 1;
     }
 
-    fn getSelf(vm: *VM, gpa: std.mem.Allocator) !void {
-        const new_vm = try vm.clone(gpa);
-
-        var function = try Value.initFunction(gpa, "", new_vm);
-        defer function.deinit(gpa);
-
-        const closure = try function.toClosure(gpa, new_vm.upvalues);
-        for (closure.obj.getPtrUnwrap().closure.upvalues.items) |*v|
-            _ = v.borrow();
-        try vm.stack.appendNoBorrow(gpa, closure);
-    }
-
     fn setLocal(vm: *VM, gpa: std.mem.Allocator) !void {
         var v = vm.stack.last();
         try vm.locals.append(gpa, &v);
@@ -463,43 +444,22 @@ pub const VM = struct {
             },
             else => return error.NotCallable,
         };
-        var function = closure.getFunction();
-        defer function.vm.stack.deinit(gpa);
-        defer function.vm.locals.deinit(gpa);
-        defer function.vm.globals.deinit(gpa);
+        var fn_vm = closure.getVM();
+        defer fn_vm.stack.deinit(gpa);
+        defer fn_vm.locals.deinit(gpa);
+        defer fn_vm.globals.deinit(gpa);
 
         const arg_count = vm.chunk.bytecode.items[vm.ip + 1];
         const args = vm.stack.items()[vm.stack.len() - arg_count ..];
 
-        try function.vm.globals.values.appendSlice(gpa, args);
-        function.vm.upvalues = closure.upvalues.items;
+        try fn_vm.globals.values.appendSlice(gpa, args);
+        try fn_vm.globals.append(gpa, &value);
+        fn_vm.upvalues = closure.upvalues.items;
 
-        try function.vm.run(gpa);
-
-        vm.stack.values.items.len -= arg_count;
-        vm.stack.appendAssumeCapacityNoBorrow(function.vm.stack.pop());
-
-        vm.ip += 1;
-    }
-
-    fn recur(vm: *VM, gpa: std.mem.Allocator) !void {
-        var new_vm: VM = .init();
-        defer new_vm.stack.deinit(gpa);
-        defer new_vm.locals.deinit(gpa);
-        defer new_vm.globals.deinit(gpa);
-
-        new_vm.chunk = vm.chunk;
-        new_vm.upvalues = vm.upvalues;
-
-        const arg_count = vm.chunk.bytecode.items[vm.ip + 1];
-        const args = vm.stack.items()[vm.stack.len() - arg_count ..];
-
-        try new_vm.globals.values.appendSlice(gpa, args);
-
-        try new_vm.run(gpa);
+        try fn_vm.run(gpa);
 
         vm.stack.values.items.len -= arg_count;
-        vm.stack.appendAssumeCapacityNoBorrow(new_vm.stack.pop());
+        vm.stack.appendAssumeCapacityNoBorrow(fn_vm.stack.pop());
 
         vm.ip += 1;
     }
@@ -511,10 +471,8 @@ pub const VM = struct {
                 .add, .sub, .mul, .div => vm.mathOp(gpa, instruction),
                 .equals => vm.equals(gpa),
                 .call => vm.call(gpa),
-                .recur => vm.recur(gpa),
                 .set_global => vm.setGlobal(gpa),
                 .get_global => vm.getGlobal(gpa),
-                .get_self => vm.getSelf(gpa),
                 .set_local => vm.setLocal(gpa),
                 .get_local => vm.getLocal(gpa),
                 .get_upvalue => vm.getUpvalue(gpa),
@@ -541,9 +499,7 @@ pub const VM = struct {
         div,
         equals,
         call,
-        recur,
         load_closure,
-        get_self,
         set_global,
         get_global,
         set_local,

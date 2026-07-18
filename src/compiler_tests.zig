@@ -21,7 +21,7 @@ test "if" {
 
     for (test_cases) |cs| {
         var vm = try Compiler.compile(gpa, cs[0]);
-        defer vm.deint(gpa);
+        defer vm.deinit(gpa);
 
         try vm.run(gpa);
 
@@ -39,7 +39,7 @@ test "for loop" {
         \\      k
         \\ end
     );
-    defer vm.deint(gpa);
+    defer vm.deinit(gpa);
 
     try vm.run(gpa);
 
@@ -79,7 +79,7 @@ test "functions" {
 
     for (test_cases) |cs| {
         var vm = try Compiler.compile(gpa, cs[0]);
-        defer vm.deint(gpa);
+        defer vm.deinit(gpa);
 
         try vm.run(gpa);
 
@@ -88,7 +88,7 @@ test "functions" {
     }
 
     var vm = try Compiler.compile(gpa, "fun g(x) = x end g([1, 2, 3])");
-    defer vm.deint(gpa);
+    defer vm.deinit(gpa);
     try vm.run(gpa);
     try std.testing.expectEqual(1, vm.stack.len());
     try std.testing.expect(vm.stack.get(0) == .obj);
@@ -151,7 +151,7 @@ test "closures" {
 
     for (test_cases) |cs| {
         var vm = try Compiler.compile(gpa, cs[0]);
-        defer vm.deint(gpa);
+        defer vm.deinit(gpa);
 
         try vm.run(gpa);
 
@@ -172,7 +172,7 @@ test "recursion" {
         \\ end
         \\ fib(10)
     );
-    defer fib_vm.deint(gpa);
+    defer fib_vm.deinit(gpa);
 
     try fib_vm.run(gpa);
 
@@ -191,7 +191,7 @@ test "recursion" {
 
     for (self_cases) |source| {
         var vm = try Compiler.compile(gpa, source);
-        defer vm.deint(gpa);
+        defer vm.deinit(gpa);
 
         try vm.run(gpa);
 

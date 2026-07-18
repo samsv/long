@@ -64,7 +64,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         var vm = try c.Compiler.compile(gpa, text);
-        defer vm.deint(gpa);
+        defer vm.deinit(gpa);
 
         try vm.run(gpa);
         try printVM(vm, stdout_writer);
