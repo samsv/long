@@ -565,9 +565,14 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             pub fn update(self: *SparseSet, gpa: std.mem.Allocator, item: SparseSet.Item) !SparseSet {
                 const tail_offset = self.sparse.getUnwrap().items[item.sparse_index].?;
 
-                const new_bucket = try gpa.dupe(SparseSet.Item, self.dense.list.getPtrUnwrap().bucket.getPtrUnwrap().arr.items);
-                for (new_bucket, 0..) |*v, i|
-                    v.* = if (i == tail_offset) borrowValue(item) else v.borrow();
+                const new_bucket = try gpa.alloc(SparseSet.Item, self.dense.count());
+                var iterator = self.dense.iterNoBorrow();
+                var i = new_bucket.len;
+                while (iterator.next()) |v| {
+                    i -= 1;
+                    const val = if (i == tail_offset) item else v;
+                    new_bucket[i] = borrowValue(val);
+                }
 
                 const new_dense = try List(SparseSet.Item).initOwned(gpa, new_bucket);
                 const new_sparse = try self.sparse.borrow();

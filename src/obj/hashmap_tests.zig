@@ -660,3 +660,32 @@ test "Ref counted allocation failures" {
         if (completed) break;
     }
 }
+
+test "update on old version after shared-bucket append" {
+    const K = []const u8;
+    const V = f32;
+    const MyHashCtx = Ctx(K){
+        .eql = strEql,
+        .hash = strHash,
+    };
+
+    const Map = HashMap(K, V, MyHashCtx);
+    const gpa = std.testing.allocator;
+
+    var map1 = try Map.init(gpa, &[_]Map.KV{
+        .{ .key = "a", .value = 1 },
+    });
+    defer map1.deinit(gpa);
+
+    var map2 = try map1.put(gpa, "b", 2);
+    defer map2.deinit(gpa);
+
+    var map3 = try map1.put(gpa, "a", 3);
+    defer map3.deinit(gpa);
+
+    try std.testing.expectEqual(null, map3.get("b"));
+    try std.testing.expectEqual(3, map3.get("a").?.value.?);
+    try std.testing.expectEqual(@as(usize, 1), map3.count());
+    try std.testing.expectEqual(2, map2.get("b").?.value.?);
+    try std.testing.expectEqual(1, map1.get("a").?.value.?);
+}
