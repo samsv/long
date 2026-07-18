@@ -1,7 +1,25 @@
 const std = @import("std");
 const List = @import("list.zig").List;
-const ref_counter = @import("ref_counter.zig");
-const RC = ref_counter.RC;
+const RC = @import("ref_counter.zig").RC;
+
+fn Unwrap(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .pointer => |info| info.child,
+        else => T,
+    };
+}
+
+fn borrowValue(v: anytype) @TypeOf(v) {
+    if (comptime std.meta.hasFn(Unwrap(@TypeOf(v)), "borrow")) {
+        var tmp = v;
+        return tmp.borrow();
+    }
+    return v;
+}
+
+fn deinitValue(v: anytype, gpa: std.mem.Allocator) void {
+    if (comptime std.meta.hasFn(Unwrap(std.meta.Child(@TypeOf(v))), "deinit")) v.deinit(gpa);
+}
 
 /// Hashing and equality context for key type `K`.
 pub fn Ctx(comptime K: type) type {
@@ -31,14 +49,14 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
 
             pub fn borrow(self: *KV) KV {
                 return .{
-                    .key = ref_counter.borrowValue(K, self.key),
-                    .value = if (self.value) |v| ref_counter.borrowValue(V, v) else null,
+                    .key = borrowValue(self.key),
+                    .value = if (self.value) |v| borrowValue(v) else null,
                 };
             }
 
             pub fn deinit(self: *KV, gpa: std.mem.Allocator) void {
-                ref_counter.deinitValue(K, &self.key, gpa);
-                if (self.value) |*v| ref_counter.deinitValue(V, v, gpa);
+                deinitValue(&self.key, gpa);
+                if (self.value) |*v| deinitValue(v, gpa);
             }
         };
 
@@ -547,9 +565,9 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime ctx: Ctx(K)) type {
             pub fn update(self: *SparseSet, gpa: std.mem.Allocator, item: SparseSet.Item) !SparseSet {
                 const tail_offset = self.sparse.getUnwrap().items[item.sparse_index].?;
 
-                const new_bucket = try gpa.dupe(SparseSet.Item, self.dense.list.getPtrUnwrap().bucket.getPtrUnwrap().items);
+                const new_bucket = try gpa.dupe(SparseSet.Item, self.dense.list.getPtrUnwrap().bucket.getPtrUnwrap().arr.items);
                 for (new_bucket, 0..) |*v, i|
-                    v.* = if (i == tail_offset) ref_counter.borrowValue(SparseSet.Item, item) else v.borrow();
+                    v.* = if (i == tail_offset) borrowValue(item) else v.borrow();
 
                 const new_dense = try List(SparseSet.Item).initOwned(gpa, new_bucket);
                 const new_sparse = try self.sparse.borrow();

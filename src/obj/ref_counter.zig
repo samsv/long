@@ -1,24 +1,5 @@
 const std = @import("std");
 
-fn Unwrap(comptime T: type) type {
-    return switch (@typeInfo(T)) {
-        .pointer => |info| info.child,
-        else => T,
-    };
-}
-
-pub fn borrowValue(comptime T: type, v: T) T {
-    if (comptime std.meta.hasFn(Unwrap(T), "borrow")) {
-        var tmp = v;
-        return tmp.borrow();
-    }
-    return v;
-}
-
-pub fn deinitValue(comptime T: type, v: *T, gpa: std.mem.Allocator) void {
-    if (comptime std.meta.hasFn(Unwrap(T), "deinit")) v.deinit(gpa);
-}
-
 const borrow_errors = error{
     AccessFreedReference,
     BorrowOfFreedReference,
@@ -66,17 +47,6 @@ pub fn RC(comptime T: type) type {
         pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
             var value = self.inner orelse return;
             value._deinit(gpa);
-            self.inner = null;
-        }
-
-        pub fn deinitWithCb(
-            self: *Self,
-            gpa: std.mem.Allocator,
-            fun: *const fn (*T, gpa: std.mem.Allocator) void,
-        ) void {
-            var inner = self.inner orelse return;
-            if (inner.count <= 1) fun(&inner.value, gpa);
-            inner._deinit(gpa);
             self.inner = null;
         }
 
