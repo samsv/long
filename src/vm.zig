@@ -19,6 +19,17 @@ pub const Chunk = struct {
         chunk.constants.deinit(gpa);
         chunk.lines.deinit(gpa);
     }
+
+    pub fn clone(chunk: Chunk, gpa: std.mem.Allocator) !Chunk {
+        var new_consts: std.ArrayList(Value) = try .initCapacity(gpa, chunk.constants.items.len);
+        for (chunk.constants.items) |*c|
+            new_consts.appendAssumeCapacity(c.borrow());
+        return .{
+            .bytecode = try chunk.bytecode.clone(gpa),
+            .lines = try chunk.lines.clone(gpa),
+            .constants = new_consts,
+        };
+    }
 };
 
 pub const Array = struct {
@@ -180,6 +191,13 @@ pub const VM = struct {
         vm.chunk.deinit(gpa);
         vm.locals.deinit(gpa);
         vm.globals.deinit(gpa);
+    }
+
+    pub fn clone(self: VM, gpa: std.mem.Allocator) !VM {
+        var new_vm: VM = .init();
+        new_vm.upvalues = self.upvalues;
+        new_vm.chunk = try self.chunk.clone(gpa);
+        return new_vm;
     }
 
     fn getOffset(vm: VM, i: usize) u16 {
@@ -389,15 +407,14 @@ pub const VM = struct {
     }
 
     fn getSelf(vm: *VM, gpa: std.mem.Allocator) !void {
-        var new_vm: VM = .init();
-
-        new_vm.chunk = vm.chunk;
-        new_vm.upvalues = vm.upvalues;
+        const new_vm = try vm.clone(gpa);
 
         var function = try Value.initFunction(gpa, "", new_vm);
         defer function.deinit(gpa);
 
         const closure = try function.toClosure(gpa, new_vm.upvalues);
+        for (closure.obj.getPtrUnwrap().closure.upvalues.items) |*v|
+            _ = v.borrow();
         try vm.stack.appendNoBorrow(gpa, closure);
     }
 
