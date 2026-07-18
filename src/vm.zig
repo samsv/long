@@ -1,12 +1,11 @@
 const std = @import("std");
 const Value = @import("value.zig").Value;
-const RC = @import("obj/ref_counter.zig").RC;
 
 pub const Chunk = struct {
     bytecode: std.ArrayList(u8),
     lines: std.ArrayList(usize),
     constants: std.ArrayList(Value),
-    functions: std.ArrayList(RC(VM)),
+    functions: std.ArrayList(VM),
 
     pub const empty: Chunk = .{
         .bytecode = .empty,
@@ -123,7 +122,7 @@ pub const VMBuilder = struct {
     }
 
     pub fn addClosure(builder: *VMBuilder, gpa: std.mem.Allocator, cls_args_n: u8, fn_vm: VM) !u8 {
-        try builder.vm.chunk.functions.append(gpa, try RC(VM).init(gpa, fn_vm));
+        try builder.vm.chunk.functions.append(gpa, fn_vm);
         const i: u8 = @intCast(builder.vm.chunk.functions.items.len - 1);
         try builder.addBytes(gpa, @intFromEnum(VM.Instructions.load_closure), i, 0);
         try builder.addByte(gpa, cls_args_n, 0);
@@ -184,9 +183,9 @@ pub const VM = struct {
 
     pub fn deinit(vm: *VM, gpa: std.mem.Allocator) void {
         vm.stack.deinit(gpa);
-        vm.chunk.deinit(gpa);
         vm.locals.deinit(gpa);
         vm.globals.deinit(gpa);
+        vm.chunk.deinit(gpa);
     }
 
     pub fn format(vm: VM, writer: *std.Io.Writer) !void {
@@ -320,12 +319,12 @@ pub const VM = struct {
 
     fn loadClosure(vm: *VM, gpa: std.mem.Allocator) !void {
         const i = vm.chunk.bytecode.items[vm.ip + 1];
-        var function = vm.chunk.functions.items[i];
+        const function = &vm.chunk.functions.items[i];
         const n_cls = vm.chunk.bytecode.items[vm.ip + 2];
 
         try vm.stack.appendNoBorrow(gpa, try Value.initClosure(
             gpa,
-            try function.borrow(),
+            function,
             vm.stack.popN(n_cls),
         ));
         vm.ip += 2;

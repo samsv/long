@@ -47,7 +47,7 @@ pub const Value = union(enum) {
         };
     }
 
-    pub fn initClosure(gpa: std.mem.Allocator, function: RC(VM), upvalues_slice: []const Value) !Value {
+    pub fn initClosure(gpa: std.mem.Allocator, function: *const VM, upvalues_slice: []const Value) !Value {
         var upvalues: std.ArrayList(Value) = try .initCapacity(gpa, upvalues_slice.len);
         upvalues.appendSliceAssumeCapacity(upvalues_slice);
         return .{
