@@ -1,5 +1,7 @@
 const std = @import("std");
 const Value = @import("value.zig").Value;
+const ClosureGroup = @import("obj/function.zig").ClosureGroup;
+const RC = @import("obj/ref_counter.zig").RC;
 
 pub const Chunk = struct {
     bytecode: std.ArrayList(u8),
@@ -167,6 +169,7 @@ pub const VM = struct {
     stack: Array,
     locals: Array,
     upvalues: []const Value,
+    group: ?RC(ClosureGroup),
     ip: usize,
 
     pub fn init() VM {
@@ -177,6 +180,7 @@ pub const VM = struct {
             .locals = .empty,
             .globals = .empty,
             .upvalues = &[0]Value{},
+            .group = null,
             .ip = 0,
         };
     }
@@ -266,7 +270,14 @@ pub const VM = struct {
                     try writer.print("{} [ {s} ] fn_index: {} n_closures {} \n", .{ i, @tagName(instruction), n, n_cls });
                     i += 3;
                 },
-                .pop_local, .load_constant, .get_global, .get_local, .get_upvalue => {
+                .create_group => {
+                    const first = vm.chunk.bytecode.items[i + 1];
+                    const n_members = vm.chunk.bytecode.items[i + 2];
+                    const n_upvalues = vm.chunk.bytecode.items[i + 3];
+                    try writer.print("{} [ {s} ] first {} members {} upvalues {} \n", .{ i, @tagName(instruction), first, n_members, n_upvalues });
+                    i += 4;
+                },
+                .pop_local, .load_constant, .get_global, .get_local, .get_upvalue, .get_member => {
                     const index = vm.chunk.bytecode.items[i + 1];
                     try writer.print("{} [ {s} ] index {}\n", .{ i, @tagName(instruction), index });
                     i += 2;
@@ -328,6 +339,36 @@ pub const VM = struct {
             vm.stack.popN(n_cls),
         ));
         vm.ip += 2;
+    }
+
+    fn createGroup(vm: *VM, gpa: std.mem.Allocator) !void {
+        const first: usize = vm.chunk.bytecode.items[vm.ip + 1];
+        const n_members: usize = vm.chunk.bytecode.items[vm.ip + 2];
+        const n_upvalues = vm.chunk.bytecode.items[vm.ip + 3];
+
+        var upvalues: std.ArrayList(Value) = try .initCapacity(gpa, n_upvalues);
+        upvalues.appendSliceAssumeCapacity(vm.stack.popN(n_upvalues));
+
+        var group = try RC(ClosureGroup).init(gpa, .{
+            .members = vm.chunk.functions.items[first .. first + n_members],
+            .upvalues = upvalues,
+        });
+        defer group.deinit(gpa);
+
+        var i = n_members;
+        while (i > 0) {
+            i -= 1;
+            try vm.stack.appendNoBorrow(gpa, try Value.initClosureMember(gpa, try group.borrow(), i));
+        }
+
+        vm.ip += 3;
+    }
+
+    fn getMember(vm: *VM, gpa: std.mem.Allocator) !void {
+        const i = vm.chunk.bytecode.items[vm.ip + 1];
+        var group = vm.group orelse return error.NoGroup;
+        try vm.stack.appendNoBorrow(gpa, try Value.initClosureMember(gpa, try group.borrow(), i));
+        vm.ip += 1;
     }
 
     fn loadConstant(vm: *VM, gpa: std.mem.Allocator) !void {
@@ -436,14 +477,23 @@ pub const VM = struct {
         var value = vm.stack.pop();
         defer value.deinit(gpa);
 
-        const closure = switch (value) {
+        var fn_vm: VM = switch (value) {
             .obj => |*obj| switch (obj.getUnwrap()) {
-                .closure => |cls| cls,
+                .closure => |cls| blk: {
+                    var f = cls.getVM();
+                    f.upvalues = cls.upvalues.items;
+                    break :blk f;
+                },
+                .closure_member => |member| blk: {
+                    var f = member.getVM();
+                    f.upvalues = member.group.getUnwrap().upvalues.items;
+                    f.group = member.group;
+                    break :blk f;
+                },
                 else => return error.NotCallable,
             },
             else => return error.NotCallable,
         };
-        var fn_vm = closure.getVM();
         defer fn_vm.stack.deinit(gpa);
         defer fn_vm.locals.deinit(gpa);
         defer fn_vm.globals.deinit(gpa);
@@ -453,7 +503,6 @@ pub const VM = struct {
 
         try fn_vm.globals.values.appendSlice(gpa, args);
         try fn_vm.globals.append(gpa, &value);
-        fn_vm.upvalues = closure.upvalues.items;
 
         try fn_vm.run(gpa);
 
@@ -478,6 +527,8 @@ pub const VM = struct {
                 .pop_local => vm.popLocal(gpa),
                 .load_constant => vm.loadConstant(gpa),
                 .load_closure => vm.loadClosure(gpa),
+                .create_group => vm.createGroup(gpa),
+                .get_member => vm.getMember(gpa),
                 .jump => vm.jump(),
                 .jump_back => vm.jumpBack(),
                 .jump_if_false => vm.jumpIfFalse(gpa),
@@ -499,6 +550,8 @@ pub const VM = struct {
         equals,
         call,
         load_closure,
+        create_group,
+        get_member,
         set_global,
         get_global,
         set_local,

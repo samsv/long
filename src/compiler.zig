@@ -72,12 +72,14 @@ pub const Locals = struct {
 pub const Compiler = struct {
     globals: Globals,
     upvalues: Locals,
+    members: std.StringArrayHashMapUnmanaged(usize),
     locals: ?*Locals,
 
     pub fn init() Compiler {
         return .{
             .globals = Globals.init(),
             .upvalues = Locals.init(null),
+            .members = .empty,
             .locals = null,
         };
     }
@@ -85,6 +87,7 @@ pub const Compiler = struct {
     pub fn deinit(c: *Compiler, gpa: std.mem.Allocator) void {
         c.globals.deinit(gpa);
         c.upvalues.deinit(gpa);
+        c.members.deinit(gpa);
         if (c.locals) |locals|
             locals.deinit(gpa);
     }
@@ -97,9 +100,13 @@ pub const Compiler = struct {
 
         if (c.upvalues.get(id)) |idx| {
             try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_upvalue), @intCast(idx), line);
-        } else {
-            const idx = try c.globals.get(id);
+        } else if (c.globals.name_indexes.get(id)) |idx| {
             try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_global), @intCast(idx), line);
+        } else if (c.members.get(id)) |idx| {
+            try builder.addBytes(gpa, @intFromEnum(VM.Instructions.get_member), @intCast(idx), line);
+        } else {
+            std.log.err("Variable {s} not found.\n", .{id});
+            return error.UndefinedVariable;
         }
     }
 
@@ -312,6 +319,8 @@ pub const Compiler = struct {
         builder: *VMBuilder,
         line: usize,
     ) !void {
+        if (args[0] == .cons) return c.compileFunGroup(gpa, args, builder, line);
+
         var c_idx: usize = 0;
         const name = try expectId(args[c_idx]);
 
@@ -354,6 +363,72 @@ pub const Compiler = struct {
             fn_vm,
         );
         try c.addVar(gpa, name, line, builder);
+    }
+
+    fn compileFunGroup(
+        c: *Compiler,
+        gpa: std.mem.Allocator,
+        members: []const SExpr,
+        builder: *VMBuilder,
+        line: usize,
+    ) !void {
+        const first: u8 = @intCast(builder.vm.chunk.functions.items.len);
+
+        var names: std.ArrayList([]const u8) = try .initCapacity(gpa, members.len);
+        defer names.deinit(gpa);
+        for (members) |m|
+            names.appendAssumeCapacity(try expectId((try expect(m, .cons)).items[0]));
+
+        var upvalue_base: usize = 0;
+        for (members) |m| {
+            const item = (try expect(m, .cons)).items;
+            const name = try expectId(item[0]);
+
+            var fn_builder = VMBuilder.init();
+            var compiler = init();
+            defer compiler.deinit(gpa);
+
+            var m_idx: usize = 1;
+            if (item.len == 4) {
+                for (item[m_idx].cons.items) |a|
+                    try compiler.upvalues.add(gpa, try expectId(a));
+                compiler.upvalues.offset = upvalue_base;
+                m_idx += 1;
+            }
+
+            for (item[m_idx].cons.items) |a|
+                try compiler.globals.add(gpa, try expectId(a));
+            try compiler.globals.add(gpa, name);
+            m_idx += 1;
+
+            for (names.items, 0..) |n, j|
+                try compiler.members.put(gpa, n, j);
+
+            try compiler.compileBuilder(gpa, item[m_idx], &fn_builder);
+
+            var fn_vm = fn_builder.build();
+            fn_vm.name = name;
+            try builder.vm.chunk.functions.append(gpa, fn_vm);
+
+            upvalue_base += if (item.len == 4) item[1].cons.items.len else 0;
+        }
+
+        for (members) |m| {
+            const item = (try expect(m, .cons)).items;
+            if (item.len == 4)
+                for (item[1].cons.items) |a|
+                    try c.compileID(gpa, try expectId(a), line, builder);
+        }
+
+        try builder.addBytes(gpa, @intFromEnum(VM.Instructions.create_group), first, line);
+        try builder.addByte(gpa, @intCast(members.len), line);
+        try builder.addByte(gpa, @intCast(upvalue_base), line);
+
+        for (names.items, 0..) |n, j| {
+            try c.addVar(gpa, n, line, builder);
+            if (j < names.items.len - 1)
+                try builder.addByte(gpa, @intFromEnum(VM.Instructions.pop), line);
+        }
     }
 
     fn compileCall(

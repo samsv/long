@@ -1,11 +1,13 @@
 const std = @import("std");
 const Closure = @import("obj/function.zig").Closure;
+const ClosureMember = @import("obj/function.zig").ClosureMember;
 const Value = @import("value.zig").Value;
 const List = @import("obj/list.zig").List(Value);
 const Iterator = @import("obj/iterator.zig").Iterator;
 
 pub const Obj = union(enum) {
     closure: Closure,
+    closure_member: ClosureMember,
     list: List,
     iterator: Iterator,
 

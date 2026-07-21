@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const Obj = @import("object.zig").Obj;
+const ClosureGroup = @import("obj/function.zig").ClosureGroup;
 const Iterator = @import("obj/iterator.zig").Iterator;
 const RC = @import("obj/ref_counter.zig").RC;
 const VM = @import("vm.zig").VM;
@@ -55,6 +56,17 @@ pub const Value = union(enum) {
                 .closure = .{
                     .function = function,
                     .upvalues = upvalues,
+                },
+            }),
+        };
+    }
+
+    pub fn initClosureMember(gpa: std.mem.Allocator, group: RC(ClosureGroup), index: usize) !Value {
+        return .{
+            .obj = try RC(Obj).init(gpa, .{
+                .closure_member = .{
+                    .group = group,
+                    .index = index,
                 },
             }),
         };

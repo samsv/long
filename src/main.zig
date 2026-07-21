@@ -82,6 +82,7 @@ pub fn main(init: std.process.Init) !void {
             \\      else is_even(x - 1)
             \\      end
             \\ end
+            \\ is_even(10)
         ;
 
         var scanner = try Scanner.init(text);
@@ -93,10 +94,10 @@ pub fn main(init: std.process.Init) !void {
             try stdout_writer.flush();
         }
 
-        //var vm = try c.Compiler.compile(gpa, text);
-        //defer vm.deinit(gpa);
+        var vm = try c.Compiler.compile(gpa, text);
+        defer vm.deinit(gpa);
 
-        //try vm.run(gpa);
-        //try printVM(vm, stdout_writer);
+        try vm.run(gpa);
+        try printVM(vm, stdout_writer);
     }
 }

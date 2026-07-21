@@ -199,3 +199,82 @@ test "recursion" {
         try std.testing.expect(vm.stack.get(0) == .obj);
     }
 }
+
+test "closure groups" {
+    const gpa = std.testing.allocator;
+
+    const test_cases = [_]struct { []const u8, Value }{
+        .{
+            \\ fun
+            \\ | is_even(x) =
+            \\      if x == 0 do true
+            \\      else is_odd(x - 1)
+            \\      end
+            \\ | is_odd(x) =
+            \\      if x == 0 do false
+            \\      else is_even(x - 1)
+            \\      end
+            \\ end
+            \\ is_even(10)
+            ,
+            Value.True,
+        },
+        .{
+            \\ fun
+            \\ | is_even(x) =
+            \\      if x == 0 do true
+            \\      else is_odd(x - 1)
+            \\      end
+            \\ | is_odd(x) =
+            \\      if x == 0 do false
+            \\      else is_even(x - 1)
+            \\      end
+            \\ end
+            \\ is_odd(10)
+            ,
+            Value.False,
+        },
+        .{
+            \\ x = 5
+            \\ y = 7
+            \\ fun
+            \\ | f[x](a) = x + a
+            \\ | g[y](a) = y + a
+            \\ end
+            \\ f(1) + g(1)
+            ,
+            .{ .number = 14 },
+        },
+        .{
+            \\ x = 100
+            \\ fun
+            \\ | f[x](n) = x + g(n)
+            \\ | g(n) = n + 1
+            \\ end
+            \\ f(1)
+            ,
+            .{ .number = 102 },
+        },
+        .{
+            \\ fun make(x) =
+            \\      fun
+            \\      | inc[x](n) = x + n
+            \\      | dec[x](n) = x - n
+            \\      end
+            \\ end
+            \\ make(10)(3)
+            ,
+            .{ .number = 7 },
+        },
+    };
+
+    for (test_cases) |cs| {
+        var vm = try Compiler.compile(gpa, cs[0]);
+        defer vm.deinit(gpa);
+
+        try vm.run(gpa);
+
+        try std.testing.expectEqual(1, vm.stack.len());
+        try std.testing.expectEqual(cs[1], vm.stack.get(0));
+    }
+}
