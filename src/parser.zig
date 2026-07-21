@@ -133,15 +133,13 @@ fn parseFor(gpa: std.mem.Allocator, s: *Scanner, for_token: Token) !SExpr {
     return .{ .cons = list };
 }
 
-fn parseFun(gpa: std.mem.Allocator, s: *Scanner, fun_token: Token) !SExpr {
-    var list: std.ArrayList(SExpr) = try .initCapacity(gpa, 5);
-    errdefer {
-        for (list.items) |*sexpr|
-            sexpr.deinit(gpa);
-        list.deinit(gpa);
-    }
-    list.appendAssumeCapacity(.{ .atom = fun_token });
-
+fn parseFunBody(
+    gpa: std.mem.Allocator,
+    s: *Scanner,
+    fun_token: Token,
+    list: *std.ArrayList(SExpr),
+    end_tokens: []const Token.Kind,
+) !struct { SExpr, Token } {
     const id = try expectId(s);
     list.appendAssumeCapacity(.{ .atom = id });
 
@@ -157,10 +155,36 @@ fn parseFun(gpa: std.mem.Allocator, s: *Scanner, fun_token: Token) !SExpr {
 
     try expect(s, .{ .operator = .equal });
 
-    const body, _ = try parseBlock(gpa, s, &[_]Token.Kind{.{ .keywords = .end }}, fun_token.line);
+    const body, const term = try parseBlock(gpa, s, end_tokens, fun_token.line);
     list.appendAssumeCapacity(body);
 
-    return .{ .cons = list };
+    return .{ .{ .cons = list.* }, term };
+}
+
+fn parseFun(gpa: std.mem.Allocator, s: *Scanner, fun_token: Token) !SExpr {
+    var list: std.ArrayList(SExpr) = try .initCapacity(gpa, 5);
+    errdefer {
+        for (list.items) |*sexpr|
+            sexpr.deinit(gpa);
+        list.deinit(gpa);
+    }
+    list.appendAssumeCapacity(.{ .atom = fun_token });
+
+    if (try check(s, .pipe)) |pipe_token| {
+        // function group
+        var end_token: Token = pipe_token;
+        while (end_token.kind == .pipe) {
+            var body_list: std.ArrayList(SExpr) = try .initCapacity(gpa, 4);
+            errdefer body_list.deinit(gpa);
+
+            const body, end_token = try parseFunBody(gpa, s, end_token, &body_list, &[_]Token.Kind{ .{ .keywords = .end }, .pipe });
+            try list.append(gpa, body);
+        }
+        return .{ .cons = list };
+    } else {
+        const sexpr, _ = try parseFunBody(gpa, s, fun_token, &list, &[_]Token.Kind{.{ .keywords = .end }});
+        return sexpr;
+    }
 }
 
 fn parseIf(gpa: std.mem.Allocator, s: *Scanner, token: Token) !SExpr {
@@ -302,7 +326,7 @@ fn infixPrec(op: Operator) !Precedence {
     return switch (op) {
         .equal => .{ .left = 1, .right = 2 },
         .comma => .{ .left = 3, .right = 4 },
-        .pipe => .{ .left = 6, .right = 5 },
+        .pipe_forward => .{ .left = 6, .right = 5 },
         .greater, .greater_equal, .less, .less_equal, .bang_equal, .equal_equal => .{ .left = 7, .right = 8 },
         .plus, .minus => .{ .left = 9, .right = 10 },
         .star, .slash => .{ .left = 11, .right = 12 },

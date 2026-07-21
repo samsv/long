@@ -69,4 +69,34 @@ pub fn main(init: std.process.Init) !void {
         try vm.run(gpa);
         try printVM(vm, stdout_writer);
     }
+
+    {
+        const text =
+            \\ fun
+            \\ | is_even(x) =
+            \\      if x == 0 do true
+            \\      else is_odd(x - 1)
+            \\      end
+            \\ | is_odd(x) =
+            \\      if x == 0 do false
+            \\      else is_even(x - 1)
+            \\      end
+            \\ end
+        ;
+
+        var scanner = try Scanner.init(text);
+
+        while (try scanner.peek()) |_| {
+            var sexpr = try parser.expr(gpa, &scanner, 0);
+            defer sexpr.deinit(gpa);
+            try stdout_writer.print("{f}\n", .{sexpr});
+            try stdout_writer.flush();
+        }
+
+        //var vm = try c.Compiler.compile(gpa, text);
+        //defer vm.deinit(gpa);
+
+        //try vm.run(gpa);
+        //try printVM(vm, stdout_writer);
+    }
 }

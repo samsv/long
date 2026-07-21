@@ -18,6 +18,7 @@ pub const Token = struct {
         left_brace,
         semicolon,
         hash,
+        pipe,
 
         operator: Operator,
         special_fns: SpecialFns,
@@ -35,12 +36,13 @@ pub const Token = struct {
                 .left_brace => try writer.writeAll("{"),
                 .semicolon => try writer.writeAll(";"),
                 .hash => try writer.writeAll("#"),
+                .pipe => try writer.writeByte('|'),
                 .eof => try writer.writeAll("<EOF>"),
                 .operator => |op| try writer.writeAll(switch (op) {
                     .dot => ".",
                     .minus => "-",
                     .plus => "+",
-                    .pipe => "|>",
+                    .pipe_forward => "|>",
                     .star => "*",
                     .slash => "/",
                     .comma => ",",
@@ -70,7 +72,7 @@ pub const Token = struct {
         dot,
         minus,
         plus,
-        pipe,
+        pipe_forward,
         star,
         slash,
 
@@ -301,11 +303,9 @@ pub const Scanner = struct {
             ',' => .{ .kind = .{ .operator = .comma }, .line = s.line },
             ';' => .{ .kind = .semicolon, .line = s.line },
             '|' => if (s.nextCharIfEq('>'))
-                .{ .kind = .{ .operator = .pipe }, .line = s.line }
-            else {
-                _ = s.view.nextCodepoint();
-                return s.unknownTokenErr(s.view.bytes[initial_i..s.view.i]);
-            },
+                .{ .kind = .{ .operator = .pipe_forward }, .line = s.line }
+            else
+                .{ .kind = .pipe, .line = s.line },
             '!' => if (s.nextCharIfEq('='))
                 .{ .kind = .{ .operator = .bang_equal }, .line = s.line }
             else {
