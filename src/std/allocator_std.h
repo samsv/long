@@ -4,34 +4,39 @@
 #include "allocator.h"
 #include <stddef.h>
 
-extern sv_allocator_t sv_gpa;
+extern const sv_allocator_t sv_gpa;
 
-#ifdef SV_IMPLEMENTATION
+//#ifdef SV_IMPLEMENTATION
 #include <stdlib.h>
 #include <string.h>
-void* sv_malloc_gpa(void* ctx, size_t size)
+void* sv_malloc_gpa(void* self, size_t size)
 {
-    (void)ctx;
+    (void)self;
     return malloc(size);
 }
 
-void sv_free_gpa(void* ctx, void* ptr)
+void sv_free_gpa(void* self, void* ptr)
 {
-    (void)ctx;
+    (void)self;
     free(ptr);
 }
 
-void* sv_realloc_gpa(void* ctx, void* ptr, size_t size)
+void* sv_realloc_gpa(void* self, void* ptr, size_t size)
 {
-    (void)ctx;
+    (void)self;
     return realloc(ptr, size);
 }
 
-sv_allocator_t sv_gpa = {
+static const sv_allocator_vtable sv_gpa_vtable = {
     .malloc = sv_malloc_gpa,
     .free = sv_free_gpa,
     .realloc = sv_realloc_gpa,
 };
 
+const sv_allocator_t sv_gpa = {
+    .vtable = &sv_gpa_vtable,
+    .self = NULL,
+};
+
 #endif
-#endif
+//#endif

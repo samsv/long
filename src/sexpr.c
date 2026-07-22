@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-void sexpr_free(sexpr_t* sexpr, sv_allocator_t* gpa)
+void sexpr_free(sexpr_t* sexpr, const sv_allocator_t* gpa)
 {
     switch (sexpr->tag) {
         case S_ATOM:
@@ -16,7 +16,7 @@ void sexpr_free(sexpr_t* sexpr, sv_allocator_t* gpa)
     }
 }
 
-const char* sexpr_format(sexpr_t sexpr, sv_allocator_t* gpa)
+const char* sexpr_format(sexpr_t sexpr, const sv_allocator_t* gpa)
 {
     switch (sexpr.tag) {
         case S_ATOM:

@@ -225,7 +225,7 @@ void* sv_vec_realloc(
     size_t* capacity,
     const size_t new_capacity,
     const size_t element_size,
-    sv_allocator_t* a
+    const sv_allocator_t* a
 );
 
 /**
@@ -237,7 +237,7 @@ void* sv_vec_allocate_one(
     size_t* size,
     size_t* capacity,
     const size_t element_size,
-    sv_allocator_t* a
+    const sv_allocator_t* a
 );
 
 /**
@@ -250,7 +250,7 @@ void* sv_vec_allocate_many(
     size_t* capacity,
     const size_t element_size,
     size_t n,
-    sv_allocator_t* a
+    const sv_allocator_t* a
 );
 
 #ifdef SV_IMPLEMENTATION
@@ -265,7 +265,7 @@ void* sv_vec_realloc(
     size_t* capacity,
     const size_t new_capacity,
     const size_t element_size,
-    sv_allocator_t* a
+    const sv_allocator_t* a
 ) {
     void* new_arr = sv_realloc(a, *arr, element_size * new_capacity);
     if (new_arr == NULL) {
@@ -285,7 +285,7 @@ void* sv_vec_allocate_one(
     size_t* size,
     size_t* capacity,
     const size_t element_size,
-    sv_allocator_t* a
+    const sv_allocator_t* a
 ) {
     if (*size + 1 >= *capacity) {
         void* new_arr = sv_vec_realloc(arr, capacity, GROW_CAPACITY(*capacity), element_size, a);
@@ -309,7 +309,7 @@ void* sv_vec_allocate_many(
     size_t* capacity,
     const size_t element_size,
     size_t n,
-    sv_allocator_t* a
+    const sv_allocator_t* a
 ) {
     while (*size + n >= *capacity) {
         void* new_arr = sv_vec_realloc(arr, capacity, GROW_CAPACITY(*capacity), element_size, a);

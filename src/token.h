@@ -73,6 +73,6 @@ typedef struct {
 } token_t;
 
 
-const char* token_format(token_t, sv_allocator_t*);
+const char* token_format(token_t, const sv_allocator_t*);
 
 #endif

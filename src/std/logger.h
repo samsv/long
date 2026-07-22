@@ -15,9 +15,11 @@ typedef struct {
  * Where sv_log_fn has fprintf's signature and returns the total characters
  * written, or -1 on failure. Every message is terminated with a newline.
  * A default logger is provided in sv_std_logger; exactly one translation unit
- * must define SV_IMPLEMENTATION to define it. If you pass a NULL file to the
- * std_logger it will write to stdout (info, debug, warn and success) or to
- * stderr (error). std_logger.debug is a no op if NDEBUG is set. Colors are
+ * must define SV_IMPLEMENTATION to define it. Call through the sv_log_*
+ * macros: sv_log_error(logger, format, ...), with at least one argument after
+ * format. The sink is the logger's self field, passed as the FILE argument;
+ * with a NULL self the std_logger writes to stdout (info, debug, warn and
+ * success) or to stderr (error). std_logger.debug is a no op if NDEBUG is set. Colors are
  * disabled when the NO_COLOR environment variable is set.
  */
 
@@ -38,7 +40,18 @@ typedef struct {
     sv_log_fn warning;
     sv_log_fn error;
     sv_log_fn success;
+} sv_logger_vtable;
+
+typedef struct {
+    const sv_logger_vtable* vtable;
+    void* self;
 } sv_logger_t;
+
+#define sv_log_info(logger, format, ...) (logger)->vtable->info((logger)->self, format, __VA_ARGS__)
+#define sv_log_debug(logger, format, ...) (logger)->vtable->debug((logger)->self, format, __VA_ARGS__)
+#define sv_log_warning(logger, format, ...) (logger)->vtable->warning((logger)->self, format, __VA_ARGS__)
+#define sv_log_error(logger, format, ...) (logger)->vtable->error((logger)->self, format, __VA_ARGS__)
+#define sv_log_success(logger, format, ...) (logger)->vtable->success((logger)->self, format, __VA_ARGS__)
 
 static inline int sv_log_colors_enabled(void)
 {
@@ -62,7 +75,7 @@ static inline int sv_log_color(FILE* f, const char* color, const char* format, v
     return a + b + c;
 }
 
-#define LOG_FN_NAME(fn_name) sv_log_ ##fn_name
+#define LOG_FN_NAME(fn_name) sv_std_log_ ##fn_name
 #define CREATE_LOG_FN(fn_name, color, default_file)\
 static inline int LOG_FN_NAME(fn_name) (FILE* f, const char* format, ...) {\
     va_list args;\
@@ -81,7 +94,7 @@ CREATE_LOG_FN(info, SV_LOG_NORMAL, stdout)
 #ifndef NDEBUG
 CREATE_LOG_FN(debug, SV_LOG_NORMAL, stdout)
 #else
-static inline int sv_log_debug(FILE* f, const char* format, ...)
+static inline int sv_std_log_debug(FILE* f, const char* format, ...)
 {
     (void)f;
     (void) format;
@@ -92,12 +105,17 @@ static inline int sv_log_debug(FILE* f, const char* format, ...)
 extern const sv_logger_t sv_std_logger;
 
 #ifdef SV_IMPLEMENTATION
-const sv_logger_t sv_std_logger = {
+static const sv_logger_vtable sv_std_logger_vtable = {
     .info = LOG_FN_NAME(info),
     .debug = LOG_FN_NAME(debug),
     .warning = LOG_FN_NAME(warn),
     .error = LOG_FN_NAME(err),
     .success = LOG_FN_NAME(success),
+};
+
+const sv_logger_t sv_std_logger = {
+    .vtable = &sv_std_logger_vtable,
+    .self = NULL,
 };
 #endif
 

@@ -26,7 +26,7 @@ typedef struct {
         (t)->passed++;\
         break;\
     }\
-    (t)->logger->error(NULL, "File %s, line %d: Test failed: %s", __FILE__, __LINE__, #expr);\
+    sv_log_error((t)->logger, "File %s, line %d: Test failed: %s", __FILE__, __LINE__, #expr);\
 } while(0)
 
 /**
@@ -42,8 +42,8 @@ typedef struct {
         (t)->passed++;\
         break;\
     }\
-    (t)->logger->error(NULL, "File %s, line %d: Test failed: %s", __FILE__, __LINE__, #expr);\
-    (t)->logger->error(NULL, msg, __VA_ARGS__);\
+    sv_log_error((t)->logger, "File %s, line %d: Test failed: %s", __FILE__, __LINE__, #expr);\
+    sv_log_error((t)->logger, msg, __VA_ARGS__);\
 } while(0)
 
 /**
@@ -55,11 +55,11 @@ typedef struct {
 static inline void sv_test_summary(sv_testing_t t, int exit_on_error)
 {
     if (t.passed == t.tests) {
-        t.logger->success(NULL, "All %d tests passed!", t.tests);
+        sv_log_success(t.logger, "All %d tests passed!", t.tests);
         return;
     }
 
-    t.logger->error(NULL, "%d out of %d tests failed!", t.tests - t.passed, t.tests);
+    sv_log_error(t.logger, "%d out of %d tests failed!", t.tests - t.passed, t.tests);
 
     if (exit_on_error) {
         exit(1);
