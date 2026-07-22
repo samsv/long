@@ -1,5 +1,5 @@
 CC ?= cc
-STD = -std=c99
+STD = -std=c17
 WARN = -Wall -Wextra -Werror -Wswitch-enum -pedantic
 SAN ?= -fsanitize=address,undefined
 TARGET ?= long
