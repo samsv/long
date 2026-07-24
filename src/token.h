@@ -17,6 +17,9 @@ typedef enum {
     TOKEN_SEMICOLON,
     TOKEN_HASH,
     TOKEN_PIPE,
+
+    TOKEN_EOF,
+    TOKEN_ERROR,
 } token_kind;
 
 typedef enum {
@@ -84,6 +87,7 @@ typedef struct {
 
 typedef struct {
     token_kind kind;
+    int64_t line;
     union {
         operator_kind operator;
         special_fn_kind fn;
@@ -92,6 +96,12 @@ typedef struct {
     };
 } token_t;
 
+
+/**
+ * Returns the source text of the special function / keyword.
+ */
+const char* special_fn_text(special_fn_kind);
+const char* keyword_text(keyword_kind);
 
 bool token_format_builder(token_t, sv_str_builder*, const sv_allocator_t*);
 sv_str_t token_format(token_t, const sv_allocator_t*);

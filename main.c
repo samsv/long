@@ -1,39 +1,45 @@
-#include <stdio.h>
 #define SV_IMPLEMENTATION
-#include "src/sexpr.h"
-#include "src/std/vector.h"
+#include <inttypes.h>
+#include <stdio.h>
+#include "src/scanner.h"
 #include "src/std/allocator_std.h"
 
-// define the vector type before using it.
-sv_vec_def(int);
+static const char* sample =
+    "fun add(x, y) do\n"
+    "   x + y\n"
+    "end\n"
+    "\n"
+    "add(1, 2.5) |> print\n"
+    "nums = [1, 2, 3]\n"
+    "msg = \"hello\nworld\"\n";
 
-int main(void) {
-    /// append ///
-    sv_vec_t(int) vs = sv_vec_init(int);
+int main(void)
+{
+    ctx_t ctx = {
+        .a = sv_gpa,
+        .logger = sv_std_logger,
+        .err = { 0 },
+    };
 
-    for (int i = 0; i < 10; i++) {
-        int success; // pass NULL if you do not wish to check for the error code.
-        sv_vec_push(&vs, i, &success, &sv_gpa);
-        if (!success) {
-            printf("Could not insert data into vector\n");
-            exit(1);
+    scanner_t s = scanner_init(sv_str_init(sample));
+    for (;;) {
+        token_t token = scanner_next(&s, &ctx);
+        if (token.kind == TOKEN_EOF)
+            break;
+
+        if (token.kind == TOKEN_ERROR) {
+            sv_log_error(&ctx.logger, "%.*s", (int)ctx.err.msg.size, ctx.err.msg.chars);
+            sv_str_deinit(&ctx.err.msg, &ctx.a);
+            return 1;
         }
+
+        sv_str_t text = token_format(token, &ctx.a);
+        if (text.size < 0)
+            return 1;
+
+        printf("line %" PRId64 ": %.*s\n", token.line, (int)text.size, text.chars);
+        sv_str_deinit(&text, &ctx.a);
     }
 
-    int xs[] = {1, 2, 3, 4, 16, 15, 1021, 415};
-    sv_vec_push_many(&vs, xs, 8, NULL, &sv_gpa);
-
-    /// loops ///
-    // normal loop
-    for (int64_t i = 0; i < vs.size; i++) {
-        printf("%d\n", vs.arr[i]);
-    }
-    // foreach
-    sv_vec_foreach(int, el, &vs) {
-        printf("%d\n", el);
-    }
-
-
-    /// free vector ///
-    sv_vec_deinit(&vs, &sv_gpa);
+    return 0;
 }

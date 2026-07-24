@@ -31,7 +31,7 @@ static const char* operator_text(operator_kind op)
     return "";
 }
 
-static const char* special_fn_text(special_fn_kind fn)
+const char* special_fn_text(special_fn_kind fn)
 {
     switch (fn) {
         case FN_CLASS: return "class";
@@ -49,7 +49,7 @@ static const char* special_fn_text(special_fn_kind fn)
     return "";
 }
 
-static const char* keyword_text(keyword_kind keyword)
+const char* keyword_text(keyword_kind keyword)
 {
     switch (keyword) {
         case KEYWORD_AND: return "and";
@@ -131,6 +131,8 @@ bool token_format_builder(token_t token, sv_str_builder* b, const sv_allocator_t
         case TOKEN_SEMICOLON: return add_text(b, ";", a);
         case TOKEN_HASH: return add_text(b, "#", a);
         case TOKEN_PIPE: return add_text(b, "|", a);
+        case TOKEN_EOF: return add_text(b, "<EOF>", a);
+        case TOKEN_ERROR: return add_text(b, "<ERROR>", a);
         case TOKEN_OPERATOR: return add_text(b, operator_text(token.operator), a);
         case TOKEN_SP_FUNCTION: return add_text(b, special_fn_text(token.fn), a);
         case TOKEN_KEYWORD: return add_text(b, keyword_text(token.keyword), a);
