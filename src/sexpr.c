@@ -26,7 +26,7 @@ static bool sexpr_format_builder(sexpr_t sexpr, sv_str_builder* b, const sv_allo
             sv_vec_t(sexpr_t) cons = sexpr.cons;
             for (int64_t i = 0; i < cons.size; i++) {
                 if (i != 0) {
-                    CHECK(sv_strb_add_char(b, ',', a) != -1);
+                    CHECK(sv_strb_add_char(b, ' ', a) != -1);
                 }
                 sexpr_t s = cons.arr[i];
                 CHECK(sexpr_format_builder(s, b, a));

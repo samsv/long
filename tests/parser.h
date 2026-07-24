@@ -1,0 +1,194 @@
+#ifndef SV_TESTS_PARSER_H
+#define SV_TESTS_PARSER_H
+
+#include "../src/std/test.h"
+#include "../src/std/allocator_std.h"
+#include "../src/parser.h"
+#include "string.h"
+
+static ctx_t sv_test_parse_ctx(void)
+{
+   return (ctx_t){
+      .a = sv_gpa,
+      .logger = sv_std_logger,
+      .err = { 0 },
+   };
+}
+
+static void sv_test_parse_ok(sv_testing_t* t, const char* src, const char* expected)
+{
+   ctx_t ctx = sv_test_parse_ctx();
+   scanner_t s = scanner_init(sv_str_init(src));
+   sexpr_t e = parser_expr(&s, &ctx);
+
+   sv_test_run_msg(t, ctx.err.error_code == 0, "parse error for \"%s\"", src);
+   sv_str_t formatted = sexpr_format(e, &ctx.a);
+   sv_test_run_msg(t, sv_str_comp(formatted, sv_str_init(expected)),
+                   "\"%s\" should format as %s, got %.*s",
+                   src, expected, (int)formatted.size, formatted.chars);
+
+   sv_str_deinit(&formatted, &ctx.a);
+   sexpr_free(&e, &ctx.a);
+}
+
+static void sv_test_parse_error(sv_testing_t* t, const char* src, int expected_code)
+{
+   ctx_t ctx = sv_test_parse_ctx();
+   scanner_t s = scanner_init(sv_str_init(src));
+   sexpr_t e = parser_expr(&s, &ctx);
+
+   sv_test_run_msg(t, e.tag == S_ATOM && e.atom.kind == TOKEN_ERROR,
+                   "expected parse error for \"%s\"", src);
+   sv_test_run_msg(t, ctx.err.error_code == expected_code, "error code for \"%s\"", src);
+   sv_test_run_msg(t, ctx.err.msg.size > 0, "error msg for \"%s\"", src);
+   sv_str_deinit(&ctx.err.msg, &ctx.a);
+}
+
+static inline void sv_test_parser_exprs(sv_testing_t* t)
+{
+   sv_test_parse_ok(t, "1 * 2 + 3", "(+ (* 1 2) 3)");
+   sv_test_parse_ok(t, "0", "0");
+   sv_test_parse_ok(t, "(((0)))", "0");
+   sv_test_parse_ok(t, "- 1 * (2 + 3)", "(* (- 1) (+ 2 3))");
+   sv_test_parse_ok(t, "x.hwllo |> world()", "(|> (. x hwllo) (world))");
+   sv_test_parse_ok(t, "x[0][1]", "([ ([ x 0) 1)");
+   sv_test_parse_ok(t, "x, y = 1, 2", "(= (, x y) (, 1 2))");
+   sv_test_parse_ok(t, "x = y = 2", "(= x (= y 2))");
+   sv_test_parse_ok(t, "world(1, 2, 3)", "(world 1 2 3)");
+   sv_test_parse_ok(t, "3.14", "3.14");
+   sv_test_parse_ok(t, "caf\xC3\xA9", "caf\xC3\xA9");
+   sv_test_parse_ok(t, "\"a\nb\"", "\"a\nb\"");
+}
+
+static inline void sv_test_parser_if(sv_testing_t* t)
+{
+   sv_test_parse_ok(t, "if x + 5 do y + 1 end", "(if (+ x 5) (do (+ y 1)))");
+   sv_test_parse_ok(t, "if x + 5 do y + 1 else z + 1 end",
+                    "(if (+ x 5) (do (+ y 1)) (do (+ z 1)))");
+   sv_test_parse_ok(t, "if x + 5 do 1 else z + 1 end", "(if (+ x 5) (do 1) (do (+ z 1)))");
+   sv_test_parse_ok(t, "if x + 5 do 1 else if x + 6 do z + 1 else k + 9 end",
+                    "(if (+ x 5) (do 1) (if (+ x 6) (do (+ z 1)) (do (+ k 9))))");
+}
+
+static inline void sv_test_parser_forms(sv_testing_t* t)
+{
+   sv_test_parse_ok(t, "for x in xs do x end", "(for (x xs) (do x))");
+   sv_test_parse_ok(t, "fun add(x, y) = x + y end", "(fun add (x y) (do (+ x y)))");
+   sv_test_parse_ok(t, "fun f[a](x) = a + x end", "(fun f (a) (x) (do (+ a x)))");
+   sv_test_parse_ok(t, "fun | even(n) = n | odd(n) = n end",
+                    "(fun (even (n) (do n)) (odd (n) (do n)))");
+   sv_test_parse_ok(t, "[1, 2, 3]", "(list 1 2 3)");
+   sv_test_parse_ok(t, "[]", "(list)");
+   sv_test_parse_ok(t, "list(1, 2)", "(list 1 2)");
+   sv_test_parse_ok(t, "f()", "(f)");
+   sv_test_parse_ok(t, "\"hi\" |> print()", "(|> \"hi\" (print))");
+}
+
+static inline void sv_test_parser_program_fn(sv_testing_t* t)
+{
+   ctx_t ctx = sv_test_parse_ctx();
+
+   scanner_t s = scanner_init(sv_str_init("1 + 1\n2 * 2"));
+   sexpr_t e = parser_program(&s, &ctx);
+   sv_test_run(t, ctx.err.error_code == 0);
+   sv_str_t formatted = sexpr_format(e, &ctx.a);
+   sv_test_run(t, sv_str_comp(formatted, sv_str_init("(do (+ 1 1) (* 2 2))")));
+   sv_str_deinit(&formatted, &ctx.a);
+   sexpr_free(&e, &ctx.a);
+
+   scanner_t empty = scanner_init(sv_str_init(""));
+   sexpr_t ep = parser_program(&empty, &ctx);
+   sv_test_run(t, ctx.err.error_code == 0);
+   sv_str_t ef = sexpr_format(ep, &ctx.a);
+   sv_test_run(t, sv_str_comp(ef, sv_str_init("(do)")));
+   sv_str_deinit(&ef, &ctx.a);
+   sexpr_free(&ep, &ctx.a);
+
+   scanner_t bad = scanner_init(sv_str_init("1 + 1\n)"));
+   sexpr_t eb = parser_program(&bad, &ctx);
+   sv_test_run(t, eb.tag == S_ATOM && eb.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, ctx.err.error_code == (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_str_deinit(&ctx.err.msg, &ctx.a);
+}
+
+static inline void sv_test_parser_errors(sv_testing_t* t)
+{
+   sv_test_parse_error(t, "", (int)PARSER_ERROR_EOF);
+   sv_test_parse_error(t, "(1 + 2", (int)PARSER_ERROR_EOF);
+   sv_test_parse_error(t, "if x do y", (int)PARSER_ERROR_EOF);
+   sv_test_parse_error(t, "fun f(x) = x", (int)PARSER_ERROR_EOF);
+   sv_test_parse_error(t, ")", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "* 3", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "1 2", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "for x xs do x end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun 1(x) = x end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "world(1, 2", (int)PARSER_ERROR_EOF);
+   sv_test_parse_error(t, "x[0", (int)PARSER_ERROR_EOF);
+   sv_test_parse_error(t, "class", (int)PARSER_ERROR_NOT_IMPLEMENTED);
+   sv_test_parse_error(t, "while", (int)PARSER_ERROR_NOT_IMPLEMENTED);
+   sv_test_parse_error(t, "@", (int)SCANNER_ERROR_UNKNOWN_TOKEN);
+   sv_test_parse_error(t, "1 + @", (int)SCANNER_ERROR_UNKNOWN_TOKEN);
+   sv_test_parse_error(t, "\"abc", (int)SCANNER_ERROR_UNCLOSED_STRING);
+   sv_test_parse_error(t, "\xFF", (int)SCANNER_ERROR_INVALID_UTF8);
+   sv_test_parse_error(t, "x\xC3", (int)SCANNER_ERROR_INVALID_UTF8);
+
+   ctx_t ctx = sv_test_parse_ctx();
+   scanner_t s = scanner_init(sv_str_init("if x do\ny end extra"));
+   sexpr_t e = parser_expr(&s, &ctx);
+   sv_test_run(t, ctx.err.error_code == 0);
+   sexpr_free(&e, &ctx.a);
+
+   scanner_t msg_s = scanner_init(sv_str_init("(1 + 2"));
+   sexpr_t msg_e = parser_expr(&msg_s, &ctx);
+   sv_test_run(t, msg_e.tag == S_ATOM && msg_e.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "')'"));
+   sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "line 1"));
+   sv_str_deinit(&ctx.err.msg, &ctx.a);
+
+   scanner_t line_s = scanner_init(sv_str_init("1 +\n@"));
+   sexpr_t line_e = parser_expr(&line_s, &ctx);
+   sv_test_run(t, line_e.tag == S_ATOM && line_e.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "line 2"));
+   sv_str_deinit(&ctx.err.msg, &ctx.a);
+}
+
+static inline void sv_test_parser_oom(sv_testing_t* t)
+{
+   ctx_t fail_ctx = {
+      .a = sv_test_fail_alloc,
+      .logger = sv_std_logger,
+      .err = { 0 },
+   };
+   scanner_t s = scanner_init(sv_str_init("world(1, 2, 3)"));
+   sexpr_t e = parser_expr(&s, &fail_ctx);
+   sv_test_run(t, e.tag == S_ATOM && e.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, fail_ctx.err.error_code == (int)PARSER_ERROR_OOM);
+
+   sv_test_countdown_t counter = { .remaining = 3 };
+   sv_allocator_t countdown = {
+      .vtable = &sv_test_countdown_vtable,
+      .self = &counter,
+   };
+   ctx_t cd_ctx = {
+      .a = countdown,
+      .logger = sv_std_logger,
+      .err = { 0 },
+   };
+   scanner_t s2 = scanner_init(sv_str_init("f(1 + 2, g(3), [4, 5], x.y |> h())"));
+   sexpr_t e2 = parser_expr(&s2, &cd_ctx);
+   sv_test_run(t, e2.tag == S_ATOM && e2.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, cd_ctx.err.error_code != 0);
+   sv_str_deinit(&cd_ctx.err.msg, &cd_ctx.a);
+}
+
+static inline void sv_test_parser(sv_testing_t* t)
+{
+   sv_test_parser_exprs(t);
+   sv_test_parser_if(t);
+   sv_test_parser_forms(t);
+   sv_test_parser_program_fn(t);
+   sv_test_parser_errors(t);
+   sv_test_parser_oom(t);
+}
+
+#endif

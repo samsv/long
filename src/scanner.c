@@ -117,13 +117,23 @@ static token_t slice_error_token(scanner_t* s, ctx_t* ctx, scanner_error_kind ki
                                  const char* what, int64_t start)
 {
     int64_t len = s->i - start;
-    if (len > 180)
+    const char* ellipsis = "";
+    if (len > 180) {
         len = 180;
+        ellipsis = "...";
+    }
 
     char msg[256];
-    snprintf(msg, sizeof(msg), "%s '%.*s' at line %" PRId64,
-             what, (int)len, &s->source.chars[start], s->line);
+    snprintf(msg, sizeof(msg), "%s '%.*s%s' at line %" PRId64,
+             what, (int)len, &s->source.chars[start], ellipsis, s->line);
     return error_token(s, ctx, kind, msg);
+}
+
+static token_t utf8_error_token(scanner_t* s, ctx_t* ctx)
+{
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Invalid UTF-8 at line %" PRId64, s->line);
+    return error_token(s, ctx, SCANNER_ERROR_INVALID_UTF8, msg);
 }
 
 static token_t scan_string(scanner_t* s, ctx_t* ctx)
@@ -154,9 +164,7 @@ static token_t scan_string(scanner_t* s, ctx_t* ctx)
             s->line++;
     }
 
-    char msg[64];
-    snprintf(msg, sizeof(msg), "Invalid UTF-8 at line %" PRId64, s->line);
-    return error_token(s, ctx, SCANNER_ERROR_INVALID_UTF8, msg);
+    return utf8_error_token(s, ctx);
 }
 
 static token_t scan_number(scanner_t* s, ctx_t* ctx, int64_t initial_i)
@@ -279,11 +287,8 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
     if (c == CODEPOINT_EOF)
         return token_of(s, TOKEN_EOF);
 
-    if (c == CODEPOINT_INVALID) {
-        char msg[64];
-        snprintf(msg, sizeof(msg), "Invalid UTF-8 at line %" PRId64, s->line);
-        return error_token(s, ctx, SCANNER_ERROR_INVALID_UTF8, msg);
-    }
+    if (c == CODEPOINT_INVALID)
+        return utf8_error_token(s, ctx);
 
     switch (c) {
         case '(': return operator_of(s, OPERATOR_LEFT_PAREN);
