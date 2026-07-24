@@ -24,7 +24,7 @@ int main(void) {
 
     /// loops ///
     // normal loop
-    for (size_t i = 0; i < vs.size; i++) {
+    for (int64_t i = 0; i < vs.size; i++) {
         printf("%d\n", vs.arr[i]);
     }
     // foreach
