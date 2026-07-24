@@ -2,6 +2,7 @@
 #define LONG_TOKEN_H
 
 #include "std/allocator.h"
+#include "std/string.h"
 
 typedef enum {
     TOKEN_OPERATOR,
@@ -63,16 +64,36 @@ typedef enum {
     KEYWORD_SELF,
 } keyword_kind;
 
+typedef enum {
+    LITERAL_STRING,
+    LITERAL_IDENTIFIER,
+    LITERAL_NUMBER,
+    LITERAL_NIL,
+    LITERAL_TRUE,
+    LITERAL_FALSE,
+} literal_kind;
+
+typedef struct {
+    literal_kind kind;
+    union {
+        sv_str_t str;
+        sv_str_t literal;
+        double number; // hopefully a float 64
+    };
+} literal_t;
+
 typedef struct {
     token_kind kind;
     union {
         operator_kind operator;
         special_fn_kind fn;
         keyword_kind keyword;
+        literal_t literal;
     };
 } token_t;
 
 
-const char* token_format(token_t, const sv_allocator_t*);
+bool token_format_builder(token_t, sv_str_builder*, const sv_allocator_t*);
+sv_str_t token_format(token_t, const sv_allocator_t*);
 
 #endif

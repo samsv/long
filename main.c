@@ -1,5 +1,6 @@
 #include <stdio.h>
 #define SV_IMPLEMENTATION
+#include "src/sexpr.h"
 #include "src/std/vector.h"
 #include "src/std/allocator_std.h"
 
@@ -8,7 +9,7 @@ sv_vec_def(int);
 
 int main(void) {
     /// append ///
-    sv_vec_t(int) vs = sv_vec_init(int, &sv_gpa);
+    sv_vec_t(int) vs = sv_vec_init(int);
 
     for (int i = 0; i < 10; i++) {
         int success; // pass NULL if you do not wish to check for the error code.

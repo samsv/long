@@ -2,7 +2,6 @@
 #define SV_STRING_H
 
 #include "vector.h"
-#include <string.h>
 #include <stdbool.h>
 
 typedef struct {
@@ -16,6 +15,15 @@ sv_vec_def(char);
 
 typedef sv_vec_t(char) sv_str_builder;
 
+/**
+ * Initializes a string builder.
+ */
+sv_str_builder sv_strb_init(void);
+
+/**
+ * Frees an errored string builder.
+ */
+void sv_strb_deinit(sv_str_builder* b, const sv_allocator_t* a);
 
 /**
  * Adds the char array to the builder. Returns the amount of chars written, -1 on error.
@@ -36,6 +44,11 @@ sv_str_t sv_strb_to_str(sv_str_builder*);
  * Creates a string view over the NULL-terminated array `c`.
  */
 sv_str_t sv_str_init(const char* c);
+
+/**
+ * Returns an error string.
+ */
+sv_str_t sv_str_err(void);
 
 /**
  * Frees the string character array. Must only be used when the string owns the char array.
@@ -103,6 +116,8 @@ sv_vec_t(sv_str_t) sv_str_split(const sv_str_t s, const char* c, const sv_alloca
 
 
 #ifdef SV_IMPLEMENTATION
+#include <string.h>
+
 static const sv_str_t sv_str_empty = {
    .chars = "",
    .size = 0,
@@ -112,6 +127,16 @@ static const sv_str_t sv_str_error = {
    .chars = NULL,
    .size = -1,
 };
+
+sv_str_builder sv_strb_init(void)
+{
+   return (sv_str_builder)sv_vec_init(char);
+}
+
+void sv_strb_deinit(sv_str_builder* b, const sv_allocator_t* a)
+{
+   sv_vec_deinit(b, a);
+}
 
 int sv_strb_add(sv_str_builder* b, const char* c, int64_t n, const sv_allocator_t* a)
 {
@@ -157,6 +182,11 @@ sv_str_t sv_str_init(const char* c)
       .chars = c,
       .size = len,
    };
+}
+
+sv_str_t sv_str_err(void)
+{
+   return sv_str_error;
 }
 
 void sv_str_deinit(sv_str_t* s, const sv_allocator_t* a)
@@ -277,7 +307,7 @@ sv_str_t sv_str_add(const sv_str_t s1, const sv_str_t s2, const sv_allocator_t* 
 
 sv_vec_t(sv_str_t) sv_str_split(const sv_str_t s, const char* c, const sv_allocator_t* a)
 {
-   sv_vec_t(sv_str_t) v = sv_vec_init(sv_str_t, a);
+   sv_vec_t(sv_str_t) v = sv_vec_init(sv_str_t);
    int64_t c_length = (int64_t)strlen(c);
    if (s.size < c_length || c_length == 0) {
       return v;
@@ -306,7 +336,7 @@ sv_vec_t(sv_str_t) sv_str_split(const sv_str_t s, const char* c, const sv_alloca
 
 error:
    sv_vec_deinit(&v, a);
-   return (sv_vec_t(sv_str_t))sv_vec_init(sv_str_t, a);
+   return (sv_vec_t(sv_str_t))sv_vec_init(sv_str_t);
 }
 
 #endif

@@ -14,7 +14,7 @@ static int sv_test_cmp_int(int a, int b)
 
 static inline void sv_test_vector_init(sv_testing_t* t)
 {
-   sv_vec_t(int) vs = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) vs = sv_vec_init(int);
    sv_test_run(t, vs.arr == NULL);
    sv_test_run(t, vs.size == 0);
    sv_test_run(t, vs.capacity == 0);
@@ -29,7 +29,7 @@ static inline void sv_test_vector_init(sv_testing_t* t)
 
 static inline void sv_test_vector_push(sv_testing_t* t)
 {
-   sv_vec_t(int) vs = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) vs = sv_vec_init(int);
 
    int ok = 0;
    int all = 1;
@@ -52,7 +52,7 @@ static inline void sv_test_vector_push(sv_testing_t* t)
 
 static inline void sv_test_vector_push_many(sv_testing_t* t)
 {
-   sv_vec_t(int) vs = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) vs = sv_vec_init(int);
    int xs[] = { 1, 2, 3, 4, 16, 15, 1021, 415 };
 
    int ok = 0;
@@ -79,7 +79,7 @@ static inline void sv_test_vector_push_many(sv_testing_t* t)
 
    sv_vec_deinit(&vs, &sv_gpa);
 
-   sv_vec_t(int) big = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) big = sv_vec_init(int);
    int many[100];
    for (int i = 0; i < 100; i++)
       many[i] = i;
@@ -109,7 +109,7 @@ static inline void sv_test_vector_boundary(sv_testing_t* t)
 
 static inline void sv_test_vector_remove(sv_testing_t* t)
 {
-   sv_vec_t(int) vs = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) vs = sv_vec_init(int);
    int ok = 0;
    for (int i = 0; i < 8; i++)
       sv_vec_push(&vs, i, &ok, &sv_gpa);
@@ -141,7 +141,7 @@ static inline void sv_test_vector_remove(sv_testing_t* t)
 
    sv_vec_deinit(&vs, &sv_gpa);
 
-   sv_vec_t(int) ws = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) ws = sv_vec_init(int);
    int xs[] = { 10, 20, 30, 40, 50 };
    sv_vec_push_many(&ws, xs, 5, &ok, &sv_gpa);
 
@@ -172,7 +172,7 @@ static inline void sv_test_vector_remove(sv_testing_t* t)
 
 static inline void sv_test_vector_empty_and_reuse(sv_testing_t* t)
 {
-   sv_vec_t(int) vs = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) vs = sv_vec_init(int);
    int ok = 0;
    for (int i = 0; i < 4; i++)
       sv_vec_push(&vs, i, &ok, &sv_gpa);
@@ -206,7 +206,7 @@ static inline void sv_test_vector_empty_and_reuse(sv_testing_t* t)
 
 static inline void sv_test_vector_search(sv_testing_t* t)
 {
-   sv_vec_t(int) vs = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) vs = sv_vec_init(int);
    int ok = 0;
    int xs[] = { 5, 8, 13, 8, 21 };
    sv_vec_push_many(&vs, xs, 5, &ok, &sv_gpa);
@@ -238,7 +238,7 @@ static inline void sv_test_vector_search(sv_testing_t* t)
 
    sv_vec_deinit(&vs, &sv_gpa);
 
-   sv_vec_t(int) empty = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) empty = sv_vec_init(int);
    sv_vec_index_of_auto(&empty, 1, &idx);
    sv_test_run(t, idx == -1);
    sv_vec_is_in_auto(&empty, 1, &found);
@@ -250,7 +250,7 @@ static inline void sv_test_vector_search(sv_testing_t* t)
 
 static inline void sv_test_vector_foreach(sv_testing_t* t)
 {
-   sv_vec_t(int) vs = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) vs = sv_vec_init(int);
    int ok = 0;
    for (int i = 1; i <= 5; i++)
       sv_vec_push(&vs, i, &ok, &sv_gpa);
@@ -262,7 +262,7 @@ static inline void sv_test_vector_foreach(sv_testing_t* t)
    sv_test_run(t, sum == 15);
    sv_vec_deinit(&vs, &sv_gpa);
 
-   sv_vec_t(int) empty = sv_vec_init(int, &sv_gpa);
+   sv_vec_t(int) empty = sv_vec_init(int);
    int64_t visits = 0;
    sv_vec_foreach(int, el, &empty) {
       (void)el;

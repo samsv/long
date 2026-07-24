@@ -23,6 +23,6 @@ typedef struct sexpr_t {
 } sexpr_t;
 
 void sexpr_free(sexpr_t*, const sv_allocator_t*);
-const char* sexpr_format(sexpr_t, const sv_allocator_t*);
+sv_str_t sexpr_format(sexpr_t, const sv_allocator_t*);
 
 #endif

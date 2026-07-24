@@ -224,7 +224,7 @@ static inline void sv_test_string_split(sv_testing_t* t)
 
 static inline void sv_test_string_builder(sv_testing_t* t)
 {
-   sv_str_builder b = sv_vec_init(char, &sv_gpa);
+   sv_str_builder b = sv_vec_init(char);
    sv_test_run(t, sv_strb_add_char(&b, 'h', &sv_gpa) == 1);
    sv_test_run(t, sv_strb_add(&b, "ello", 4, &sv_gpa) == 4);
 
@@ -243,7 +243,7 @@ static inline void sv_test_string_builder(sv_testing_t* t)
    sv_str_deinit(&s, &sv_gpa);
    sv_str_deinit(&s2, &sv_gpa);
 
-   sv_str_builder e = sv_vec_init(char, &sv_gpa);
+   sv_str_builder e = sv_vec_init(char);
    sv_str_t es = sv_strb_to_str(&e);
    sv_test_run(t, es.size == 0);
    sv_vec_deinit(&e, &sv_gpa);
@@ -264,7 +264,7 @@ static inline void sv_test_string_errors(sv_testing_t* t)
 
    sv_test_run(t, sv_str_to_c_str(src, &sv_test_fail_alloc) == NULL);
 
-   sv_str_builder b = sv_vec_init(char, &sv_test_fail_alloc);
+   sv_str_builder b = sv_vec_init(char);
    sv_test_run(t, sv_strb_add_char(&b, 'x', &sv_test_fail_alloc) == -1);
    sv_test_run(t, sv_strb_add(&b, "xy", 2, &sv_test_fail_alloc) == -1);
    sv_test_run(t, b.size == 0);
