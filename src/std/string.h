@@ -102,6 +102,7 @@ sv_str_t sv_str_add(const sv_str_t s1, const sv_str_t s2, const sv_allocator_t* 
 sv_vec_t(sv_str_t) sv_str_split(const sv_str_t s, const char* c, const sv_allocator_t* a);
 
 
+#ifdef SV_IMPLEMENTATION
 static const sv_str_t sv_str_empty = {
    .chars = "",
    .size = 0,
@@ -308,4 +309,5 @@ error:
    return (sv_vec_t(sv_str_t))sv_vec_init(sv_str_t, a);
 }
 
+#endif
 #endif
