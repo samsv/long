@@ -6,7 +6,7 @@
 
 extern const sv_allocator_t sv_gpa;
 
-//#ifdef SV_IMPLEMENTATION
+#ifdef SV_IMPLEMENTATION
 #include <stdlib.h>
 #include <string.h>
 void* sv_malloc_gpa(void* self, size_t size)
@@ -39,4 +39,4 @@ const sv_allocator_t sv_gpa = {
 };
 
 #endif
-//#endif
+#endif

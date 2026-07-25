@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "src/parser.h"
 #include "src/std/allocator_std.h"
+#include "src/std/rc.h"
 
 static const char* sample =
     "fun add(x, y) =\n"
@@ -11,6 +12,23 @@ static const char* sample =
     "add(1, 2.5) |> print()\n"
     "nums = [1, 2, 3]\n"
     "msg = \"hello\nworld\"\n";
+
+sv_rc_def(sv_str_t);
+
+void f(void)
+{
+   char* c = sv_malloc(&sv_gpa, sizeof("hello"));
+   memcpy(c, "hello", sizeof("hello"));
+   sv_str_t s = sv_str_init(c);
+   sv_rc_t(sv_str_t) rc = rc_init(sv_str_t, s, sv_str_deinit, &sv_gpa);
+   sv_rc_t(sv_str_t) rc2 = rc_borrow(rc);
+
+   sv_str_t* ms = rc_get(rc);
+   printf("%.*s", (int)ms->size, ms->chars);
+
+   rc_deinit(&rc, &sv_gpa);
+   rc_deinit(&rc2, &sv_gpa);
+}
 
 int main(void)
 {
@@ -36,5 +54,7 @@ int main(void)
 
     printf("%.*s\n", (int)text.size, text.chars);
     sv_str_deinit(&text, &ctx.a);
+
+    f();
     return 0;
 }
