@@ -1,5 +1,5 @@
-#ifndef SV_PARSER_H
-#define SV_PARSER_H
+#ifndef LONG_PARSER_H
+#define LONG_PARSER_H
 
 #include "ctx.h"
 #include "scanner.h"

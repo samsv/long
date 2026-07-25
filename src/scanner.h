@@ -1,5 +1,5 @@
-#ifndef SV_SCANNER_H
-#define SV_SCANNER_H
+#ifndef LONG_SCANNER_H
+#define LONG_SCANNER_H
 
 #include "ctx.h"
 #include "token.h"

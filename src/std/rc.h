@@ -10,28 +10,32 @@
 #define sv_rc_cell_tt(type) cell_ ## type
 #define sv_rc_cell_t(type) sv_rc_cell_tt(type)
 
-#define sv_rc_def(type) typedef struct {                                                                      \
+#define sv_rc_cell_def(type) typedef struct sv_rc_cell_t(type) {                                              \
    type value;                                                                                                \
    int64_t count;                                                                                             \
    void(*free_fn)(type*, const sv_allocator_t*);                                                              \
-} sv_rc_cell_t(type);                                                                                         \
-                                                                                                              \
-typedef struct {                                                                                              \
+} sv_rc_cell_t(type)
+
+#define sv_rc_wrapper_def(type) typedef struct sv_rc_t(type) {                                                \
    sv_rc_cell_t(type)* cell;                                                                                  \
 } sv_rc_t(type)
 
-#define rc_init(type, v, free_func, a) {                                                                      \
-   .cell = rc_alloc_cell(                                                                                     \
+#define sv_rc_def(type)                                                                                       \
+sv_rc_cell_def(type);                                                                                         \
+sv_rc_wrapper_def(type)
+
+#define sv_rc_init(type, v, free_func, a) {                                                                   \
+   .cell = sv_rc_alloc_cell(                                                                                  \
       &(sv_rc_cell_t(type)){.value = v, .count = 1, .free_fn = free_func},                                    \
       sizeof(sv_rc_cell_t(type)),                                                                             \
       (a)                                                                                                     \
    )                                                                                                          \
 }
 
-#define rc_borrow(rc) ((rc).cell != NULL ? (rc).cell->count++ : 0, (rc))
-#define rc_get(rc) ((rc).cell != NULL ? &(rc).cell->value : NULL)
+#define sv_rc_borrow(rc) ((rc).cell != NULL ? (rc).cell->count++ : 0, (rc))
+#define sv_rc_get(rc) ((rc).cell != NULL ? &(rc).cell->value : NULL)
 
-#define rc_deinit(rc, a) do {                                                                                 \
+#define sv_rc_deinit(rc, a) do {                                                                                 \
    if ((rc)->cell == NULL) break;                                                                             \
    (rc)->cell->count--;                                                                                       \
    if ((rc)->cell->count == 0) {                                                                              \
@@ -41,12 +45,12 @@ typedef struct {                                                                
    (rc)->cell = NULL;                                                                                         \
 } while (0)
 
-void* rc_alloc_cell(void* src, size_t size, const sv_allocator_t* a);
+void* sv_rc_alloc_cell(void* src, size_t size, const sv_allocator_t* a);
 
 #ifdef SV_IMPLEMENTATION
 #include <string.h>
 
-void* rc_alloc_cell(void* src, size_t size, const sv_allocator_t* a)
+void* sv_rc_alloc_cell(void* src, size_t size, const sv_allocator_t* a)
 {
    void* dst = sv_malloc(a, size);
    if (dst == NULL)

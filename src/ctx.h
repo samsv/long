@@ -1,5 +1,5 @@
-#ifndef SV_CTX_H
-#define SV_CTX_H
+#ifndef LONG_CTX_H
+#define LONG_CTX_H
 
 #include "error.h"
 #include "std/logger.h"

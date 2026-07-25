@@ -20,14 +20,14 @@ void f(void)
    char* c = sv_malloc(&sv_gpa, sizeof("hello"));
    memcpy(c, "hello", sizeof("hello"));
    sv_str_t s = sv_str_init(c);
-   sv_rc_t(sv_str_t) rc = rc_init(sv_str_t, s, sv_str_deinit, &sv_gpa);
-   sv_rc_t(sv_str_t) rc2 = rc_borrow(rc);
+   sv_rc_t(sv_str_t) rc = sv_rc_init(sv_str_t, s, sv_str_deinit, &sv_gpa);
+   sv_rc_t(sv_str_t) rc2 = sv_rc_borrow(rc);
 
-   sv_str_t* ms = rc_get(rc);
+   sv_str_t* ms = sv_rc_get(rc);
    printf("%.*s", (int)ms->size, ms->chars);
 
-   rc_deinit(&rc, &sv_gpa);
-   rc_deinit(&rc2, &sv_gpa);
+   sv_rc_deinit(&rc, &sv_gpa);
+   sv_rc_deinit(&rc2, &sv_gpa);
 }
 
 int main(void)
