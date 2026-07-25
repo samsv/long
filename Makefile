@@ -8,7 +8,7 @@ RELEASE_FLAGS = $(STD) $(WARN) -O3
 TEST_FLAGS = $(STD) $(WARN) -O0 -g -fno-omit-frame-pointer $(SAN)
 DEPFLAGS = -MMD -MP
 
-LIB_SRC = $(wildcard src/*.c)
+LIB_SRC = $(wildcard src/*.c) $(wildcard src/obj/*.c)
 TEST_SRC = $(wildcard tests/*.c)
 
 OBJ = $(LIB_SRC:src/%.c=build/release/%.o) build/release/main.o
@@ -50,6 +50,6 @@ build/test/%.o: src/%.c | build/test
 	$(CC) $(TEST_FLAGS) $(DEPFLAGS) -c $< -o $@
 
 build/release build/test:
-	mkdir -p $@
+	mkdir -p $@ $@/obj
 
 -include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d)

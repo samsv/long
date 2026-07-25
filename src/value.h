@@ -23,4 +23,7 @@ typedef struct value_t {
     };
 } value_t;
 
+void value_free(value_t*, const sv_allocator_t*);
+value_t value_borrow(value_t);
+
 #endif

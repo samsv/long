@@ -13,9 +13,10 @@ typedef sv_rc_t(node_t) list_t;
 
 sv_vec_def(value_t);
 typedef sv_vec_t(value_t) bucket_t;
+sv_rc_def(bucket_t);
 
 typedef struct node_t {
-    bucket_t bucket;
+    sv_rc_t(bucket_t) bucket;
     int64_t start;
     int64_t len;
     list_t tail;
