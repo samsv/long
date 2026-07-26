@@ -254,7 +254,7 @@ static inline void sv_test_list(sv_testing_t* t)
 {
    sv_test_list_init_get(t);
    sv_test_list_persistence(t);
-   //sv_test_list_add(t);
+   sv_test_list_add(t);
    sv_test_list_modify(t);
    sv_test_list_head_tail(t);
    sv_test_list_values(t);

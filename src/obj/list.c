@@ -233,6 +233,19 @@ list_t ll_prepend_arr(list_t list, const value_t* vs, int64_t n, const sv_alloca
     return new_list;
 }
 
+list_t ll_add(list_t left, list_t right, const sv_allocator_t* a)
+{
+    node_t node = left.cell->value;
+    if (node.len == 0)
+        return sv_rc_borrow(right);
+    if (right.cell->value.len == 0)
+        return sv_rc_borrow(left);
+
+    list_t new_tail = ll_add(node.tail, right, a);
+    TRY_NOT_NULL(new_tail.cell);
+    return init_from_bucket(node.bucket, node.start, node.len, new_tail, a);
+}
+
 #define SET_HEAD(...) do { head = __VA_ARGS__; if (head.cell == NULL) goto error; } while (0)
 #define RETURN_RECURSIVE(function) do {\
     if (node.tail.cell->value.len == 0) return ERR_LIST; \
