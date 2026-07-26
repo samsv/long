@@ -30,6 +30,7 @@ sv_rc_cell_def(node_t);
 list_t ll_init(const value_t*, int64_t, const sv_allocator_t*);
 /**
  * Initializes a new list from the value vector. Takes ownership from the vector.
+ * Vec values are in reverse order.
  */
 list_t ll_init_from_vec(sv_vec_t(value_t), const sv_allocator_t*);
 /**
@@ -44,7 +45,7 @@ void ll_deinit(list_t*, const sv_allocator_t*);
 /**
  * Gets the element at position.
  */
-value_t ll_get(list_t, int64_t);
+const value_t* ll_get(list_t, int64_t);
 
 /**
  * Prepends element to list.
