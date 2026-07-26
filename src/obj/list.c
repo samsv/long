@@ -183,20 +183,22 @@ list_t ll_prepend(list_t list, value_t v, const sv_allocator_t* a)
 }
 
 #define SET_HEAD(...) do { head = __VA_ARGS__; if (head.cell == NULL) goto error; } while (0)
+#define RETURN_RECURSIVE(function) do {\
+    if (node.tail.cell->value.len == 0) return ERR_LIST; \
+    list_t new_tail = function(node.tail, v, i - node.len, a); \
+    TRY_NOT_NULL(new_tail.cell); \
+    return init_from_bucket(node.bucket, node.start, node.len, new_tail, a); \
+} while (0)
+#define TRY_POSITIVE(i) if (i < 0) return ERR_LIST
 list_t ll_insert(list_t list, value_t v, int64_t i, const sv_allocator_t* a)
 {
+    TRY_POSITIVE(i);
     if (i == 0)
         return ll_prepend(list, v, a);
-    if (i < 0)
-        return ERR_LIST;
 
     node_t node = list.cell->value;
-    if (i > node.len) {
-        if (node.tail.cell->value.len == 0) return ERR_LIST;
-        list_t new_tail = ll_insert(node.tail, v, i - node.len, a);
-        TRY_NOT_NULL(new_tail.cell);
-        return init_from_bucket(node.bucket, node.start, node.len, new_tail, a);
-    }
+    if (i > node.len)
+        RETURN_RECURSIVE(ll_insert);
 
     list_t head = sv_rc_borrow(node.tail);
 
@@ -213,17 +215,12 @@ error:
 
 list_t ll_update(list_t list, value_t v, int64_t i, const sv_allocator_t* a)
 {
-    if (i < 0)
-        return ERR_LIST;
+    TRY_POSITIVE(i);
 
     node_t node = list.cell->value;
 
-    if (i >= node.len) {
-        if (node.tail.cell->value.len == 0) return ERR_LIST;
-        list_t new_tail = ll_update(node.tail, v, i - node.len, a);
-        TRY_NOT_NULL(new_tail.cell);
-        return init_from_bucket(node.bucket, node.start, node.len, new_tail, a);
-    }
+    if (i >= node.len)
+        RETURN_RECURSIVE(ll_update);
 
     list_t head = sv_rc_borrow(node.tail);
 
@@ -239,20 +236,16 @@ error:
     return ERR_LIST;
 }
 
-list_t ll_delete_at(list_t list, int64_t i, const sv_allocator_t* a)
+list_t ll_delete_at_impl(list_t list, void* v, int64_t i, const sv_allocator_t* a)
 {
+    TRY_POSITIVE(i);
+
     node_t node = list.cell->value;
     if (i == 0)
         return node.len > 0 ? ll_tail(list, a) : ERR_LIST;
-    if (i < 0)
-        return ERR_LIST;
 
-    if (i >= node.len) {
-        if (node.tail.cell->value.len == 0) return ERR_LIST;
-        list_t new_tail = ll_delete_at(node.tail, i - node.len, a);
-        TRY_NOT_NULL(new_tail.cell);
-        return init_from_bucket(node.bucket, node.start, node.len, new_tail, a);
-    }
+    if (i >= node.len)
+        RETURN_RECURSIVE(ll_delete_at_impl);
 
     list_t head = sv_rc_borrow(node.tail);
 
@@ -265,6 +258,12 @@ error:
     ll_deinit(&head, a);
     return ERR_LIST;
 }
+
+inline list_t ll_delete_at(list_t list, int64_t i, const sv_allocator_t* a)
+{
+    return ll_delete_at_impl(list, NULL, i, a);
+}
+
 #undef SET_HEAD
 
 static int64_t ll_count_rec(list_t l, int64_t acc)
