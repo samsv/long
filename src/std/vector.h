@@ -122,7 +122,7 @@
         (vec)->element_size, amount, allocator);                                                              \
     if (loc == NULL) { if (vec_var_line(_vec_success) )*vec_var_line(_vec_success) = 0; break; }              \
     int64_t idx = (loc - (char*)(vec)->arr) / (vec)->element_size;                                            \
-    for (int64_t i = idx; i < (vec)->size; i++) (vec)->arr[i] = values[i - idx];                              \
+    for (int64_t i = idx; i < (vec)->size; i++) (vec)->arr[i] = (values)[i - idx];                            \
     if (vec_var_line(_vec_success)) *vec_var_line(_vec_success) = 1;                                          \
 } while (0)
 

@@ -30,9 +30,14 @@ sv_rc_cell_def(node_t);
 list_t ll_init(const value_t*, int64_t, const sv_allocator_t*);
 /**
  * Initializes a new list from the value vector. Takes ownership from the vector.
- * Vec values are in reverse order.
+ * Vec values are reversed before inserted.
  */
 list_t ll_init_from_vec(sv_vec_t(value_t), const sv_allocator_t*);
+/**
+ * Initializes a new list from the value vector in reverse order. Takes ownership from the vector.
+ * Due to the list's memory layout, this is more efficient than ll_init_from_vec.
+ */
+list_t ll_init_from_vec_rev(sv_vec_t(value_t), const sv_allocator_t*);
 /**
  * Returns the empty list.
  */
@@ -80,7 +85,7 @@ const value_t* ll_head(list_t);
 /**
  * Returns the list tail.
  */
-list_t ll_tail(list_t);
+list_t ll_tail(list_t, const sv_allocator_t*);
 
 /**
  * Returns the number of elements in the list.

@@ -46,8 +46,8 @@ static inline void sv_test_list_init_get(sv_testing_t* t)
    sv_vec_push(&vec, sv_test_list_num(8), &success, &sv_gpa);
    list_t from_vec = ll_init_from_vec(vec, &sv_gpa);
    sv_test_run(t, ll_count(from_vec) == 2);
-   sv_test_run(t, ll_get(from_vec, 1)->number == 7);
-   sv_test_run(t, ll_get(from_vec, 0)->number == 8);
+   sv_test_run(t, ll_get(from_vec, 0)->number == 7);
+   sv_test_run(t, ll_get(from_vec, 1)->number == 8);
    ll_deinit(&from_vec, &sv_gpa);
 
    list_t empty = ll_empty();
@@ -86,6 +86,7 @@ static inline void sv_test_list_persistence(sv_testing_t* t)
    ll_deinit(&base, &sv_gpa);
    ll_deinit(&one, &sv_gpa);
 
+   /**
    value_t arr[] = { sv_test_list_num(1), sv_test_list_num(2) };
    value_t tail_vals[] = { sv_test_list_num(3) };
    list_t rest = ll_init(tail_vals, 1, &sv_gpa);
@@ -97,6 +98,7 @@ static inline void sv_test_list_persistence(sv_testing_t* t)
    sv_test_run(t, ll_count(rest) == 1);
    ll_deinit(&rest, &sv_gpa);
    ll_deinit(&joined, &sv_gpa);
+   */
 }
 
 static inline void sv_test_list_add(sv_testing_t* t)
@@ -172,16 +174,16 @@ static inline void sv_test_list_head_tail(sv_testing_t* t)
    value_t vals[] = { sv_test_list_num(1), sv_test_list_num(2), sv_test_list_num(3) };
    list_t l = ll_init(vals, 3, &sv_gpa);
 
-   list_t rest = ll_tail(l);
+   list_t rest = ll_tail(l, &sv_gpa);
    sv_test_run(t, ll_count(rest) == 2);
    sv_test_run(t, ll_head(rest)->number == 2);
    sv_test_run(t, ll_count(l) == 3);
 
-   list_t rest2 = ll_tail(rest);
+   list_t rest2 = ll_tail(rest, &sv_gpa);
    sv_test_run(t, ll_count(rest2) == 1);
    sv_test_run(t, ll_head(rest2)->number == 3);
 
-   list_t none = ll_tail(rest2);
+   list_t none = ll_tail(rest2, &sv_gpa);
    sv_test_run(t, none.cell != NULL);
    sv_test_run(t, ll_count(none) == 0);
    sv_test_run(t, ll_head(none) == NULL);
@@ -253,14 +255,12 @@ static inline void sv_test_list_oom(sv_testing_t* t)
 static inline void sv_test_list(sv_testing_t* t)
 {
    sv_test_list_init_get(t);
-   /**
    sv_test_list_persistence(t);
-   sv_test_list_add(t);
+   //sv_test_list_add(t);
    sv_test_list_modify(t);
    sv_test_list_head_tail(t);
    sv_test_list_values(t);
    sv_test_list_oom(t);
-   */
 }
 
 #endif
