@@ -86,7 +86,6 @@ static inline void sv_test_list_persistence(sv_testing_t* t)
    ll_deinit(&base, &sv_gpa);
    ll_deinit(&one, &sv_gpa);
 
-   /**
    value_t arr[] = { sv_test_list_num(1), sv_test_list_num(2) };
    value_t tail_vals[] = { sv_test_list_num(3) };
    list_t rest = ll_init(tail_vals, 1, &sv_gpa);
@@ -98,7 +97,6 @@ static inline void sv_test_list_persistence(sv_testing_t* t)
    sv_test_run(t, ll_count(rest) == 1);
    ll_deinit(&rest, &sv_gpa);
    ll_deinit(&joined, &sv_gpa);
-   */
 }
 
 static inline void sv_test_list_add(sv_testing_t* t)

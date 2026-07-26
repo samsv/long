@@ -60,7 +60,7 @@
  * Defines a new vector of type `type`. Must be called only once before using
  * the vector.
  */
-#define sv_vec_def(type) typedef struct {                                                                     \
+#define sv_vec_def(type) typedef struct sv_vec_t(type) {                                                      \
     int64_t size;                                                                                             \
     int64_t capacity;                                                                                         \
     type* arr;                                                                                                \
@@ -124,6 +124,21 @@
     int64_t idx = (loc - (char*)(vec)->arr) / (vec)->element_size;                                            \
     for (int64_t i = idx; i < (vec)->size; i++) (vec)->arr[i] = (values)[i - idx];                            \
     if (vec_var_line(_vec_success)) *vec_var_line(_vec_success) = 1;                                          \
+} while (0)
+
+/**
+ * Grows the vector capacity.
+ */
+#define sv_vec_grow_cap(vec, new_cap, success, allocator) do {                                                \
+    int* vec_var_line(_vec_success) = (success);                                                              \
+    if ((vec)->capacity >= (new_cap)) {                                                                       \
+        if (vec_var_line(_vec_success)) *vec_var_line(_vec_success) = 1;                                      \
+        break;                                                                                                \
+    }                                                                                                         \
+    void* vec_var_line(data) = sv_vec_realloc(                                                                \
+        (void*)&(vec)->arr, &(vec)->capacity,                                                                 \
+        (new_cap), (vec)->element_size, allocator);                                                           \
+    if (vec_var_line(_vec_success)) { *vec_var_line(_vec_success) = vec_var_line(data) != NULL; }             \
 } while (0)
 
 /**

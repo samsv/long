@@ -4,6 +4,7 @@
 #define COPY_THRESH 32
 #define ERR_LIST (list_t){0}
 #define TRY_NOT_NULL(val) if ((val) == NULL) return ERR_LIST
+#define TRY_POSITIVE(i) if (i < 0) return ERR_LIST
 
 static void bucket_free(bucket_t* b, const sv_allocator_t* a)
 {
@@ -39,7 +40,10 @@ list_t ll_init(const value_t* vs, int64_t len, const sv_allocator_t* a)
 
 list_t ll_init_from_vec_rev(sv_vec_t(value_t) vec, const sv_allocator_t* a)
 {
-    if (vec.size == 0) return ll_empty();
+    if (vec.size == 0) {
+        sv_vec_deinit(&vec, a);
+        return ll_empty();
+    }
 
     sv_rc_t(bucket_t) bucket = sv_rc_init(bucket_t, vec, bucket_free, a);
     if (bucket.cell == NULL) {
@@ -114,9 +118,8 @@ const value_t* ll_head(list_t l)
         : NULL;
 }
 
-static list_t init_with_tail(list_t tail, value_t v, const sv_allocator_t* a) {
-    const value_t vs[] = {v};
-    list_t list = ll_init(vs, 1, a);
+static list_t init_with_tail(list_t tail, const value_t* vs, int64_t n, const sv_allocator_t* a) {
+    list_t list = ll_init(vs, n, a);
     if (list.cell == NULL) {
         ll_deinit(&tail, a);
         return ERR_LIST;
@@ -146,14 +149,14 @@ list_t ll_prepend(list_t list, value_t v, const sv_allocator_t* a)
 {
     node_t node = list.cell->value;
     if (node.len == 0)
-        return init_with_tail(sv_rc_borrow(list), v, a);
+        return init_with_tail(sv_rc_borrow(list), &v, 1, a);
 
     bucket_t* bucket = &node.bucket.cell->value;
 
     if (bucket->size != node.start + node.len) {
         // data has already been added to the bucket
         if (COPY_THRESH <= node.len)
-            return init_with_tail(sv_rc_borrow(list), v, a);
+            return init_with_tail(sv_rc_borrow(list), &v, 1, a);
 
         // allocate new bucket with old elements
         bucket_t new_bucket = sv_vec_init_capacity(value_t, node.len + 1, a);
@@ -168,17 +171,65 @@ list_t ll_prepend(list_t list, value_t v, const sv_allocator_t* a)
         return new_list;
     }
 
+    list_t new_list = init_from_bucket(node.bucket, node.start, node.len + 1, sv_rc_borrow(node.tail), a);
+    TRY_NOT_NULL(new_list.cell);
+
     int success = 0;
     sv_vec_push(bucket, value_borrow(v), &success, a);
-    if (!success)
+    if (!success) {
+        ll_deinit(&new_list, a);
        return ERR_LIST;
-
-    list_t new_list = init_from_bucket(node.bucket, node.start, node.len + 1, sv_rc_borrow(node.tail), a);
-    if (new_list.cell == NULL) {
-        value_free(&bucket->arr[bucket->size - 1], a);
-        sv_vec_remove_swap(bucket, bucket->size - 1, a);
-        return ERR_LIST;
     }
+
+    return new_list;
+}
+
+list_t ll_prepend_arr(list_t list, const value_t* vs, int64_t n, const sv_allocator_t* a)
+{
+    TRY_POSITIVE(n);
+    if (n == 0)
+        return sv_rc_borrow(list);
+
+    node_t node = list.cell->value;
+    if (node.len == 0)
+        return ll_init(vs, n, a);
+
+    bucket_t* bucket = &node.bucket.cell->value;
+    if (bucket->size != node.start + node.len) {
+        // data has already been added to the bucket
+        if (COPY_THRESH <= node.len)
+            return init_with_tail(sv_rc_borrow(list), vs, n, a);
+
+        // allocate new bucket with old elements
+        bucket_t new_bucket = sv_vec_init_capacity(value_t, node.len + n, a);
+        TRY_NOT_NULL(new_bucket.arr);
+        for (int64_t i = 0; i < node.len; i++)
+            new_bucket.arr[i] = value_borrow(bucket->arr[node.start + i]);
+        for (int64_t i = 0; i < n; i++)
+            new_bucket.arr[node.len + i] = value_borrow(vs[n - i - 1]);
+        new_bucket.size = node.len + n;
+
+        list_t new_list = ll_init_from_vec_rev(new_bucket, a);
+        TRY_NOT_NULL(new_list.cell);
+        new_list.cell->value.tail = sv_rc_borrow(node.tail);
+        return new_list;
+    }
+
+    list_t new_list = init_from_bucket(node.bucket, node.start, node.len + n, sv_rc_borrow(node.tail), a);
+    TRY_NOT_NULL(new_list.cell);
+
+    int success = 0;
+    int64_t new_size = bucket->size + n;
+    sv_vec_grow_cap(bucket, new_size, &success, a);
+    if (!success) {
+        ll_deinit(&new_list, a);
+       return ERR_LIST;
+    }
+
+    for (int64_t i = 0; i < n; i++)
+        bucket->arr[bucket->size + i] = value_borrow(vs[n - i - 1]);
+    bucket->size = new_size;
+
     return new_list;
 }
 
@@ -189,7 +240,6 @@ list_t ll_prepend(list_t list, value_t v, const sv_allocator_t* a)
     TRY_NOT_NULL(new_tail.cell); \
     return init_from_bucket(node.bucket, node.start, node.len, new_tail, a); \
 } while (0)
-#define TRY_POSITIVE(i) if (i < 0) return ERR_LIST
 list_t ll_insert(list_t list, value_t v, int64_t i, const sv_allocator_t* a)
 {
     TRY_POSITIVE(i);
@@ -204,7 +254,7 @@ list_t ll_insert(list_t list, value_t v, int64_t i, const sv_allocator_t* a)
 
     if (i < node.len)
         SET_HEAD(init_from_bucket(node.bucket, node.start, node.len - i, head, a));
-    SET_HEAD(init_with_tail(head, v, a));
+    SET_HEAD(init_with_tail(head, &v, 1, a));
     SET_HEAD(init_from_bucket(node.bucket, node.start + node.len - i, i, head, a));
     return head;
 
@@ -226,7 +276,7 @@ list_t ll_update(list_t list, value_t v, int64_t i, const sv_allocator_t* a)
 
     if (i < node.len - 1)
         SET_HEAD(init_from_bucket(node.bucket, node.start, node.len - i - 1, head, a));
-    SET_HEAD(init_with_tail(head, v, a));
+    SET_HEAD(init_with_tail(head, &v, 1, a));
     if (i > 0)
         SET_HEAD(init_from_bucket(node.bucket, node.start + node.len - i, i, head, a));
     return head;
@@ -236,7 +286,7 @@ error:
     return ERR_LIST;
 }
 
-list_t ll_delete_at_impl(list_t list, void* v, int64_t i, const sv_allocator_t* a)
+static list_t ll_delete_at_impl(list_t list, void* v, int64_t i, const sv_allocator_t* a)
 {
     TRY_POSITIVE(i);
 
@@ -259,7 +309,7 @@ error:
     return ERR_LIST;
 }
 
-inline list_t ll_delete_at(list_t list, int64_t i, const sv_allocator_t* a)
+list_t ll_delete_at(list_t list, int64_t i, const sv_allocator_t* a)
 {
     return ll_delete_at_impl(list, NULL, i, a);
 }
@@ -279,7 +329,7 @@ list_t ll_tail(list_t list, const sv_allocator_t* a)
     node_t node = list.cell->value;
     return node.len > 1 ?
         init_from_bucket(node.bucket, node.start, node.len - 1, sv_rc_borrow(node.tail), a)
-        : node.tail;
+        : sv_rc_borrow(node.tail);
 }
 
 int64_t ll_count(list_t l)
