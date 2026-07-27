@@ -22,3 +22,16 @@ value_t value_borrow(value_t v)
             return v;
     }
 }
+
+bool value_eql(value_t x, value_t y)
+{
+    if (x.kind != y.kind)
+        return false;
+    switch (x.kind) {
+        case VALUE_NUMBER: return x.number == y.number;
+        case VALUE_NIL: return true;
+        case VALUE_BOOL: return x.boolean == y.boolean;
+        case VALUE_OBJ: return x.obj.cell == y.obj.cell;
+    }
+    return false;
+}

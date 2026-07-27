@@ -2,6 +2,7 @@
 #define SV_ERROR_H
 
 #include "std/string.h"
+#include "std/option.h"
 
 /**
  * A custom default error type to store error information.
@@ -11,6 +12,8 @@ typedef struct {
     sv_str_t msg;
     void* payload; // Optional payload to give more information about the error.
 } error_t;
+
+sv_opt_def(error_t);
 
 /**
  * A 0 initilized error.

@@ -95,6 +95,12 @@
  */
 #define sv_vec_at(vec, i) (vec).arr[i]
 /**
+ * Returns the last element of the array.
+ */
+#define sv_vec_last(vec) (vec).arr[(vec).size - 1]
+
+#define sv_vec_pop(vec) ((vec).size -= 1, (vec).arr[(vec).size])
+/**
  * Sets the element at index i.
  */
 #define sv_vec_set_at(vec, data, i) (vec)->arr[i] = data
@@ -104,11 +110,12 @@
  */
 #define sv_vec_push(vec, data, success, allocator) do {                                                       \
     int* vec_var_line(_vec_success) = (success);                                                              \
-    char* res = sv_vec_allocate_one(                                                                          \
+    char* vec_var_line(res) = sv_vec_allocate_one(                                                            \
         (void*)&(vec)->arr, &(vec)->size, &(vec)->capacity,                                                   \
         (vec)->element_size, allocator);                                                                      \
-    if (res == NULL) { if (vec_var_line(_vec_success) )*vec_var_line(_vec_success) = 0; break; }              \
-    (vec)->arr[(res - (char*)(vec)->arr) / (vec)->element_size] = data;                                       \
+    if (vec_var_line(res) == NULL)                                                                            \
+        { if (vec_var_line(_vec_success) )*vec_var_line(_vec_success) = 0; break; }                           \
+    (vec)->arr[(vec_var_line(res) - (char*)(vec)->arr) / (vec)->element_size] = (data);                       \
     if (vec_var_line(_vec_success)) *vec_var_line(_vec_success) = 1;                                          \
 } while (0)
 

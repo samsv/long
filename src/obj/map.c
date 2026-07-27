@@ -209,19 +209,6 @@ static uint32_t value_hash(value_t v)
     return 0;
 }
 
-static bool value_eql(value_t x, value_t y)
-{
-    if (x.kind != y.kind)
-        return false;
-    switch (x.kind) {
-        case VALUE_NUMBER: return x.number == y.number;
-        case VALUE_NIL: return true;
-        case VALUE_BOOL: return x.boolean == y.boolean;
-        case VALUE_OBJ: return x.obj.cell == y.obj.cell;
-    }
-    return false;
-}
-
 static int64_t capacity_for_size(int64_t size)
 {
     int64_t cap = size * 100 / MAX_LOAD_PERCENTAGE + 1;
