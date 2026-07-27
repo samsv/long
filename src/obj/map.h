@@ -8,19 +8,19 @@
 #include "../std/option.h"
 #include "../value.h"
 
-opt_def(value_t);
+sv_opt_def(value_t);
 
 typedef struct {
     value_t key;
     value_t value;
 } kv_t;
 
-opt_def(kv_t);
+sv_opt_def(kv_t);
 
 typedef struct {
     int64_t sparse_index;
     value_t key;
-    opt_t(value_t) value;
+    sv_opt_t(value_t) value;
 } sparse_item_t;
 
 sv_vec_def(sparse_item_t);
@@ -89,7 +89,7 @@ void map_deinit(map_t*, const sv_allocator_t*);
 /**
  * Returns an optional value associated with the key..
  */
-opt_t(value_t) map_get(map_t, value_t);
+sv_opt_t(value_t) map_get(map_t, value_t);
 /**
  * Inserts or update the key into the map.
  */
@@ -115,6 +115,6 @@ void map_iter_deinit(map_iter_t*, const sv_allocator_t*);
 /**
  * Next (non borrowed) kv value.
  */
-opt_t(kv_t) map_iter_next(map_iter_t*);
+sv_opt_t(kv_t) map_iter_next(map_iter_t*);
 
 #endif
