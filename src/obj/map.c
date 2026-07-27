@@ -3,6 +3,15 @@
 #define ERR_SET (sparse_set_t){0}
 #define TRY_NOT_NULL(val, err) if ((val) == NULL) return err
 
+#define MAX_COPY_SIZE 32
+#define MAX_DEPTH 5
+#define ERR_MAP (map_t){0}
+
+#define MAX_LOAD_PERCENTAGE 75
+#define ERR_NODE (map_node_t){0}
+
+sv_opt_def(sparse_item_t);
+
 static void dense_free(sv_vec_t(sparse_item_t)* d, const sv_allocator_t* a)
 {
     sv_vec_foreach(sparse_item_t, item, d) {
@@ -134,9 +143,6 @@ static sparse_set_t set_update(sparse_set_t set, sparse_item_t item, const sv_al
     };
 }
 
-#define MAX_LOAD_PERCENTAGE 75
-#define ERR_NODE (map_node_t){0}
-
 typedef enum {
     GET_ITEM,
     GET_EMPTY,
@@ -206,11 +212,8 @@ static map_node_t node_init_capacity(int64_t size, map_t child, const sv_allocat
 
 static int64_t node_physical_count(map_node_t node)
 {
-    return node.set.len
-    + (node.child.cell != NULL ? node_physical_count(node.child.cell->value) : 0);
+    return node.set.len + (node.child.cell != NULL ? node_physical_count(node.child.cell->value) : 0);
 }
-
-sv_opt_def(sparse_item_t);
 
 static get_result_t node_get_hashed(map_node_t node, value_t key, uint32_t hash, map_t child)
 {
@@ -360,10 +363,6 @@ static map_node_t node_grow(map_node_t parent, value_t key, sv_opt_t(value_t) va
     return node;
 }
 
-#define MAX_COPY_SIZE 32
-#define MAX_DEPTH 5
-#define ERR_MAP (map_t){0}
-
 static map_t node_wrap(map_node_t node, const sv_allocator_t* a)
 {
     TRY_NOT_NULL(node.set.dense.cell, ERR_MAP);
@@ -380,6 +379,8 @@ static map_node_t node_layer(map_t map, value_t key, sv_opt_t(value_t) value, co
     TRY_INSERT_MUT(layer, key, value, a);
     return layer;
 }
+
+#undef TRY_INSERT_MUT
 
 static map_node_t map_update_node(map_t map, value_t key, sv_opt_t(value_t) value, int64_t index, const sv_allocator_t* a)
 {
