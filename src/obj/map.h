@@ -87,7 +87,7 @@ map_t map_init(const kv_t*, int64_t, const sv_allocator_t*);
 void map_deinit(map_t*, const sv_allocator_t*);
 
 /**
- * Returns an optional value associated with the key..
+ * Returns the optional value associated with the key. The value is not borrowed.
  */
 sv_opt_t(value_t) map_get(map_t, value_t);
 /**

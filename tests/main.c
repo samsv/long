@@ -17,7 +17,7 @@ int main(void)
     sv_test_unicode(&t);
     sv_test_rc(&t);
     sv_test_list(&t);
-    //sv_test_map(&t);
+    sv_test_map(&t);
     sv_test_parser(&t);
 
     sv_test_summary(t, 1);
