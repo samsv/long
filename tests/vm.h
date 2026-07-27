@@ -450,8 +450,9 @@ static inline void sv_test_vm_builder(sv_testing_t* t)
 static inline void sv_test_vm_call(sv_testing_t* t)
 {
    vm_builder_t fb = vmb_init(sv_str_init("add_fn"));
-   vmb_add_bytes(&fb, OP_GET_GLOBAL, 0, 1, &sv_gpa);
-   vmb_add_bytes(&fb, OP_GET_GLOBAL, 1, 1, &sv_gpa);
+   fb.vm.arity = 2;
+   vmb_add_bytes(&fb, OP_GET_LOCAL, 0, 1, &sv_gpa);
+   vmb_add_bytes(&fb, OP_GET_LOCAL, 1, 1, &sv_gpa);
    vmb_add_byte(&fb, OP_ADD, 1, &sv_gpa);
 
    vm_builder_t b = vmb_init(sv_str_init("caller"));
@@ -517,6 +518,49 @@ static inline void sv_test_vm_call_errors(sv_testing_t* t)
    sv_test_run(t, payload->ops_len == 2);
    vm_err_deinit(&perr.value, &sv_gpa);
    vm_deinit(&pvm, &sv_gpa);
+}
+
+static inline void sv_test_vm_call_arity(sv_testing_t* t)
+{
+   vm_builder_t fb = vmb_init(sv_str_init("two_args"));
+   fb.vm.arity = 2;
+   vmb_add_bytes(&fb, OP_GET_LOCAL, 0, 1, &sv_gpa);
+
+   vm_builder_t b = vmb_init(sv_str_init("caller"));
+   vmb_add_constant(&b, sv_test_vm_num(6), &sv_gpa);
+   vmb_add_closure(&b, 0, vmb_build(fb), &sv_gpa);
+   vmb_add_bytes(&b, OP_CALL, 1, 8, &sv_gpa);
+
+   vm_t vm = vmb_build(b);
+   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
+   sv_test_run(t, err.is_some);
+   sv_test_run(t, err.value.error_code == VM_ERR_BAD_ARITY);
+   vm_arity_err* payload = err.value.payload;
+   sv_test_run(t, payload->line == 8);
+   sv_test_run(t, payload->expected == 2);
+   sv_test_run(t, payload->got == 1);
+   sv_test_run(t, vm.stack.size == 1);
+   vm_err_deinit(&err.value, &sv_gpa);
+   vm_deinit(&vm, &sv_gpa);
+}
+
+static inline void sv_test_vm_call_globals(sv_testing_t* t)
+{
+   vm_builder_t fb = vmb_init(sv_str_init("read_global"));
+   vmb_add_bytes(&fb, OP_GET_GLOBAL, 0, 1, &sv_gpa);
+
+   vm_builder_t b = vmb_init(sv_str_init("caller"));
+   vmb_add_constant(&b, sv_test_vm_num(7), &sv_gpa);
+   vmb_add_byte(&b, OP_SET_GLOBAL, 1, &sv_gpa);
+   vmb_add_closure(&b, 0, vmb_build(fb), &sv_gpa);
+   vmb_add_bytes(&b, OP_CALL, 0, 2, &sv_gpa);
+
+   vm_t vm = vmb_build(b);
+   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
+   sv_test_run(t, !err.is_some);
+   sv_test_run(t, vm.stack.size == 1);
+   sv_test_run(t, sv_vec_last(vm.stack).number == 7);
+   vm_deinit(&vm, &sv_gpa);
 }
 
 static inline void sv_test_vm_group(sv_testing_t* t)
@@ -615,6 +659,8 @@ static inline void sv_test_vm(sv_testing_t* t)
    sv_test_vm_call(t);
    sv_test_vm_call_upvalues(t);
    sv_test_vm_call_errors(t);
+   sv_test_vm_call_arity(t);
+   sv_test_vm_call_globals(t);
    sv_test_vm_group(t);
    sv_test_vm_closure_values(t);
 }

@@ -67,6 +67,7 @@ vm_t vm_init(sv_str_t name)
 {
     return (vm_t){
         .name = name,
+        .arity = 0,
         .chunk = chunk_init(),
         .globals = sv_vec_init(value_t),
         .locals = sv_vec_init(value_t),
@@ -81,11 +82,11 @@ static void vm_fn_deinit(vm_t* vm, const sv_allocator_t* a)
 {
     arr_deinit(&vm->stack, a);
     arr_deinit(&vm->locals, a);
-    arr_deinit(&vm->globals, a);
 }
 
 void vm_deinit(vm_t* vm, const sv_allocator_t* a)
 {
+    arr_deinit(&vm->globals, a);
     vm_fn_deinit(vm, a);
     chunk_deinit(&vm->chunk, a);
 }
@@ -318,12 +319,28 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
                 fn_vm.group = member->group;
             }
 
-            fn_vm.globals = (value_arr)sv_vec_init_capacity(value_t, arg_count + 1, a);
-            TRY_OR(fn_vm.globals.arr != NULL, value_free(&value, a), "OOM when passing arguments")
+            if (arg_count != fn_vm.arity) {
+                vm_arity_err* p = sv_malloc(a, sizeof(vm_arity_err));
+                if (p != NULL)
+                    *p = (vm_arity_err){
+                        .line = vm->chunk.lines.arr[vm->ip - 1],
+                        .expected = fn_vm.arity,
+                        .got = arg_count,
+                    };
+                err = (error_t){ .error_code = VM_ERR_BAD_ARITY,
+                                 .payload = p,
+                                 .msg = sv_str_init("wrong number of arguments") };
+                value_free(&value, a);
+                goto error;
+            }
+
+            fn_vm.globals = vm->globals;
+            fn_vm.locals = (value_arr)sv_vec_init_capacity(value_t, arg_count + 1, a);
+            TRY_OR(fn_vm.locals.arr != NULL, value_free(&value, a), "OOM when passing arguments")
             for (int64_t i = 0; i < arg_count; i++)
-                fn_vm.globals.arr[i] = vm->stack.arr[vm->stack.size - arg_count + i];
-            fn_vm.globals.arr[arg_count] = value_borrow(value);
-            fn_vm.globals.size = arg_count + 1;
+                fn_vm.locals.arr[i] = vm->stack.arr[vm->stack.size - arg_count + i];
+            fn_vm.locals.arr[arg_count] = value_borrow(value);
+            fn_vm.locals.size = arg_count + 1;
             vm->stack.size -= arg_count;
 
             sv_opt_t(error_t) fn_err = vm_run(&fn_vm, a);

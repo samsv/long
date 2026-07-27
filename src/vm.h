@@ -24,6 +24,7 @@ typedef struct {
 
 typedef struct vm_t {
     sv_str_t name;
+    uint8_t arity;
     chunk_t chunk;
     value_arr globals;
     value_arr locals;
@@ -66,6 +67,7 @@ typedef enum {
     VM_ERR_OP_UNSUPPORTED_ARGS,
     VM_ERR_NOT_IMPLEMENTED,
     VM_ERR_NO_GROUP,
+    VM_ERR_BAD_ARITY,
 } vm_error_kinds;
 
 typedef struct {
@@ -78,6 +80,12 @@ typedef struct {
     int64_t line;
     uint8_t instruction;
 } vm_instruction_err;
+
+typedef struct {
+    int64_t line;
+    uint8_t expected;
+    uint8_t got;
+} vm_arity_err;
 
 sv_opt_def(uint8_t);
 sv_opt_def(int64_t);
