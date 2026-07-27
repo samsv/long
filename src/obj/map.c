@@ -1,3 +1,5 @@
+#include <limits.h>
+#include <math.h>
 #include "map.h"
 
 #define ERR_SET (sparse_set_t){0}
@@ -155,13 +157,54 @@ typedef struct {
     int64_t index;
 } get_result_t;
 
+static uint32_t number_hash(double n)
+{
+    if (n >= (double)INT64_MIN && n < -(double)INT64_MIN && n == (double)(int64_t)n)
+        return (uint32_t)(int64_t)n;
+
+    int exp;
+    n = frexp(n, &exp) * -(double)INT_MIN;
+    if (!(n >= (double)INT64_MIN && n < -(double)INT64_MIN))
+        return 0;
+    return (uint32_t)exp + (uint32_t)(int64_t)n;
+}
+
+static uint32_t str_hash(sv_str_t s)
+{
+    uint32_t h = (uint32_t)s.size;
+    for (int64_t i = s.size; i > 0; i--)
+        h ^= (h << 5) + (h >> 2) + (uint8_t)s.chars[i - 1];
+    return h;
+}
+
+/**
+ * Hashes a value using the algorithms from Lua 5.4.
+ *
+ * Numbers replicate Lua's table key handling: a double holding an integral
+ * value is hashed as that integer (Lua normalizes such keys on insertion in
+ * luaH_newkey and hashes integers by value in hashint); other doubles use
+ * l_hashfloat, which scales the frexp mantissa to an integer and adds the
+ * exponent. NaN and infinities fail the integer range check and hash to 0,
+ * as in Lua. -0.0 is integral, so it hashes like 0.0, matching value_eql.
+ * https://www.lua.org/source/5.4/ltable.c.html#l_hashfloat
+ *
+ * Strings use luaS_hash with a zero seed (Lua's seed exists for hash
+ * flooding resistance).
+ * https://www.lua.org/source/5.4/lstring.c.html#luaS_hash
+ *
+ * Nil and booleans are fixed small constants.
+ */
 static uint32_t value_hash(value_t v)
 {
     switch (v.kind) {
-        case VALUE_NUMBER: return (uint32_t)(int64_t)v.number;
+        case VALUE_NUMBER: return number_hash(v.number);
         case VALUE_NIL: return 1;
         case VALUE_BOOL: return v.boolean ? 2 : 3;
-        case VALUE_OBJ: return 2166136261u;
+        case VALUE_OBJ:
+            switch (v.obj.cell->value.kind) {
+                case OBJ_STR: return str_hash(v.obj.cell->value.str);
+            }
+            return 0;
     }
     return 0;
 }

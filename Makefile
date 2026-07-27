@@ -32,10 +32,10 @@ clean:
 	rm -rf build
 
 $(BIN): $(OBJ)
-	$(CC) $(RELEASE_FLAGS) $^ -o $@
+	$(CC) $(RELEASE_FLAGS) $^ -o $@ -lm
 
 $(TEST_BIN): $(TEST_OBJ)
-	$(CC) $(TEST_FLAGS) $^ -o $@
+	$(CC) $(TEST_FLAGS) $^ -o $@ -lm
 
 build/release/main.o: main.c | build/release
 	$(CC) $(RELEASE_FLAGS) $(DEPFLAGS) -Isrc -c $< -o $@

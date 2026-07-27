@@ -61,6 +61,17 @@ static inline void sv_test_map_init_get(sv_testing_t* t)
    sv_test_run(t, !map_get(m, sv_test_map_num(99)).is_some);
    map_deinit(&m, &sv_gpa);
 
+   kv_t edge_kvs[] = {
+      sv_test_map_kv(-7, 70),
+      sv_test_map_kv(2.5, 25),
+      sv_test_map_kv(0, 1),
+   };
+   map_t edges = map_init(edge_kvs, 3, &sv_gpa);
+   sv_test_run(t, sv_test_map_get_num(edges, -7) == 70);
+   sv_test_run(t, sv_test_map_get_num(edges, 2.5) == 25);
+   sv_test_run(t, sv_test_map_get_num(edges, -0.0) == 1);
+   map_deinit(&edges, &sv_gpa);
+
    map_t empty = map_init(NULL, 0, &sv_gpa);
    sv_test_run(t, empty.cell != NULL);
    sv_test_run(t, map_count(empty) == 0);
