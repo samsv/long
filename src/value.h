@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include "obj.h"
 #include "std/rc.h"
+#include "std/option.h"
 
 sv_rc_def(obj_t);
 
@@ -22,6 +23,8 @@ typedef struct value_t {
         sv_rc_t(obj_t) obj;
     };
 } value_t;
+
+sv_opt_def(value_t);
 
 void value_free(value_t*, const sv_allocator_t*);
 value_t value_borrow(value_t);

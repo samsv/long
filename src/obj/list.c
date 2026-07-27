@@ -101,21 +101,21 @@ void ll_deinit(list_t* l, const sv_allocator_t* a)
     sv_rc_deinit(l, a);
 }
 
-const value_t* ll_get(list_t l, int64_t n)
+sv_opt_t(value_t) ll_get(list_t l, int64_t n)
 {
     node_t node = l.cell->value;
     if (n >= node.len || n < 0)
-        return node.len != 0 ? ll_get(node.tail, n - node.len) : NULL;
+        return node.len != 0 ? ll_get(node.tail, n - node.len) : sv_opt_none_t(value_t);
 
-    return &node.bucket.cell->value.arr[node.start + node.len - 1 - n];
+    return sv_opt_some_t(value_t, node.bucket.cell->value.arr[node.start + node.len - 1 - n]);
 }
 
-const value_t* ll_head(list_t l)
+sv_opt_t(value_t) ll_head(list_t l)
 {
     node_t node = l.cell->value;
-    return node.len > 0 ?
-        &node.bucket.cell->value.arr[node.start + node.len - 1]
-        : NULL;
+    return node.len > 0
+        ? sv_opt_some_t(value_t, node.bucket.cell->value.arr[node.start + node.len - 1])
+        : sv_opt_none_t(value_t);
 }
 
 static list_t init_with_tail(list_t tail, const value_t* vs, int64_t n, const sv_allocator_t* a) {
@@ -348,4 +348,34 @@ list_t ll_tail(list_t list, const sv_allocator_t* a)
 int64_t ll_count(list_t l)
 {
     return ll_count_rec(l, 0);
+}
+
+ll_iter_t ll_iter_init(list_t l)
+{
+    return (ll_iter_t){
+        .root = sv_rc_borrow(l),
+        .node = l,
+        .index = l.cell->value.start + l.cell->value.len - 1,
+    };
+}
+
+void ll_iter_deinit(ll_iter_t* it, const sv_allocator_t* a)
+{
+    sv_rc_deinit(&it->root, a);
+}
+
+sv_opt_t(value_t) ll_iter_next(ll_iter_t* it)
+{
+    node_t node = it->node.cell->value;
+    if (node.len == 0)
+        return sv_opt_none_t(value_t);
+
+    value_t v = node.bucket.cell->value.arr[it->index];
+    if (it->index == node.start) {
+        it->node = node.tail;
+        it->index = node.tail.cell->value.start + node.tail.cell->value.len - 1;
+    } else {
+        it->index--;
+    }
+    return sv_opt_some_t(value_t, v);
 }

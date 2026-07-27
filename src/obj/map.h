@@ -8,8 +8,6 @@
 #include "../std/option.h"
 #include "../value.h"
 
-sv_opt_def(value_t);
-
 typedef struct {
     value_t key;
     value_t value;

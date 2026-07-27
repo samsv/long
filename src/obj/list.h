@@ -3,8 +3,9 @@
 
 #include "../std/rc.h"
 #include "../std/vector.h"
+#include "../std/option.h"
+#include "../value.h"
 
-typedef struct value_t value_t;
 typedef struct node_t node_t;
 
 typedef struct sv_rc_cell_t(node_t) sv_rc_cell_t(node_t);
@@ -48,9 +49,9 @@ list_t ll_empty(void);
 void ll_deinit(list_t*, const sv_allocator_t*);
 
 /**
- * Gets the element at position.
+ * Returns the optional value at the position. The value is not borrowed.
  */
-const value_t* ll_get(list_t, int64_t);
+sv_opt_t(value_t) ll_get(list_t, int64_t);
 
 /**
  * Prepends element to list.
@@ -79,9 +80,9 @@ list_t ll_update(list_t, value_t, int64_t, const sv_allocator_t*);
 list_t ll_delete_at(list_t, int64_t, const sv_allocator_t*);
 
 /**
- * Returns a pointer to the list head or NULL for an empty list.
+ * Returns the optional list head. The value is not borrowed.
  */
-const value_t* ll_head(list_t);
+sv_opt_t(value_t) ll_head(list_t);
 /**
  * Returns the list tail.
  */
@@ -91,5 +92,24 @@ list_t ll_tail(list_t, const sv_allocator_t*);
  * Returns the number of elements in the list.
  */
 int64_t ll_count(list_t);
+
+typedef struct {
+    list_t root;
+    list_t node;
+    int64_t index;
+} ll_iter_t;
+
+/**
+ * Initializes a new iterator from the list.
+ */
+ll_iter_t ll_iter_init(list_t);
+/**
+ * Deinitializes the iterator.
+ */
+void ll_iter_deinit(ll_iter_t*, const sv_allocator_t*);
+/**
+ * Next (non borrowed) value.
+ */
+sv_opt_t(value_t) ll_iter_next(ll_iter_t*);
 
 #endif
