@@ -4,9 +4,7 @@
 #include "../std/rc.h"
 #include "../std/vector.h"
 #include "../std/option.h"
-
-typedef struct value_t value_t;
-typedef struct sv_opt_t(value_t) sv_opt_t(value_t);
+#include "../common.h"
 
 typedef struct node_t node_t;
 
@@ -14,7 +12,6 @@ typedef struct sv_rc_cell_t(node_t) sv_rc_cell_t(node_t);
 sv_rc_wrapper_def(node_t);
 typedef sv_rc_t(node_t) list_t;
 
-sv_vec_def(value_t);
 typedef sv_vec_t(value_t) bucket_t;
 sv_rc_def(bucket_t);
 

@@ -39,5 +39,15 @@ value_t value_init_list(const value_t*, int64_t, const sv_allocator_t*);
  * hold an iterable object. obj.cell is NULL on allocation failure.
  */
 value_t value_init_iter(value_t, const sv_allocator_t*);
+/**
+ * Creates a closure value over the function, borrowing the upvalues.
+ * obj.cell is NULL on allocation failure.
+ */
+value_t value_init_closure(vm_t*, const value_t*, int64_t, const sv_allocator_t*);
+/**
+ * Creates a closure member value taking ownership of the group reference.
+ * obj.cell is NULL on allocation failure.
+ */
+value_t value_init_closure_member(sv_rc_t(closure_group_t), int64_t, const sv_allocator_t*);
 
 #endif

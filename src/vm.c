@@ -72,50 +72,60 @@ vm_t vm_init(sv_str_t name)
         .locals = sv_vec_init(value_t),
         .stack = sv_vec_init(value_t),
         .upvalues = sv_vec_init(value_t),
+        .group = {0},
         .ip = 0,
     };
 }
 
-void vm_deinit(vm_t* vm, const sv_allocator_t* a)
+static void vm_fn_deinit(vm_t* vm, const sv_allocator_t* a)
 {
     arr_deinit(&vm->stack, a);
     arr_deinit(&vm->locals, a);
     arr_deinit(&vm->globals, a);
+}
+
+void vm_deinit(vm_t* vm, const sv_allocator_t* a)
+{
+    vm_fn_deinit(vm, a);
     chunk_deinit(&vm->chunk, a);
+}
+
+void vm_err_deinit(error_t* err, const sv_allocator_t* a)
+{
+    sv_free(a, err->payload);
+    err->payload = NULL;
 }
 
 sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
 {
+#define TRY_OR(cond, cleanup, err_msg) {                                                                      \
+    if (!(cond)) {                                                                                            \
+        cleanup;                                                                                              \
+        err = vm_oom_err(err_msg);                                                                            \
+        goto error;                                                                                           \
+    } }
+
+#define TRY_NOT_NULL(v, err_msg) TRY_OR((v) != NULL, (void)0, err_msg)
+
 #define TRY_PUSH(arr, v)                                                                                      \
     sv_vec_push(&(arr), v, &success, a);                                                                      \
-    if (success == 0) {                                                                                       \
-        err = vm_oom_err("OOM when appending to vector");                                                     \
-        goto error;                                                                                           \
-    }
+    TRY_OR(success, (void)0, "OOM when appending to vector")
 
 #define TRY_PUSH_STACK(v) TRY_PUSH(vm->stack, v)
 
 #define TRY_PUSH_OWNED(v)                                                                                     \
     sv_vec_push(&vm->stack, v, &success, a);                                                                  \
-    if (success == 0) {                                                                                       \
-        value_free(&v, a);                                                                                    \
-        err = vm_oom_err("OOM when appending to vector");                                                     \
-        goto error;                                                                                           \
-    }
-
-#define TRY_NOT_NULL(v, err_msg) {                                                                            \
-    if ((v) == NULL) {                                                                                        \
-        err = vm_oom_err(err_msg);                                                                            \
-        goto error;                                                                                           \
-    } }
+    TRY_OR(success, value_free(&v, a), "OOM when appending to vector")
 
 #define UNSUPPORTED_1(v, err_msg) {                                                                           \
-    op_err_payload = (vm_op_err){                                                                             \
-        .line = vm->chunk.lines.arr[vm->ip-1],                                                                \
-        .ops = { v },                                                                                         \
-        .ops_len = 1 };                                                                                       \
+    vm_op_err* op_err_payload = sv_malloc(a, sizeof(vm_op_err));                                              \
+    if (op_err_payload != NULL)                                                                               \
+        *op_err_payload = (vm_op_err){                                                                        \
+            .line = vm->chunk.lines.arr[vm->ip-1],                                                            \
+            .ops = { v },                                                                                     \
+            .ops_len = 1 };                                                                                   \
     err = (error_t) { .error_code = VM_ERR_OP_UNSUPPORTED_ARGS,                                               \
-                      .payload = &op_err_payload,                                                             \
+                      .payload = op_err_payload,                                                              \
                       .msg = sv_str_init(err_msg) };                                                          \
     value_free(&v, a);                                                                                        \
     goto error; }
@@ -134,12 +144,14 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
     value_t v2 = sv_vec_pop(vm->stack);                                                                       \
     value_t v1 = sv_vec_pop(vm->stack);                                                                       \
     if (v1.kind != VALUE_NUMBER || v2.kind != VALUE_NUMBER) {                                                 \
-        op_err_payload = (vm_op_err){                                                                         \
-            .line = vm->chunk.lines.arr[vm->ip-1],                                                            \
-            .ops = { v1, v2 },                                                                                \
-            .ops_len = 2 };                                                                                   \
+        vm_op_err* op_err_payload = sv_malloc(a, sizeof(vm_op_err));                                          \
+        if (op_err_payload != NULL)                                                                           \
+            *op_err_payload = (vm_op_err){                                                                    \
+                .line = vm->chunk.lines.arr[vm->ip-1],                                                        \
+                .ops = { v1, v2 },                                                                            \
+                .ops_len = 2 };                                                                               \
         err = (error_t) { .error_code = VM_ERR_OP_UNSUPPORTED_ARGS,                                           \
-                          .payload = &op_err_payload,                                                         \
+                          .payload = op_err_payload,                                                          \
                           .msg = sv_str_init("Unsupported args for " #op) };                                  \
         value_free(&v1, a);                                                                                   \
         value_free(&v2, a);                                                                                   \
@@ -158,8 +170,6 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
     TRY_PUSH_STACK(res);                                                                                      \
     break; }
 
-    static vm_op_err op_err_payload = {0};
-    static vm_instruction_err instruction_err_payload = {0};
     error_t err;
     int success = 0;
     while (vm->ip < vm->chunk.bytecode.size) switch (vm->chunk.bytecode.arr[vm->ip++]) {
@@ -219,13 +229,126 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
             TRY_PUSH_OWNED(res);
             break;
         }
-        default: {
-            instruction_err_payload = (vm_instruction_err){
-                .line = vm->chunk.lines.arr[vm->ip - 1],
-                .instruction = vm->chunk.bytecode.arr[vm->ip - 1],
+        case OP_LOAD_CLOSURE: {
+            uint8_t i = vm->chunk.bytecode.arr[vm->ip++];
+            uint8_t n_cls = vm->chunk.bytecode.arr[vm->ip++];
+            value_t cls = value_init_closure(
+                &vm->chunk.functions.arr[i],
+                &vm->stack.arr[vm->stack.size - n_cls],
+                n_cls,
+                a);
+            TRY_NOT_NULL(cls.obj.cell, "OOM when creating closure");
+            arr_remove_n(&vm->stack, n_cls, a);
+            TRY_PUSH_OWNED(cls);
+            break;
+        }
+        case OP_CREATE_GROUP: {
+            uint8_t first = vm->chunk.bytecode.arr[vm->ip++];
+            uint8_t n_members = vm->chunk.bytecode.arr[vm->ip++];
+            uint8_t n_upvalues = vm->chunk.bytecode.arr[vm->ip++];
+
+            sv_vec_grow_cap(&vm->stack, vm->stack.size + n_members, &success, a);
+            TRY_OR(success, (void)0, "OOM when creating closure group")
+
+            closure_group_t g = {
+                .members = {
+                    .arr = &vm->chunk.functions.arr[first],
+                    .size = n_members,
+                    .capacity = n_members,
+                    .element_size = sizeof(vm_t),
+                },
+                .upvalues = sv_vec_init(value_t),
             };
+            if (n_upvalues > 0) {
+                g.upvalues = (sv_vec_t(value_t))sv_vec_init_capacity(value_t, n_upvalues, a);
+                TRY_NOT_NULL(g.upvalues.arr, "OOM when creating closure group");
+                g.upvalues.size = n_upvalues;
+                for (int64_t i = 0; i < n_upvalues; i++)
+                    g.upvalues.arr[i] = value_borrow(vm->stack.arr[vm->stack.size - n_upvalues + i]);
+            }
+
+            sv_rc_t(closure_group_t) group = sv_rc_init(closure_group_t, g, clsg_deinit, a);
+            TRY_OR(group.cell != NULL, clsg_deinit(&g, a), "OOM when creating closure group")
+            arr_remove_n(&vm->stack, n_upvalues, a);
+
+            for (int64_t i = n_members - 1; i >= 0; i--) {
+                value_t member = value_init_closure_member(sv_rc_borrow(group), i, a);
+                TRY_OR(member.obj.cell != NULL, sv_rc_deinit(&group, a), "OOM when creating closure member")
+                vm->stack.arr[vm->stack.size++] = member;
+            }
+            sv_rc_deinit(&group, a);
+            break;
+        }
+        case OP_GET_MEMBER: {
+            uint8_t i = vm->chunk.bytecode.arr[vm->ip++];
+            if (vm->group.cell == NULL) {
+                vm_instruction_err* p = sv_malloc(a, sizeof(vm_instruction_err));
+                if (p != NULL)
+                    *p = (vm_instruction_err){
+                        .line = vm->chunk.lines.arr[vm->ip - 1],
+                        .instruction = OP_GET_MEMBER,
+                    };
+                err = (error_t){ .error_code = VM_ERR_NO_GROUP,
+                                 .payload = p,
+                                 .msg = sv_str_init("no closure group in scope") };
+                goto error;
+            }
+            value_t member = value_init_closure_member(sv_rc_borrow(vm->group), i, a);
+            TRY_NOT_NULL(member.obj.cell, "OOM when creating closure member");
+            TRY_PUSH_OWNED(member);
+            break;
+        }
+        case OP_CALL: {
+            value_t value = sv_vec_pop(vm->stack);
+            if (value.kind != VALUE_OBJ
+                || (value.obj.cell->value.kind != OBJ_CLOSURE
+                    && value.obj.cell->value.kind != OBJ_CLOSURE_MEMBER))
+                UNSUPPORTED_1(value, "Type is not callable")
+
+            uint8_t arg_count = vm->chunk.bytecode.arr[vm->ip++];
+            vm_t fn_vm;
+            if (value.obj.cell->value.kind == OBJ_CLOSURE) {
+                closure_t* cls = &value.obj.cell->value.closure;
+                fn_vm = cls_get_vm(*cls);
+                fn_vm.upvalues = cls->upvalues;
+            } else {
+                closure_member_t* member = &value.obj.cell->value.closure_member;
+                fn_vm = clsm_get_vm(*member);
+                fn_vm.upvalues = member->group.cell->value.upvalues;
+                fn_vm.group = member->group;
+            }
+
+            fn_vm.globals = (value_arr)sv_vec_init_capacity(value_t, arg_count + 1, a);
+            TRY_OR(fn_vm.globals.arr != NULL, value_free(&value, a), "OOM when passing arguments")
+            for (int64_t i = 0; i < arg_count; i++)
+                fn_vm.globals.arr[i] = vm->stack.arr[vm->stack.size - arg_count + i];
+            fn_vm.globals.arr[arg_count] = value_borrow(value);
+            fn_vm.globals.size = arg_count + 1;
+            vm->stack.size -= arg_count;
+
+            sv_opt_t(error_t) fn_err = vm_run(&fn_vm, a);
+            if (fn_err.is_some) {
+                vm_fn_deinit(&fn_vm, a);
+                value_free(&value, a);
+                err = fn_err.value;
+                goto error;
+            }
+
+            value_t res = sv_vec_pop(fn_vm.stack);
+            vm_fn_deinit(&fn_vm, a);
+            value_free(&value, a);
+            TRY_PUSH_OWNED(res);
+            break;
+        }
+        default: {
+            vm_instruction_err* instruction_err_payload = sv_malloc(a, sizeof(vm_instruction_err));
+            if (instruction_err_payload != NULL)
+                *instruction_err_payload = (vm_instruction_err){
+                    .line = vm->chunk.lines.arr[vm->ip - 1],
+                    .instruction = vm->chunk.bytecode.arr[vm->ip - 1],
+                };
             err = (error_t){ .error_code = VM_ERR_NOT_IMPLEMENTED,
-                             .payload = &instruction_err_payload,
+                             .payload = instruction_err_payload,
                              .msg = sv_str_init("instruction not implemented") };
             goto error;
         }
@@ -240,9 +363,89 @@ error:
 #undef GET
 #undef MATH_OP
 #undef EQUALS
+#undef TRY_OR
 #undef TRY_PUSH
 #undef TRY_PUSH_STACK
 #undef TRY_PUSH_OWNED
 #undef TRY_NOT_NULL
 #undef UNSUPPORTED_1
+}
+
+vm_builder_t vmb_init(sv_str_t name)
+{
+    return (vm_builder_t){ .vm = vm_init(name) };
+}
+
+vm_t vmb_build(vm_builder_t b)
+{
+    return b.vm;
+}
+
+bool vmb_add_byte(vm_builder_t* b, uint8_t byte, int64_t line, const sv_allocator_t* a)
+{
+    int success = 0;
+    sv_vec_push(&b->vm.chunk.bytecode, byte, &success, a);
+    if (!success)
+        return false;
+    sv_vec_push(&b->vm.chunk.lines, line, &success, a);
+    return success;
+}
+
+bool vmb_add_bytes(vm_builder_t* b, uint8_t b1, uint8_t b2, int64_t line, const sv_allocator_t* a)
+{
+    return vmb_add_byte(b, b1, line, a) && vmb_add_byte(b, b2, line, a);
+}
+
+sv_opt_t(uint8_t) vmb_add_constant(vm_builder_t* b, value_t c, const sv_allocator_t* a)
+{
+    int success = 0;
+    sv_vec_push(&b->vm.chunk.constants, c, &success, a);
+    if (!success)
+        return sv_opt_none_t(uint8_t);
+
+    uint8_t i = (uint8_t)(b->vm.chunk.constants.size - 1);
+    if (!vmb_add_bytes(b, OP_LOAD_CONSTANT, i, 0, a))
+        return sv_opt_none_t(uint8_t);
+    return sv_opt_some_t(uint8_t, i);
+}
+
+sv_opt_t(uint8_t) vmb_add_closure(vm_builder_t* b, uint8_t cls_args_n, vm_t fn_vm, const sv_allocator_t* a)
+{
+    int success = 0;
+    sv_vec_push(&b->vm.chunk.functions, fn_vm, &success, a);
+    if (!success)
+        return sv_opt_none_t(uint8_t);
+
+    uint8_t i = (uint8_t)(b->vm.chunk.functions.size - 1);
+    if (!vmb_add_bytes(b, OP_LOAD_CLOSURE, i, 0, a) || !vmb_add_byte(b, cls_args_n, 0, a))
+        return sv_opt_none_t(uint8_t);
+    return sv_opt_some_t(uint8_t, i);
+}
+
+void vmb_patch_jump(vm_builder_t* b, int64_t index, uint16_t value)
+{
+    b->vm.chunk.bytecode.arr[index] = (uint8_t)value;
+    b->vm.chunk.bytecode.arr[index + 1] = (uint8_t)(value >> 8);
+}
+
+sv_opt_t(int64_t) vmb_add_jump(vm_builder_t* b, int64_t line, const sv_allocator_t* a)
+{
+    if (!vmb_add_byte(b, OP_JUMP, line, a) || !vmb_add_bytes(b, 255, 255, line, a))
+        return sv_opt_none_t(int64_t);
+    return sv_opt_some_t(int64_t, b->vm.chunk.bytecode.size - 2);
+}
+
+bool vmb_add_jump_back(vm_builder_t* b, int64_t to, int64_t line, const sv_allocator_t* a)
+{
+    if (!vmb_add_byte(b, OP_JUMP_BACK, line, a))
+        return false;
+    uint16_t offset = (uint16_t)(b->vm.chunk.bytecode.size - to);
+    return vmb_add_bytes(b, (uint8_t)offset, (uint8_t)(offset >> 8), line, a);
+}
+
+sv_opt_t(int64_t) vmb_add_jump_if_false(vm_builder_t* b, int64_t line, const sv_allocator_t* a)
+{
+    if (!vmb_add_byte(b, OP_JUMP_IF_FALSE, line, a) || !vmb_add_bytes(b, 255, 255, line, a))
+        return sv_opt_none_t(int64_t);
+    return sv_opt_some_t(int64_t, b->vm.chunk.bytecode.size - 2);
 }

@@ -84,9 +84,9 @@
  * arr == NULL when allocation fails for capacity > 0.
  */
 #define sv_vec_init_capacity(type, mcapacity, allocator) {                                                    \
-    .arr = sv_malloc(allocator, sizeof(type) * mcapacity),                                                    \
+    .arr = sv_malloc(allocator, sizeof(type) * (mcapacity)),                                                  \
     .size = 0,                                                                                                \
-    .capacity = mcapacity,                                                                                    \
+    .capacity = (mcapacity),                                                                                  \
     .element_size = sizeof(type),                                                                             \
 }
 

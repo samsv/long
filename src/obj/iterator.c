@@ -6,7 +6,9 @@ iter_t iter_init(value_t from)
     switch (from.obj.cell->value.kind) {
         case OBJ_LIST: return (iter_t){ .kind = ITER_LIST, .list = ll_iter_init(from.obj.cell->value.list) };
         case OBJ_STR:
-        case OBJ_ITER: break;
+        case OBJ_ITER:
+        case OBJ_CLOSURE:
+        case OBJ_CLOSURE_MEMBER: break;
     }
     return (iter_t){0};
 }

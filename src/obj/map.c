@@ -206,7 +206,9 @@ static uint32_t value_hash(value_t v)
             switch (v.obj.cell->value.kind) {
                 case OBJ_STR: return str_hash(v.obj.cell->value.str);
                 case OBJ_LIST:
-                case OBJ_ITER: return 0;
+                case OBJ_ITER:
+                case OBJ_CLOSURE:
+                case OBJ_CLOSURE_MEMBER: return 0;
             }
             return 0;
     }
