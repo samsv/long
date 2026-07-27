@@ -225,14 +225,145 @@ static inline void sv_test_vm_errors(sv_testing_t* t)
    vm_deinit(&vm, &sv_gpa);
 
    vm_t nvm = vm_init(sv_str_init("not_implemented"));
-   sv_test_vm_emit(&nvm, OP_ITER_CREATE, 13);
+   sv_test_vm_emit(&nvm, OP_CALL, 13);
    sv_opt_t(error_t) nerr = vm_run(&nvm, &sv_gpa);
    sv_test_run(t, nerr.is_some);
    sv_test_run(t, nerr.value.error_code == VM_ERR_NOT_IMPLEMENTED);
    vm_instruction_err* npayload = nerr.value.payload;
    sv_test_run(t, npayload->line == 13);
-   sv_test_run(t, npayload->instruction == OP_ITER_CREATE);
+   sv_test_run(t, npayload->instruction == OP_CALL);
    vm_deinit(&nvm, &sv_gpa);
+}
+
+static inline void sv_test_vm_negate(sv_testing_t* t)
+{
+   vm_t vm = vm_init(sv_str_init("negate"));
+   sv_test_vm_load(&vm, sv_test_vm_num(5), 1);
+   sv_test_vm_emit(&vm, OP_NEGATE, 1);
+   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
+   sv_test_run(t, !err.is_some);
+   sv_test_run(t, sv_vec_last(vm.stack).number == -5);
+   vm_deinit(&vm, &sv_gpa);
+
+   vm_t bvm = vm_init(sv_str_init("negate_bool"));
+   sv_test_vm_load(&bvm, sv_test_vm_bool(true), 7);
+   sv_test_vm_emit(&bvm, OP_NEGATE, 7);
+   sv_opt_t(error_t) berr = vm_run(&bvm, &sv_gpa);
+   sv_test_run(t, berr.is_some);
+   sv_test_run(t, berr.value.error_code == VM_ERR_OP_UNSUPPORTED_ARGS);
+   vm_op_err* payload = berr.value.payload;
+   sv_test_run(t, payload->line == 7);
+   sv_test_run(t, payload->ops_len == 1);
+   sv_test_run(t, payload->ops[0].kind == VALUE_BOOL);
+   vm_deinit(&bvm, &sv_gpa);
+}
+
+static inline void sv_test_vm_list(sv_testing_t* t)
+{
+   vm_t vm = vm_init(sv_str_init("list"));
+   sv_test_vm_load(&vm, sv_test_vm_num(1), 1);
+   sv_test_vm_load(&vm, sv_test_vm_num(2), 1);
+   sv_test_vm_load(&vm, sv_test_vm_num(3), 1);
+   sv_test_vm_emit(&vm, OP_LIST, 2);
+   sv_test_vm_emit(&vm, 3, 2);
+
+   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
+   sv_test_run(t, !err.is_some);
+   sv_test_run(t, vm.stack.size == 1);
+   value_t lv = sv_vec_last(vm.stack);
+   sv_test_run(t, lv.kind == VALUE_OBJ);
+   sv_test_run(t, lv.obj.cell->value.kind == OBJ_LIST);
+   list_t l = lv.obj.cell->value.list;
+   sv_test_run(t, ll_count(l) == 3);
+   sv_test_run(t, sv_opt_unwrap(ll_get(l, 0)).number == 1);
+   sv_test_run(t, sv_opt_unwrap(ll_get(l, 1)).number == 2);
+   sv_test_run(t, sv_opt_unwrap(ll_get(l, 2)).number == 3);
+   vm_deinit(&vm, &sv_gpa);
+}
+
+static inline void sv_test_vm_iter(sv_testing_t* t)
+{
+   vm_t vm = vm_init(sv_str_init("iter"));
+   sv_test_vm_load(&vm, sv_test_vm_num(1), 1);
+   sv_test_vm_load(&vm, sv_test_vm_num(2), 1);
+   sv_test_vm_load(&vm, sv_test_vm_num(3), 1);
+   sv_test_vm_emit(&vm, OP_LIST, 1);
+   sv_test_vm_emit(&vm, 3, 1);
+   sv_test_vm_emit(&vm, OP_ITER_CREATE, 2);
+   sv_test_vm_emit(&vm, OP_SET_LOCAL, 2);
+   for (int64_t i = 0; i < 4; i++) {
+      sv_test_vm_emit(&vm, OP_GET_LOCAL, 3);
+      sv_test_vm_emit(&vm, 0, 3);
+      sv_test_vm_emit(&vm, OP_ITER_NEXT, 3);
+   }
+
+   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
+   sv_test_run(t, !err.is_some);
+   sv_test_run(t, vm.stack.size == 4);
+   sv_test_run(t, vm.stack.arr[0].number == 1);
+   sv_test_run(t, vm.stack.arr[1].number == 2);
+   sv_test_run(t, vm.stack.arr[2].number == 3);
+   sv_test_run(t, vm.stack.arr[3].kind == VALUE_NIL);
+   vm_deinit(&vm, &sv_gpa);
+
+   vm_t cvm = vm_init(sv_str_init("iter_create_err"));
+   sv_test_vm_load(&cvm, sv_test_vm_num(4), 5);
+   sv_test_vm_emit(&cvm, OP_ITER_CREATE, 5);
+   sv_opt_t(error_t) cerr = vm_run(&cvm, &sv_gpa);
+   sv_test_run(t, cerr.is_some);
+   sv_test_run(t, cerr.value.error_code == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, ((vm_op_err*)cerr.value.payload)->ops_len == 1);
+   vm_deinit(&cvm, &sv_gpa);
+
+   vm_t nvm = vm_init(sv_str_init("iter_next_err"));
+   sv_test_vm_load(&nvm, sv_test_vm_num(4), 6);
+   sv_test_vm_emit(&nvm, OP_ITER_NEXT, 6);
+   sv_opt_t(error_t) nerr = vm_run(&nvm, &sv_gpa);
+   sv_test_run(t, nerr.is_some);
+   sv_test_run(t, nerr.value.error_code == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, ((vm_op_err*)nerr.value.payload)->ops_len == 1);
+   vm_deinit(&nvm, &sv_gpa);
+}
+
+static inline void sv_test_vm_list_values(sv_testing_t* t)
+{
+   sv_test_vm_obj_frees = 0;
+
+   obj_t o = { .kind = OBJ_STR, .str = sv_str_copy(sv_str_init("boxed"), &sv_gpa) };
+   sv_rc_t(obj_t) rc = sv_rc_init(obj_t, o, sv_test_vm_free_obj, &sv_gpa);
+   value_t v = { .kind = VALUE_OBJ, .obj = rc };
+
+   vm_t vm = vm_init(sv_str_init("list_values"));
+   uint8_t i = sv_test_vm_const(&vm, value_borrow(v));
+   sv_test_vm_emit(&vm, OP_LOAD_CONSTANT, 1);
+   sv_test_vm_emit(&vm, i, 1);
+   sv_test_vm_emit(&vm, OP_LIST, 2);
+   sv_test_vm_emit(&vm, 1, 2);
+   sv_test_vm_emit(&vm, OP_SET_GLOBAL, 3);
+
+   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
+   sv_test_run(t, !err.is_some);
+   sv_test_run(t, vm.globals.size == 1);
+   vm_deinit(&vm, &sv_gpa);
+
+   sv_test_run(t, v.obj.cell->count == 1);
+   sv_test_run(t, sv_test_vm_obj_frees == 0);
+   sv_rc_deinit(&v.obj, &sv_gpa);
+   sv_test_run(t, sv_test_vm_obj_frees == 1);
+}
+
+static inline void sv_test_vm_list_oom(sv_testing_t* t)
+{
+   vm_t ovm = vm_init(sv_str_init("list_oom"));
+   int success;
+   sv_vec_push(&ovm.stack, sv_test_vm_num(1), &success, &sv_gpa);
+   sv_test_vm_emit(&ovm, OP_LIST, 3);
+   sv_test_vm_emit(&ovm, 1, 3);
+   sv_opt_t(error_t) oerr = vm_run(&ovm, &sv_test_fail_alloc);
+   sv_test_run(t, oerr.is_some);
+   sv_test_run(t, oerr.value.error_code == VM_ERR_OOM);
+   sv_test_run(t, ovm.stack.size == 1);
+   vm_deinit(&ovm, &sv_gpa);
 }
 
 static inline void sv_test_vm(sv_testing_t* t)
@@ -244,6 +375,11 @@ static inline void sv_test_vm(sv_testing_t* t)
    sv_test_vm_jumps(t);
    sv_test_vm_values(t);
    sv_test_vm_errors(t);
+   sv_test_vm_negate(t);
+   sv_test_vm_list(t);
+   sv_test_vm_iter(t);
+   sv_test_vm_list_values(t);
+   sv_test_vm_list_oom(t);
 }
 
 #endif

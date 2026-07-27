@@ -29,5 +29,15 @@ sv_opt_def(value_t);
 void value_free(value_t*, const sv_allocator_t*);
 value_t value_borrow(value_t);
 bool value_eql(value_t, value_t);
+/**
+ * Creates a list value cloning the values (see ll_init). obj.cell is NULL on
+ * allocation failure.
+ */
+value_t value_init_list(const value_t*, int64_t, const sv_allocator_t*);
+/**
+ * Creates an iterator value borrowing the given list value. The value must
+ * hold an iterable object. obj.cell is NULL on allocation failure.
+ */
+value_t value_init_iter(value_t, const sv_allocator_t*);
 
 #endif

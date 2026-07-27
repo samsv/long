@@ -38,6 +38,11 @@ static int64_t vm_get_offset(const vm_t* vm, int64_t i)
     return low + (high << 8);
 }
 
+static error_t vm_oom_err(const char* msg)
+{
+    return (error_t){ .error_code = VM_ERR_OOM, .msg = sv_str_init(msg) };
+}
+
 chunk_t chunk_init(void)
 {
     return (chunk_t){
@@ -84,12 +89,36 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
 #define TRY_PUSH(arr, v)                                                                                      \
     sv_vec_push(&(arr), v, &success, a);                                                                      \
     if (success == 0) {                                                                                       \
-        err = (error_t){ .error_code = VM_ERR_OOM,                                                            \
-                         .msg = sv_str_init("OOM when appending to vector"), };                               \
+        err = vm_oom_err("OOM when appending to vector");                                                     \
         goto error;                                                                                           \
     }
 
 #define TRY_PUSH_STACK(v) TRY_PUSH(vm->stack, v)
+
+#define TRY_PUSH_OWNED(v)                                                                                     \
+    sv_vec_push(&vm->stack, v, &success, a);                                                                  \
+    if (success == 0) {                                                                                       \
+        value_free(&v, a);                                                                                    \
+        err = vm_oom_err("OOM when appending to vector");                                                     \
+        goto error;                                                                                           \
+    }
+
+#define TRY_NOT_NULL(v, err_msg) {                                                                            \
+    if ((v) == NULL) {                                                                                        \
+        err = vm_oom_err(err_msg);                                                                            \
+        goto error;                                                                                           \
+    } }
+
+#define UNSUPPORTED_1(v, err_msg) {                                                                           \
+    op_err_payload = (vm_op_err){                                                                             \
+        .line = vm->chunk.lines.arr[vm->ip-1],                                                                \
+        .ops = { v },                                                                                         \
+        .ops_len = 1 };                                                                                       \
+    err = (error_t) { .error_code = VM_ERR_OP_UNSUPPORTED_ARGS,                                               \
+                      .payload = &op_err_payload,                                                             \
+                      .msg = sv_str_init(err_msg) };                                                          \
+    value_free(&v, a);                                                                                        \
+    goto error; }
 
 #define SET(arr) {                                                                                            \
     value_t v = sv_vec_pop(vm->stack);                                                                        \
@@ -155,6 +184,41 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
         }
         case OP_POP: arr_remove(&vm->stack, a); break;
         case OP_POP_LOCAL: arr_remove_n(&vm->locals, vm->chunk.bytecode.arr[vm->ip++], a); break;
+        case OP_NEGATE: {
+            value_t v = sv_vec_pop(vm->stack);
+            if (v.kind != VALUE_NUMBER)
+                UNSUPPORTED_1(v, "Unsupported args for negate")
+            value_t res = {.kind = VALUE_NUMBER, .number = -v.number};
+            TRY_PUSH_STACK(res);
+            break;
+        }
+        case OP_LIST: {
+            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
+            value_t list = value_init_list(&vm->stack.arr[vm->stack.size - n], n, a);
+            TRY_NOT_NULL(list.obj.cell, "OOM when creating list");
+            arr_remove_n(&vm->stack, n, a);
+            TRY_PUSH_OWNED(list);
+            break;
+        }
+        case OP_ITER_CREATE: {
+            value_t v = sv_vec_pop(vm->stack);
+            if (v.kind != VALUE_OBJ || v.obj.cell->value.kind != OBJ_LIST)
+                UNSUPPORTED_1(v, "Type is not iterable")
+            value_t iter = value_init_iter(v, a);
+            value_free(&v, a);
+            TRY_NOT_NULL(iter.obj.cell, "OOM when creating iterator");
+            TRY_PUSH_OWNED(iter);
+            break;
+        }
+        case OP_ITER_NEXT: {
+            value_t v = sv_vec_pop(vm->stack);
+            if (v.kind != VALUE_OBJ || v.obj.cell->value.kind != OBJ_ITER)
+                UNSUPPORTED_1(v, "Type is not an iterator")
+            value_t res = value_borrow(iter_next(&v.obj.cell->value.iter));
+            value_free(&v, a);
+            TRY_PUSH_OWNED(res);
+            break;
+        }
         default: {
             instruction_err_payload = (vm_instruction_err){
                 .line = vm->chunk.lines.arr[vm->ip - 1],
@@ -178,4 +242,7 @@ error:
 #undef EQUALS
 #undef TRY_PUSH
 #undef TRY_PUSH_STACK
+#undef TRY_PUSH_OWNED
+#undef TRY_NOT_NULL
+#undef UNSUPPORTED_1
 }

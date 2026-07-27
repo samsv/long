@@ -188,6 +188,8 @@ static uint32_t str_hash(sv_str_t s)
  * as in Lua. -0.0 is integral, so it hashes like 0.0, matching value_eql.
  * https://www.lua.org/source/5.4/ltable.c.html#l_hashfloat
  *
+ * Lists and iterators hash to 0 (only identity equality applies).
+ *
  * Strings use luaS_hash with a zero seed (Lua's seed exists for hash
  * flooding resistance).
  * https://www.lua.org/source/5.4/lstring.c.html#luaS_hash
@@ -203,6 +205,8 @@ static uint32_t value_hash(value_t v)
         case VALUE_OBJ:
             switch (v.obj.cell->value.kind) {
                 case OBJ_STR: return str_hash(v.obj.cell->value.str);
+                case OBJ_LIST:
+                case OBJ_ITER: return 0;
             }
             return 0;
     }

@@ -4,7 +4,9 @@
 #include "../std/rc.h"
 #include "../std/vector.h"
 #include "../std/option.h"
-#include "../value.h"
+
+typedef struct value_t value_t;
+typedef struct sv_opt_t(value_t) sv_opt_t(value_t);
 
 typedef struct node_t node_t;
 
