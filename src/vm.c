@@ -393,9 +393,11 @@ vm_builder_t vmb_init(sv_str_t name)
     return (vm_builder_t){ .vm = vm_init(name) };
 }
 
-vm_t vmb_build(vm_builder_t b)
+vm_t vmb_build(vm_builder_t* b)
 {
-    return b.vm;
+    vm_t vm = b->vm;
+    b->vm = (vm_t){0};
+    return vm;
 }
 
 bool vmb_add_byte(vm_builder_t* b, uint8_t byte, int64_t line, const sv_allocator_t* a)

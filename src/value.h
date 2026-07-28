@@ -49,5 +49,10 @@ value_t value_init_closure(vm_t*, const value_t*, int64_t, const sv_allocator_t*
  * obj.cell is NULL on allocation failure.
  */
 value_t value_init_closure_member(sv_rc_t(closure_group_t), int64_t, const sv_allocator_t*);
+/**
+ * Creates a string value copying the given string. obj.cell is NULL on
+ * allocation failure.
+ */
+value_t value_init_str(sv_str_t, const sv_allocator_t*);
 
 #endif

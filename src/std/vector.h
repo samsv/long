@@ -237,6 +237,9 @@
           (vec_var_line(_p) < &((vec)->arr[(vec)->size])) && (item = *vec_var_line(_p), 1) ;                  \
           vec_var_line(_p)++)
 
+#define sv_vec_foreach_ptr(itemtype, item, vec)                                                               \
+    for (itemtype* item = (vec)->arr; item < &((vec)->arr[(vec)->size]); item++)
+
 #define sv_vec_deinit(vec, allocator) sv_free(allocator, (vec)->arr)
 
 #define vec_concat_macro_(a, b) a ## b

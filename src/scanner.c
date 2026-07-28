@@ -109,7 +109,7 @@ static token_t operator_of(const scanner_t* s, operator_kind op)
 static token_t error_token(scanner_t* s, ctx_t* ctx, scanner_error_kind kind, const char* msg)
 {
     ctx->err.error_code = (int)kind;
-    ctx->err.msg = sv_str_copy(sv_str_init(msg), &ctx->a);
+    ctx->err.msg = sv_str_copy(sv_str_init(msg), &ctx->alloc);
     return token_of(s, TOKEN_ERROR);
 }
 

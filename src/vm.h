@@ -109,9 +109,9 @@ void vm_err_deinit(error_t*, const sv_allocator_t*);
  */
 vm_builder_t vmb_init(sv_str_t);
 /**
- * Returns the built vm.
+ * Returns the built vm and invalidates the builder.
  */
-vm_t vmb_build(vm_builder_t);
+vm_t vmb_build(vm_builder_t*);
 /**
  * Adds a byte to the bytecode with its source line.
  */

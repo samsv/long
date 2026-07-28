@@ -9,7 +9,7 @@
  * A context to be passed around `lóng` lang functions. Defines the allocator, logger and carries error information.
  */
 typedef struct {
-    sv_allocator_t a;
+    sv_allocator_t alloc;
     sv_logger_t logger;
     error_t err;
 } ctx_t;

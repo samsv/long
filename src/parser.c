@@ -66,7 +66,7 @@ static token_t pattern_token(token_pattern p)
 
 static void token_text(token_t token, char* buf, size_t size, ctx_t* ctx)
 {
-    sv_str_t text = token_format(token, &ctx->a);
+    sv_str_t text = token_format(token, &ctx->alloc);
     if (text.size < 0) {
         snprintf(buf, size, "?");
         return;
@@ -75,13 +75,13 @@ static void token_text(token_t token, char* buf, size_t size, ctx_t* ctx)
         snprintf(buf, size, "%.*s...", (int)(size - 4), text.chars);
     else
         snprintf(buf, size, "%.*s", (int)text.size, text.chars);
-    sv_str_deinit(&text, &ctx->a);
+    sv_str_deinit(&text, &ctx->alloc);
 }
 
 static token_t parser_error_at(ctx_t* ctx, parser_error_kind kind, int64_t line, const char* msg)
 {
     ctx->err.error_code = (int)kind;
-    ctx->err.msg = sv_str_copy(sv_str_init(msg), &ctx->a);
+    ctx->err.msg = sv_str_copy(sv_str_init(msg), &ctx->alloc);
     return (token_t){ .kind = TOKEN_ERROR, .line = line };
 }
 
@@ -110,14 +110,14 @@ static sexpr_t cons_sexpr(sv_vec_t(sexpr_t) list)
 static bool push_sexpr(sv_vec_t(sexpr_t)* list, sexpr_t e, ctx_t* ctx)
 {
     int success;
-    sv_vec_push(list, e, &success, &ctx->a);
+    sv_vec_push(list, e, &success, &ctx->alloc);
     return success != 0;
 }
 
 static sexpr_t free_list_error(sv_vec_t(sexpr_t)* list, ctx_t* ctx, sexpr_t err)
 {
     sexpr_t cons = cons_sexpr(*list);
-    sexpr_free(&cons, &ctx->a);
+    sexpr_free(&cons, &ctx->alloc);
     return err;
 }
 
@@ -125,11 +125,11 @@ static sexpr_t cons_of(ctx_t* ctx, sexpr_t* items, int64_t n, int64_t line)
 {
     sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
     int success;
-    sv_vec_push_many(&list, items, n, &success, &ctx->a);
+    sv_vec_push_many(&list, items, n, &success, &ctx->alloc);
     if (!success) {
         for (int64_t k = 0; k < n; k++)
-            sexpr_free(&items[k], &ctx->a);
-        sv_vec_deinit(&list, &ctx->a);
+            sexpr_free(&items[k], &ctx->alloc);
+        sv_vec_deinit(&list, &ctx->alloc);
         return atom_sexpr(oom_error(ctx, line));
     }
     return cons_sexpr(list);
@@ -261,7 +261,7 @@ static sexpr_t parse_container(
         if (is_error_sexpr(e))
             return free_list_error(list, ctx, e);
         if (!push_sexpr(list, e, ctx)) {
-            sexpr_free(&e, &ctx->a);
+            sexpr_free(&e, &ctx->alloc);
             return free_list_error(list, ctx, atom_sexpr(oom_error(ctx, open_token.line)));
         }
 
@@ -281,7 +281,7 @@ static sexpr_t parse_parens(scanner_t* s, ctx_t* ctx, token_t left_paren, sexpr_
 {
     sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
     if (lhs != NULL && !push_sexpr(&list, *lhs, ctx)) {
-        sexpr_free(lhs, &ctx->a);
+        sexpr_free(lhs, &ctx->alloc);
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, left_paren.line)));
     }
 
@@ -302,14 +302,14 @@ static sexpr_t parse_bracket(scanner_t* s, ctx_t* ctx, token_t left_bracket, sex
 {
     sexpr_t rhs = parse_expr(s, ctx, 0);
     if (is_error_sexpr(rhs)) {
-        sexpr_free(&lhs, &ctx->a);
+        sexpr_free(&lhs, &ctx->alloc);
         return rhs;
     }
 
     token_t closed = parser_expect_close(s, ctx, left_bracket, kind_pattern(TOKEN_RIGHT_BRACKET));
     if (closed.kind == TOKEN_ERROR) {
-        sexpr_free(&lhs, &ctx->a);
-        sexpr_free(&rhs, &ctx->a);
+        sexpr_free(&lhs, &ctx->alloc);
+        sexpr_free(&rhs, &ctx->alloc);
         return atom_sexpr(closed);
     }
 
@@ -335,7 +335,7 @@ static sexpr_t parse_block(
         if (is_error_sexpr(e))
             return free_list_error(&list, ctx, e);
         if (!push_sexpr(&list, e, ctx)) {
-            sexpr_free(&e, &ctx->a);
+            sexpr_free(&e, &ctx->alloc);
             return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, line)));
         }
 
@@ -367,7 +367,7 @@ static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
 
     token_t do_token = parser_expect(s, ctx, kw_pattern(KEYWORD_DO));
     if (do_token.kind == TOKEN_ERROR) {
-        sexpr_free(&loop_cond, &ctx->a);
+        sexpr_free(&loop_cond, &ctx->alloc);
         return atom_sexpr(do_token);
     }
 
@@ -375,7 +375,7 @@ static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
     token_t term;
     sexpr_t body = parse_block(s, ctx, ends, 1, for_token.line, &term);
     if (is_error_sexpr(body)) {
-        sexpr_free(&loop_cond, &ctx->a);
+        sexpr_free(&loop_cond, &ctx->alloc);
         return body;
     }
 
@@ -406,7 +406,7 @@ static sexpr_t parse_fun_body(
         if (is_error_sexpr(closure_vals))
             return free_list_error(list, ctx, closure_vals);
         if (!push_sexpr(list, closure_vals, ctx)) {
-            sexpr_free(&closure_vals, &ctx->a);
+            sexpr_free(&closure_vals, &ctx->alloc);
             return free_list_error(list, ctx, atom_sexpr(oom_error(ctx, fun_token.line)));
         }
     }
@@ -419,7 +419,7 @@ static sexpr_t parse_fun_body(
     if (is_error_sexpr(args))
         return free_list_error(list, ctx, args);
     if (!push_sexpr(list, args, ctx)) {
-        sexpr_free(&args, &ctx->a);
+        sexpr_free(&args, &ctx->alloc);
         return free_list_error(list, ctx, atom_sexpr(oom_error(ctx, fun_token.line)));
     }
 
@@ -431,7 +431,7 @@ static sexpr_t parse_fun_body(
     if (is_error_sexpr(body))
         return free_list_error(list, ctx, body);
     if (!push_sexpr(list, body, ctx)) {
-        sexpr_free(&body, &ctx->a);
+        sexpr_free(&body, &ctx->alloc);
         return free_list_error(list, ctx, atom_sexpr(oom_error(ctx, fun_token.line)));
     }
 
@@ -459,7 +459,7 @@ static sexpr_t parse_fun(scanner_t* s, ctx_t* ctx, token_t fun_token)
         if (is_error_sexpr(body))
             return free_list_error(&list, ctx, body);
         if (!push_sexpr(&list, body, ctx)) {
-            sexpr_free(&body, &ctx->a);
+            sexpr_free(&body, &ctx->alloc);
             return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, fun_token.line)));
         }
     }
@@ -475,7 +475,7 @@ static sexpr_t parse_if(scanner_t* s, ctx_t* ctx, token_t if_token)
 
     token_t do_token = parser_expect(s, ctx, kw_pattern(KEYWORD_DO));
     if (do_token.kind == TOKEN_ERROR) {
-        sexpr_free(&cond, &ctx->a);
+        sexpr_free(&cond, &ctx->alloc);
         return atom_sexpr(do_token);
     }
 
@@ -483,7 +483,7 @@ static sexpr_t parse_if(scanner_t* s, ctx_t* ctx, token_t if_token)
     token_t term;
     sexpr_t true_branch = parse_block(s, ctx, ends, 2, if_token.line, &term);
     if (is_error_sexpr(true_branch)) {
-        sexpr_free(&cond, &ctx->a);
+        sexpr_free(&cond, &ctx->alloc);
         return true_branch;
     }
 
@@ -504,12 +504,12 @@ static sexpr_t parse_if(scanner_t* s, ctx_t* ctx, token_t if_token)
         }
 
         if (is_error_sexpr(false_branch)) {
-            sexpr_free(&out, &ctx->a);
+            sexpr_free(&out, &ctx->alloc);
             return false_branch;
         }
         if (!push_sexpr(&out.cons, false_branch, ctx)) {
-            sexpr_free(&false_branch, &ctx->a);
-            sexpr_free(&out, &ctx->a);
+            sexpr_free(&false_branch, &ctx->alloc);
+            sexpr_free(&out, &ctx->alloc);
             return atom_sexpr(oom_error(ctx, if_token.line));
         }
     }
@@ -527,7 +527,7 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
                 return lhs;
             token_t closed = parser_expect_close(s, ctx, start_token, kind_pattern(TOKEN_RIGHT_PAREN));
             if (closed.kind == TOKEN_ERROR) {
-                sexpr_free(&lhs, &ctx->a);
+                sexpr_free(&lhs, &ctx->alloc);
                 return atom_sexpr(closed);
             }
         } else if (start_token.operator == OPERATOR_LEFT_BRACKET) {
@@ -555,7 +555,7 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
     for (;;) {
         token_t token = scanner_peek(s, ctx);
         if (token.kind == TOKEN_ERROR) {
-            sexpr_free(&lhs, &ctx->a);
+            sexpr_free(&lhs, &ctx->alloc);
             return atom_sexpr(token);
         }
 
@@ -566,7 +566,7 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
             if (token.line != start_token.line)
                 break;
 
-            sexpr_free(&lhs, &ctx->a);
+            sexpr_free(&lhs, &ctx->alloc);
             return unexpected_token_error(ctx, token, "Unexpected token");
         } else {
             break;
@@ -581,7 +581,7 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
         if (prec.has_right) {
             sexpr_t rhs = parse_expr(s, ctx, prec.right);
             if (is_error_sexpr(rhs)) {
-                sexpr_free(&lhs, &ctx->a);
+                sexpr_free(&lhs, &ctx->alloc);
                 return rhs;
             }
             sexpr_t items[] = { atom_sexpr(token), lhs, rhs };
@@ -669,7 +669,7 @@ sexpr_t parser_program(scanner_t* s, ctx_t* ctx)
         if (is_error_sexpr(e))
             return free_list_error(&list, ctx, e);
         if (!push_sexpr(&list, e, ctx)) {
-            sexpr_free(&e, &ctx->a);
+            sexpr_free(&e, &ctx->alloc);
             return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, peeked.line)));
         }
     }

@@ -36,7 +36,13 @@ bool value_eql(value_t x, value_t y)
         case VALUE_NUMBER: return x.number == y.number;
         case VALUE_NIL: return true;
         case VALUE_BOOL: return x.boolean == y.boolean;
-        case VALUE_OBJ: return x.obj.cell == y.obj.cell;
+        case VALUE_OBJ: {
+            if (x.obj.cell == y.obj.cell)
+                return true;
+            if (x.obj.cell->value.kind != OBJ_STR || y.obj.cell->value.kind != OBJ_STR)
+                return false;
+            return sv_str_comp(x.obj.cell->value.str, y.obj.cell->value.str);
+        }
     }
     return false;
 }
@@ -106,5 +112,17 @@ value_t value_init_closure_member(sv_rc_t(closure_group_t) group, int64_t index,
         a);
     if (v.obj.cell == NULL)
         sv_rc_deinit(&group, a);
+    return v;
+}
+
+value_t value_init_str(sv_str_t s, const sv_allocator_t* a)
+{
+    sv_str_t copy = sv_str_copy(s, a);
+    if (copy.chars == NULL)
+        return ERR_VALUE;
+
+    value_t v = obj_wrap((obj_t){ .kind = OBJ_STR, .str = copy }, a);
+    if (v.obj.cell == NULL)
+        sv_str_deinit(&copy, a);
     return v;
 }

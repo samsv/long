@@ -9,7 +9,7 @@
 static ctx_t sv_test_parse_ctx(void)
 {
    return (ctx_t){
-      .a = sv_gpa,
+      .alloc = sv_gpa,
       .logger = sv_std_logger,
       .err = { 0 },
    };
@@ -22,13 +22,13 @@ static void sv_test_parse_ok(sv_testing_t* t, const char* src, const char* expec
    sexpr_t e = parser_expr(&s, &ctx);
 
    sv_test_run_msg(t, ctx.err.error_code == 0, "parse error for \"%s\"", src);
-   sv_str_t formatted = sexpr_format(e, &ctx.a);
+   sv_str_t formatted = sexpr_format(e, &ctx.alloc);
    sv_test_run_msg(t, sv_str_comp(formatted, sv_str_init(expected)),
                    "\"%s\" should format as %s, got %.*s",
                    src, expected, (int)formatted.size, formatted.chars);
 
-   sv_str_deinit(&formatted, &ctx.a);
-   sexpr_free(&e, &ctx.a);
+   sv_str_deinit(&formatted, &ctx.alloc);
+   sexpr_free(&e, &ctx.alloc);
 }
 
 static void sv_test_parse_error(sv_testing_t* t, const char* src, int expected_code)
@@ -41,7 +41,7 @@ static void sv_test_parse_error(sv_testing_t* t, const char* src, int expected_c
                    "expected parse error for \"%s\"", src);
    sv_test_run_msg(t, ctx.err.error_code == expected_code, "error code for \"%s\"", src);
    sv_test_run_msg(t, ctx.err.msg.size > 0, "error msg for \"%s\"", src);
-   sv_str_deinit(&ctx.err.msg, &ctx.a);
+   sv_str_deinit(&ctx.err.msg, &ctx.alloc);
 }
 
 static inline void sv_test_parser_exprs(sv_testing_t* t)
@@ -91,24 +91,24 @@ static inline void sv_test_parser_program_fn(sv_testing_t* t)
    scanner_t s = scanner_init(sv_str_init("1 + 1\n2 * 2"));
    sexpr_t e = parser_program(&s, &ctx);
    sv_test_run(t, ctx.err.error_code == 0);
-   sv_str_t formatted = sexpr_format(e, &ctx.a);
+   sv_str_t formatted = sexpr_format(e, &ctx.alloc);
    sv_test_run(t, sv_str_comp(formatted, sv_str_init("(do (+ 1 1) (* 2 2))")));
-   sv_str_deinit(&formatted, &ctx.a);
-   sexpr_free(&e, &ctx.a);
+   sv_str_deinit(&formatted, &ctx.alloc);
+   sexpr_free(&e, &ctx.alloc);
 
    scanner_t empty = scanner_init(sv_str_init(""));
    sexpr_t ep = parser_program(&empty, &ctx);
    sv_test_run(t, ctx.err.error_code == 0);
-   sv_str_t ef = sexpr_format(ep, &ctx.a);
+   sv_str_t ef = sexpr_format(ep, &ctx.alloc);
    sv_test_run(t, sv_str_comp(ef, sv_str_init("(do)")));
-   sv_str_deinit(&ef, &ctx.a);
-   sexpr_free(&ep, &ctx.a);
+   sv_str_deinit(&ef, &ctx.alloc);
+   sexpr_free(&ep, &ctx.alloc);
 
    scanner_t bad = scanner_init(sv_str_init("1 + 1\n)"));
    sexpr_t eb = parser_program(&bad, &ctx);
    sv_test_run(t, eb.tag == S_ATOM && eb.atom.kind == TOKEN_ERROR);
    sv_test_run(t, ctx.err.error_code == (int)PARSER_ERROR_UNEXPECTED_TOKEN);
-   sv_str_deinit(&ctx.err.msg, &ctx.a);
+   sv_str_deinit(&ctx.err.msg, &ctx.alloc);
 }
 
 static inline void sv_test_parser_errors(sv_testing_t* t)
@@ -136,26 +136,26 @@ static inline void sv_test_parser_errors(sv_testing_t* t)
    scanner_t s = scanner_init(sv_str_init("if x do\ny end extra"));
    sexpr_t e = parser_expr(&s, &ctx);
    sv_test_run(t, ctx.err.error_code == 0);
-   sexpr_free(&e, &ctx.a);
+   sexpr_free(&e, &ctx.alloc);
 
    scanner_t msg_s = scanner_init(sv_str_init("(1 + 2"));
    sexpr_t msg_e = parser_expr(&msg_s, &ctx);
    sv_test_run(t, msg_e.tag == S_ATOM && msg_e.atom.kind == TOKEN_ERROR);
    sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "')'"));
    sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "line 1"));
-   sv_str_deinit(&ctx.err.msg, &ctx.a);
+   sv_str_deinit(&ctx.err.msg, &ctx.alloc);
 
    scanner_t line_s = scanner_init(sv_str_init("1 +\n@"));
    sexpr_t line_e = parser_expr(&line_s, &ctx);
    sv_test_run(t, line_e.tag == S_ATOM && line_e.atom.kind == TOKEN_ERROR);
    sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "line 2"));
-   sv_str_deinit(&ctx.err.msg, &ctx.a);
+   sv_str_deinit(&ctx.err.msg, &ctx.alloc);
 }
 
 static inline void sv_test_parser_oom(sv_testing_t* t)
 {
    ctx_t fail_ctx = {
-      .a = sv_test_fail_alloc,
+      .alloc = sv_test_fail_alloc,
       .logger = sv_std_logger,
       .err = { 0 },
    };
@@ -170,7 +170,7 @@ static inline void sv_test_parser_oom(sv_testing_t* t)
       .self = &counter,
    };
    ctx_t cd_ctx = {
-      .a = countdown,
+      .alloc = countdown,
       .logger = sv_std_logger,
       .err = { 0 },
    };
@@ -178,7 +178,7 @@ static inline void sv_test_parser_oom(sv_testing_t* t)
    sexpr_t e2 = parser_expr(&s2, &cd_ctx);
    sv_test_run(t, e2.tag == S_ATOM && e2.atom.kind == TOKEN_ERROR);
    sv_test_run(t, cd_ctx.err.error_code != 0);
-   sv_str_deinit(&cd_ctx.err.msg, &cd_ctx.a);
+   sv_str_deinit(&cd_ctx.err.msg, &cd_ctx.alloc);
 }
 
 static inline void sv_test_parser(sv_testing_t* t)

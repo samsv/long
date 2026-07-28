@@ -1,0 +1,19 @@
+#ifndef LONG_COMPILER_H
+#define LONG_COMPILER_H
+
+#include "ctx.h"
+#include "vm.h"
+
+vm_t compile(const char* source_code, ctx_t*);
+
+typedef enum {
+    C_ERR_OOM,
+    C_ERR_UNDEFINED_VARIABLE,
+    C_ERR_REDEFINED,
+    C_ERR_UNEXPECTED_SEXPR,
+    C_ERR_NOT_CALLABLE,
+    C_ERR_NOT_IMPLEMENTED,
+    C_ERR_JUMP_TOO_LONG,
+} compiler_error_kind;
+
+#endif
