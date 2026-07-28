@@ -75,6 +75,22 @@ static inline void sv_test_compiler_basics(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("if 2 == 3 do 1 else 0 end", 0));
 }
 
+static inline void sv_test_compiler_comparisons(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_kind("1 < 2", VALUE_BOOL));
+   sv_test_run(t, sv_test_compiler_num("if 1 < 2 do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if 2 < 2 do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if 2 <= 2 do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if 3 <= 2 do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if 2 > 1 do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if 1 > 1 do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if 1 >= 1 do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if 1 >= 2 do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if 1 != 2 do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if 2 != 2 do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if nil != 1 do 1 else 0 end", 1));
+}
+
 static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
@@ -96,6 +112,15 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    sv_test_run(t, ((vm_arity_err*)aerr.value.payload)->got == 2);
    vm_err_deinit(&aerr.value, &sv_gpa);
    vm_deinit(&avm, &sv_gpa);
+
+   ctx_t cctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   vm_t cvm = compile("[1] < 2", &cctx);
+   sv_test_run(t, cvm.chunk.bytecode.arr != NULL);
+   sv_opt_t(error_t) cerr = vm_run(&cvm, &sv_gpa);
+   sv_test_run(t, cerr.is_some);
+   sv_test_run(t, cerr.value.error_code == VM_ERR_OP_UNSUPPORTED_ARGS);
+   vm_err_deinit(&cerr.value, &sv_gpa);
+   vm_deinit(&cvm, &sv_gpa);
 }
 
 static inline void sv_test_compiler_for(sv_testing_t* t)
@@ -217,12 +242,13 @@ static inline void sv_test_compiler_errors(sv_testing_t* t)
 {
    sv_test_run(t, sv_test_compiler_err("y + 1") == C_ERR_UNDEFINED_VARIABLE);
    sv_test_run(t, sv_test_compiler_err("x = 1\nx = 2") == C_ERR_REDEFINED);
-   sv_test_run(t, sv_test_compiler_err("1 < 2") == C_ERR_NOT_IMPLEMENTED);
+   sv_test_run(t, sv_test_compiler_err("1 |> 2") == C_ERR_NOT_IMPLEMENTED);
 }
 
 static inline void sv_test_compiler(sv_testing_t* t)
 {
    sv_test_compiler_basics(t);
+   sv_test_compiler_comparisons(t);
    sv_test_compiler_for(t);
    sv_test_compiler_functions(t);
    sv_test_compiler_closures(t);

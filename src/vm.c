@@ -141,7 +141,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
     TRY_PUSH_STACK(value_borrow(src.arr[i]));                                                                 \
     break; }
 
-#define MATH_OP(op) {                                                                                         \
+#define NUM_BIN_OP(op, res_kind, res_field) {                                                                 \
     value_t v2 = sv_vec_pop(vm->stack);                                                                       \
     value_t v1 = sv_vec_pop(vm->stack);                                                                       \
     if (v1.kind != VALUE_NUMBER || v2.kind != VALUE_NUMBER) {                                                 \
@@ -158,14 +158,17 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
         value_free(&v2, a);                                                                                   \
         goto error;                                                                                           \
     }                                                                                                         \
-    value_t res = {.kind = VALUE_NUMBER, .number = v1.number op v2.number};                                   \
+    value_t res = {.kind = res_kind, .res_field = v1.number op v2.number};                                    \
     TRY_PUSH_STACK(res);                                                                                      \
     break; }
 
-#define EQUALS() {                                                                                            \
+#define MATH_OP(op) NUM_BIN_OP(op, VALUE_NUMBER, number)
+#define CMP_OP(op) NUM_BIN_OP(op, VALUE_BOOL, boolean)
+
+#define EQUALS(want) {                                                                                        \
     value_t v2 = sv_vec_pop(vm->stack);                                                                       \
     value_t v1 = sv_vec_pop(vm->stack);                                                                       \
-    value_t res = {.kind = VALUE_BOOL, .boolean = value_eql(v1, v2)};                                         \
+    value_t res = {.kind = VALUE_BOOL, .boolean = value_eql(v1, v2) == want};                                 \
     value_free(&v1, a);                                                                                       \
     value_free(&v2, a);                                                                                       \
     TRY_PUSH_STACK(res);                                                                                      \
@@ -184,7 +187,12 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
         case OP_ADD: MATH_OP(+)
         case OP_MUL: MATH_OP(*)
         case OP_DIV: MATH_OP(/)
-        case OP_EQUALS: EQUALS()
+        case OP_EQUALS: EQUALS(true)
+        case OP_NOT_EQUALS: EQUALS(false)
+        case OP_GREATER: CMP_OP(>)
+        case OP_GREATER_EQUAL: CMP_OP(>=)
+        case OP_LESS: CMP_OP(<)
+        case OP_LESS_EQUAL: CMP_OP(<=)
         case OP_JUMP: vm->ip += vm_get_offset(vm, vm->ip); break;
         case OP_JUMP_BACK: vm->ip -= vm_get_offset(vm, vm->ip); break;
         case OP_JUMP_IF_FALSE: {
@@ -379,6 +387,8 @@ error:
 #undef SET
 #undef GET
 #undef MATH_OP
+#undef CMP_OP
+#undef NUM_BIN_OP
 #undef EQUALS
 #undef TRY_OR
 #undef TRY_PUSH

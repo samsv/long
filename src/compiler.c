@@ -288,13 +288,13 @@ static bool compile_equal(compiler_t* c, const sexpr_t* args, int64_t n, int64_t
     return add_var(c, id, line, ctx);
 }
 
-static bool compile_equal_equal(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+static bool compile_binary_op(compiler_t* c, uint8_t instruction, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
     if (n != 2)
         return compiler_malformed(ctx, "comparison", line);
     TRY(compile_sexpr(c, args[0], ctx));
     TRY(compile_sexpr(c, args[1], ctx));
-    return emit(c, ctx, OP_EQUALS, line);
+    return emit(c, ctx, instruction, line);
 }
 
 static bool compile_operator(compiler_t* c, operator_kind op, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -306,17 +306,17 @@ static bool compile_operator(compiler_t* c, operator_kind op, const sexpr_t* arg
         case OPERATOR_SLASH: instruction = OP_DIV; break;
         case OPERATOR_STAR: instruction = OP_MUL; break;
         case OPERATOR_EQUAL: return compile_equal(c, args, n, line, ctx);
-        case OPERATOR_EQUAL_EQUAL: return compile_equal_equal(c, args, n, line, ctx);
+        case OPERATOR_EQUAL_EQUAL: return compile_binary_op(c, OP_EQUALS, args, n, line, ctx);
+        case OPERATOR_BANG_EQUAL: return compile_binary_op(c, OP_NOT_EQUALS, args, n, line, ctx);
+        case OPERATOR_GREATER: return compile_binary_op(c, OP_GREATER, args, n, line, ctx);
+        case OPERATOR_GREATER_EQUAL: return compile_binary_op(c, OP_GREATER_EQUAL, args, n, line, ctx);
+        case OPERATOR_LESS: return compile_binary_op(c, OP_LESS, args, n, line, ctx);
+        case OPERATOR_LESS_EQUAL: return compile_binary_op(c, OP_LESS_EQUAL, args, n, line, ctx);
         case OPERATOR_DOT:
         case OPERATOR_PIPE_FORWARD:
         case OPERATOR_COMMA:
         case OPERATOR_LEFT_PAREN:
-        case OPERATOR_LEFT_BRACKET:
-        case OPERATOR_BANG_EQUAL:
-        case OPERATOR_GREATER:
-        case OPERATOR_GREATER_EQUAL:
-        case OPERATOR_LESS:
-        case OPERATOR_LESS_EQUAL: {
+        case OPERATOR_LEFT_BRACKET: {
             char msg[96];
             snprintf(msg, sizeof(msg), "Operator not implemented at line %" PRId64, line);
             return compiler_error(ctx, C_ERR_NOT_IMPLEMENTED, msg);

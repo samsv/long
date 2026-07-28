@@ -59,6 +59,11 @@ typedef enum {
     OP_JUMP_BACK,
     OP_JUMP_IF_FALSE,
     OP_LIST,
+    OP_NOT_EQUALS,
+    OP_GREATER,
+    OP_GREATER_EQUAL,
+    OP_LESS,
+    OP_LESS_EQUAL,
 } vm_instructions;
 
 typedef enum {
