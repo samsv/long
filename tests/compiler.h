@@ -4,7 +4,7 @@
 #include "../src/std/test.h"
 #include "../src/std/allocator_std.h"
 #include "../src/compiler.h"
-#include "string.h"
+#include <math.h>
 
 static inline value_t sv_test_compiler_eval(const char* src, bool* ok)
 {

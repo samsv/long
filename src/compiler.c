@@ -458,6 +458,7 @@ static bool compile_fn_vm(
     FN_TRY(locals_add(fc.locals, name, ctx, line));
 
     FN_TRY(compile_sexpr(&fc, body, ctx));
+    FN_TRY(vmb_add_byte(&fc.builder, OP_RETURN, 0, &ctx->alloc));
 #undef FN_TRY
 
     *out = vmb_build(&fc.builder);
@@ -707,6 +708,9 @@ vm_t compile(const char* source_code, ctx_t* ctx)
         first = false;
     }
     if (token.kind == TOKEN_ERROR)
+        ERR_RETURN;
+
+    if (!vmb_add_byte(&compiler.builder, OP_RETURN, token.line, &ctx->alloc))
         ERR_RETURN;
 
     compiler_free(&compiler, &ctx->alloc);

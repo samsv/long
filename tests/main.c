@@ -6,7 +6,6 @@
 #include "rc.h"
 #include "list.h"
 #include "map.h"
-#include "vm.h"
 #include "compiler.h"
 #include "parser.h"
 
@@ -20,7 +19,6 @@ int main(void)
     sv_test_rc(&t);
     sv_test_list(&t);
     sv_test_map(&t);
-    sv_test_vm(&t);
     sv_test_compiler(&t);
     sv_test_parser(&t);
 

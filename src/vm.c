@@ -176,7 +176,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
 
     error_t err;
     int success = 0;
-    while (vm->ip < vm->chunk.bytecode.size) switch (vm->chunk.bytecode.arr[vm->ip++]) {
+    while (1) switch (vm->chunk.bytecode.arr[vm->ip++]) {
         case OP_SET_LOCAL: SET(vm->locals)
         case OP_SET_GLOBAL: SET(vm->globals)
         case OP_GET_LOCAL: GET(vm->locals)
@@ -365,6 +365,8 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
             TRY_PUSH_OWNED(res);
             break;
         }
+        case OP_RETURN:
+            return sv_opt_none_t(error_t);
         default: {
             vm_instruction_err* instruction_err_payload = sv_malloc(a, sizeof(vm_instruction_err));
             if (instruction_err_payload != NULL)
