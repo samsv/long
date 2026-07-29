@@ -301,10 +301,10 @@ static sexpr_t parse_list(scanner_t* s, ctx_t* ctx, token_t open, token_pattern 
     return parse_container(&list, s, ctx, open, close);
 }
 
-static sexpr_t parse_map(scanner_t* s, ctx_t* ctx, token_t open)
+static sexpr_t parse_hashmap(scanner_t* s, ctx_t* ctx, token_t open)
 {
     sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
-    token_t map_atom = { .kind = TOKEN_SP_FUNCTION, .line = open.line, .fn = FN_MAP };
+    token_t map_atom = { .kind = TOKEN_SP_FUNCTION, .line = open.line, .fn = FN_HASHMAP };
     if (!push_sexpr(&list, atom_sexpr(map_atom), ctx))
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
 
@@ -587,7 +587,7 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
     } else if (start_token.kind == TOKEN_LITERAL) {
         lhs = atom_sexpr(start_token);
     } else if (start_token.kind == TOKEN_PERCENT_BRACE) {
-        lhs = parse_map(s, ctx, start_token);
+        lhs = parse_hashmap(s, ctx, start_token);
         if (is_error_sexpr(lhs))
             return lhs;
     } else if (start_token.kind == TOKEN_KEYWORD && start_token.keyword == KEYWORD_NOT) {
@@ -700,6 +700,7 @@ static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
             }
             case FN_CLASS:
             case FN_MAP:
+            case FN_HASHMAP:
             case FN_MAPF:
             case FN_MATCH:
             case FN_REDUCE:

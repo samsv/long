@@ -48,7 +48,7 @@ static bool list_eql(list_t x, list_t y)
     }
 }
 
-static bool map_eql(map_t x, map_t y)
+static bool map_eql(hashmap_t x, hashmap_t y)
 {
     if (map_count(x) != map_count(y))
         return false;
@@ -208,7 +208,7 @@ value_t value_init_map(const value_t* vs, int64_t n_pairs, const sv_allocator_t*
         }
     }
 
-    map_t map = map_init(kvs, n_pairs, a);
+    hashmap_t map = map_init(kvs, n_pairs, a);
     if (kvs != NULL)
         sv_free(a, kvs);
     if (map.cell == NULL)
@@ -231,7 +231,7 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
             case OBJ_ERR: return "error";
             case OBJ_STR: return "string";
             case OBJ_LIST: return "list";
-            case OBJ_MAP: return "map";
+            case OBJ_MAP: return "hashmap";
             case OBJ_NATIVE_FN:
             case OBJ_CLOSURE:
             case OBJ_CLOSURE_MEMBER:

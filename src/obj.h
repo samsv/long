@@ -23,7 +23,7 @@ typedef struct obj_t {
     union {
         sv_str_t str;
         list_t list;
-        map_t map;
+        hashmap_t map;
         iter_t iter;
         native_fn_t fn;
         closure_t closure;

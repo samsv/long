@@ -8,7 +8,7 @@
 
 #define MAX_COPY_SIZE 32
 #define MAX_DEPTH 5
-#define ERR_MAP (map_t){0}
+#define ERR_MAP (hashmap_t){0}
 
 #define MAX_LOAD_PERCENTAGE 75
 #define ERR_NODE (map_node_t){0}
@@ -244,7 +244,7 @@ static int64_t capacity_for_size(int64_t size)
     return pow;
 }
 
-static map_node_t node_init(sparse_set_t set, map_t child)
+static map_node_t node_init(sparse_set_t set, hashmap_t child)
 {
     return (map_node_t){
         .set = set,
@@ -259,7 +259,7 @@ static void node_free(map_node_t* n, const sv_allocator_t* a)
     sv_rc_deinit(&n->child, a);
 }
 
-static map_node_t node_init_capacity(int64_t size, map_t child, const sv_allocator_t* a)
+static map_node_t node_init_capacity(int64_t size, hashmap_t child, const sv_allocator_t* a)
 {
     sparse_set_t set = set_init(size, a);
     TRY_NOT_NULL(set.dense.cell, ERR_NODE);
@@ -271,7 +271,7 @@ static int64_t node_physical_count(map_node_t node)
     return node.set.len + (node.child.cell != NULL ? node_physical_count(node.child.cell->value) : 0);
 }
 
-static get_result_t node_get_hashed(map_node_t node, value_t key, uint32_t hash, map_t child)
+static get_result_t node_get_hashed(map_node_t node, value_t key, uint32_t hash, hashmap_t child)
 {
     int64_t cap = set_capacity(node.set);
     int64_t i = (int64_t)hash % cap;
@@ -360,7 +360,7 @@ static sv_opt_t(sparse_item_t) iter_next_item(map_iter_t* it)
 
 static bool node_insert_mut(map_node_t* node, value_t key, sv_opt_t(value_t) value, const sv_allocator_t* a)
 {
-    get_result_t r = node_get_hashed(*node, key, value_hash(key), (map_t){0});
+    get_result_t r = node_get_hashed(*node, key, value_hash(key), (hashmap_t){0});
     switch (r.kind) {
         case GET_EMPTY:
             return set_insert_mut(
@@ -384,7 +384,7 @@ static bool node_insert_mut(map_node_t* node, value_t key, sv_opt_t(value_t) val
 
 static map_node_t node_init_kvs(const kv_t* kvs, int64_t len, const sv_allocator_t* a)
 {
-    map_node_t node = node_init_capacity(capacity_for_size(len), (map_t){0}, a);
+    map_node_t node = node_init_capacity(capacity_for_size(len), (hashmap_t){0}, a);
     TRY_NOT_NULL(node.set.dense.cell, ERR_NODE);
     for (int64_t i = 0; i < len; i++)
         TRY_INSERT_MUT(node, kvs[i].key, sv_opt_some_t(value_t, kvs[i].value), a);
@@ -403,7 +403,7 @@ static map_node_t node_update(map_node_t node, value_t key, sv_opt_t(value_t) va
 
 static map_node_t node_grow(map_node_t parent, value_t key, sv_opt_t(value_t) value, const sv_allocator_t* a)
 {
-    map_node_t node = node_init_capacity(capacity_for_size(node_physical_count(parent)), (map_t){0}, a);
+    map_node_t node = node_init_capacity(capacity_for_size(node_physical_count(parent)), (hashmap_t){0}, a);
     TRY_NOT_NULL(node.set.dense.cell, ERR_NODE);
 
     if (value.is_some)
@@ -419,16 +419,16 @@ static map_node_t node_grow(map_node_t parent, value_t key, sv_opt_t(value_t) va
     return node;
 }
 
-static map_t node_wrap(map_node_t node, const sv_allocator_t* a)
+static hashmap_t node_wrap(map_node_t node, const sv_allocator_t* a)
 {
     TRY_NOT_NULL(node.set.dense.cell, ERR_MAP);
-    map_t map = sv_rc_init(map_node_t, node, node_free, a);
+    hashmap_t map = sv_rc_init(map_node_t, node, node_free, a);
     if (map.cell == NULL)
         node_free(&node, a);
     return map;
 }
 
-static map_node_t node_layer(map_t map, value_t key, sv_opt_t(value_t) value, const sv_allocator_t* a)
+static map_node_t node_layer(hashmap_t map, value_t key, sv_opt_t(value_t) value, const sv_allocator_t* a)
 {
     map_node_t layer = node_init_capacity(capacity_for_size(1), map, a);
     TRY_NOT_NULL(layer.set.dense.cell, ERR_NODE);
@@ -438,7 +438,7 @@ static map_node_t node_layer(map_t map, value_t key, sv_opt_t(value_t) value, co
 
 #undef TRY_INSERT_MUT
 
-static map_node_t map_update_node(map_t map, value_t key, sv_opt_t(value_t) value, int64_t index, const sv_allocator_t* a)
+static map_node_t map_update_node(hashmap_t map, value_t key, sv_opt_t(value_t) value, int64_t index, const sv_allocator_t* a)
 {
     map_node_t node = map.cell->value;
     if (node_physical_count(node) <= MAX_COPY_SIZE)
@@ -448,17 +448,17 @@ static map_node_t map_update_node(map_t map, value_t key, sv_opt_t(value_t) valu
     return node_layer(map, key, value, a);
 }
 
-map_t map_init(const kv_t* kvs, int64_t len, const sv_allocator_t* a)
+hashmap_t map_init(const kv_t* kvs, int64_t len, const sv_allocator_t* a)
 {
     return node_wrap(node_init_kvs(kvs, len, a), a);
 }
 
-void map_deinit(map_t* map, const sv_allocator_t* a)
+void map_deinit(hashmap_t* map, const sv_allocator_t* a)
 {
     sv_rc_deinit(map, a);
 }
 
-sv_opt_t(value_t) map_get(map_t map, value_t key)
+sv_opt_t(value_t) map_get(hashmap_t map, value_t key)
 {
     map_node_t node = map.cell->value;
     get_result_t r = node_get_hashed(node, key, value_hash(key), node.child);
@@ -467,11 +467,11 @@ sv_opt_t(value_t) map_get(map_t map, value_t key)
     return sv_opt_some_t(value_t, r.item->value.value);
 }
 
-map_t map_put(map_t map, kv_t kv, const sv_allocator_t* a)
+hashmap_t map_put(hashmap_t map, kv_t kv, const sv_allocator_t* a)
 {
     map_node_t node = map.cell->value;
     sv_opt_t(value_t) value = sv_opt_some_t(value_t, kv.value);
-    get_result_t r = node_get_hashed(node, kv.key, value_hash(kv.key), (map_t){0});
+    get_result_t r = node_get_hashed(node, kv.key, value_hash(kv.key), (hashmap_t){0});
 
     map_node_t new_node;
     switch (r.kind) {
@@ -503,7 +503,7 @@ map_t map_put(map_t map, kv_t kv, const sv_allocator_t* a)
     return node_wrap(new_node, a);
 }
 
-map_t map_delete(map_t map, value_t key, const sv_allocator_t* a)
+hashmap_t map_delete(hashmap_t map, value_t key, const sv_allocator_t* a)
 {
     map_node_t node = map.cell->value;
     get_result_t r = node_get_hashed(node, key, value_hash(key), node.child);
@@ -515,7 +515,7 @@ map_t map_delete(map_t map, value_t key, const sv_allocator_t* a)
     return node_wrap(new_node, a);
 }
 
-int64_t map_count(map_t map)
+int64_t map_count(hashmap_t map)
 {
     map_iter_t it = iter_init_node(map.cell->value);
     int64_t count = 0;
@@ -524,12 +524,12 @@ int64_t map_count(map_t map)
     return count;
 }
 
-map_iter_t map_iter_init_no_borrow(map_t map)
+map_iter_t map_iter_init_no_borrow(hashmap_t map)
 {
     return iter_init_node(map.cell->value);
 }
 
-map_iter_t map_iter_init(map_t map)
+map_iter_t map_iter_init(hashmap_t map)
 {
     map_iter_t it = map_iter_init_no_borrow(map);
     if (it.kind == MAP_ITER_FLAT)

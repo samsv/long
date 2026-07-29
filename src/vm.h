@@ -63,7 +63,7 @@ typedef enum {
     OP_GREATER_EQUAL,
     OP_LESS,
     OP_LESS_EQUAL,
-    OP_MAP,
+    OP_HASHMAP,
     OP_INDEX,
     OP_NOT,
     OP_DUP,

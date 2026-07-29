@@ -15,6 +15,6 @@ sv_vec_def(value_t);
 typedef struct map_node_t map_node_t;
 typedef struct sv_rc_cell_t(map_node_t) sv_rc_cell_t(map_node_t);
 sv_rc_wrapper_def(map_node_t);
-typedef sv_rc_t(map_node_t) map_t;
+typedef sv_rc_t(map_node_t) hashmap_t;
 
 #endif

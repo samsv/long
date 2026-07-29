@@ -122,12 +122,12 @@ static inline void sv_test_parser_program_fn(sv_testing_t* t)
 
 static inline void sv_test_parser_maps(sv_testing_t* t)
 {
-   sv_test_parse_ok(t, "%{}", "(map)");
-   sv_test_parse_ok(t, "%{\"key1\": \"value1\", 2: 0}", "(map \"key1\" \"value1\" 2 0)");
-   sv_test_parse_ok(t, "%{[1, 2, 3]: \"other val\", x: y}", "(map (list 1 2 3) \"other val\" x y)");
-   sv_test_parse_ok(t, "%{1: %{2: 3}}", "(map 1 (map 2 3))");
-   sv_test_parse_ok(t, "%{1 + 2: f(3)}", "(map (+ 1 2) (f 3))");
-   sv_test_parse_ok(t, "m = %{1: 2}", "(= m (map 1 2))");
+   sv_test_parse_ok(t, "%{}", "(hashmap)");
+   sv_test_parse_ok(t, "%{\"key1\": \"value1\", 2: 0}", "(hashmap \"key1\" \"value1\" 2 0)");
+   sv_test_parse_ok(t, "%{[1, 2, 3]: \"other val\", x: y}", "(hashmap (list 1 2 3) \"other val\" x y)");
+   sv_test_parse_ok(t, "%{1: %{2: 3}}", "(hashmap 1 (hashmap 2 3))");
+   sv_test_parse_ok(t, "%{1 + 2: f(3)}", "(hashmap (+ 1 2) (f 3))");
+   sv_test_parse_ok(t, "m = %{1: 2}", "(= m (hashmap 1 2))");
 
    sv_test_parse_ok(t, "a |> f() |> g()", "(|> (|> a (f)) (g))");
    sv_test_parse_ok(t, "not true", "(not true)");

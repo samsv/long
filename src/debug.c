@@ -52,7 +52,7 @@ static const char* op_name(vm_instructions op)
         case OP_JUMP_BACK: return "jump_back";
         case OP_JUMP_IF_FALSE: return "jump_if_false";
         case OP_LIST: return "list";
-        case OP_MAP: return "map";
+        case OP_HASHMAP: return "hashmap";
         case OP_INDEX: return "index";
         case OP_NOT: return "not";
         case OP_DUP: return "dup";
@@ -81,7 +81,7 @@ void print_chunk(vm_t v)
                 printf("%" PRId64 " [ %s ] size %u\n", i, op_name(op), code[i + 1]);
                 i += 2;
                 break;
-            case OP_MAP:
+            case OP_HASHMAP:
                 printf("%" PRId64 " [ %s ] pairs %u\n", i, op_name(op), code[i + 1]);
                 i += 2;
                 break;

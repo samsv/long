@@ -85,12 +85,12 @@ static bool patch_jump(compiler_t* c, ctx_t* ctx, int64_t ji, int64_t line)
     return true;
 }
 
-static int64_t names_count(map_t names)
+static int64_t names_count(hashmap_t names)
 {
     return names.cell != NULL ? map_count(names) : 0;
 }
 
-static sv_opt_t(int64_t) names_get(map_t names, sv_str_t id, ctx_t* ctx)
+static sv_opt_t(int64_t) names_get(hashmap_t names, sv_str_t id, ctx_t* ctx)
 {
     if (names.cell == NULL)
         return sv_opt_none_t(int64_t);
@@ -106,7 +106,7 @@ static sv_opt_t(int64_t) names_get(map_t names, sv_str_t id, ctx_t* ctx)
     return sv_opt_some_t(int64_t, (int64_t)v.value.number);
 }
 
-static bool names_add(map_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
+static bool names_add(hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
 {
     if (names->cell == NULL) {
         *names = map_init(NULL, 0, &ctx->alloc);
@@ -123,7 +123,7 @@ static bool names_add(map_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
         return false;
 
     kv_t kv = { .key = key, .value = { .kind = VALUE_NUMBER, .number = (double)map_count(*names) } };
-    map_t new_names = map_put(*names, kv, &ctx->alloc);
+    hashmap_t new_names = map_put(*names, kv, &ctx->alloc);
     value_free(&key, &ctx->alloc);
     if (new_names.cell == NULL)
         return false;
@@ -407,11 +407,11 @@ static bool compile_list(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
     return emit2(c, ctx, OP_LIST, (uint8_t)n, line);
 }
 
-static bool compile_map(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+static bool compile_hashmap(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
     for (int64_t i = 0; i < n; i++)
         TRY(compile_sexpr(c, args[i], ctx));
-    return emit2(c, ctx, OP_MAP, (uint8_t)(n / 2), line);
+    return emit2(c, ctx, OP_HASHMAP, (uint8_t)(n / 2), line);
 }
 
 static bool compile_and_or(compiler_t* c, bool is_and, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -464,7 +464,7 @@ static bool compile_fn_vm(
     sexpr_t body,
     sv_str_t name,
     int64_t upvalue_offset,
-    map_t members,
+    hashmap_t members,
     int64_t line,
     ctx_t* ctx,
     vm_t* out)
@@ -475,8 +475,8 @@ static bool compile_fn_vm(
 
 #define FN_TRY(call) do {                                                                                     \
     if (!(call)) {                                                                                            \
-        fc.members = (map_t){0};                                                                              \
-        fc.globals.name_indexes = (map_t){0};                                                                 \
+        fc.members = (hashmap_t){0};                                                                          \
+        fc.globals.name_indexes = (hashmap_t){0};                                                             \
         compiler_free(&fc, &ctx->alloc);                                                                      \
         vm_deinit(&fc.builder.vm, &ctx->alloc);                                                               \
         return false;                                                                                         \
@@ -506,8 +506,8 @@ static bool compile_fn_vm(
     *out = vmb_build(&fc.builder);
     out->name = name;
     out->arity = (uint8_t)params->cons.size;
-    fc.members = (map_t){0};
-    fc.globals.name_indexes = (map_t){0};
+    fc.members = (hashmap_t){0};
+    fc.globals.name_indexes = (hashmap_t){0};
     compiler_free(&fc, &ctx->alloc);
     return true;
 }
@@ -544,7 +544,7 @@ static bool compile_fun(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     TRY(expect_id(args[0], ctx, &name));
 
     vm_t fn_vm;
-    TRY(compile_fn_vm(c, cls, params, body, name, 0, (map_t){0}, line, ctx, &fn_vm));
+    TRY(compile_fn_vm(c, cls, params, body, name, 0, (hashmap_t){0}, line, ctx, &fn_vm));
 
     if (!compile_upvalue_loads(c, cls, 0, ctx)) {
         vm_deinit(&fn_vm, &ctx->alloc);
@@ -567,7 +567,7 @@ static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, 
 {
     uint8_t first = (uint8_t)c->builder.vm.chunk.functions.size;
 
-    map_t member_names = {0};
+    hashmap_t member_names = {0};
 #define G_TRY(call) do {                                                                                      \
     if (!(call)) {                                                                                            \
         map_deinit(&member_names, &ctx->alloc);                                                               \
@@ -690,9 +690,10 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
             case FN_IF: return compile_if(c, cons + 1, n - 1, a.line, ctx);
             case FN_FOR: return compile_for(c, cons + 1, n - 1, a.line, ctx);
             case FN_LIST: return compile_list(c, cons + 1, n - 1, a.line, ctx);
-            case FN_MAP: return compile_map(c, cons + 1, n - 1, a.line, ctx);
+            case FN_HASHMAP: return compile_hashmap(c, cons + 1, n - 1, a.line, ctx);
             case FN_FUN: return compile_fun(c, cons + 1, n - 1, a.line, ctx);
             case FN_CLASS:
+            case FN_MAP:
             case FN_MAPF:
             case FN_MATCH:
             case FN_REDUCE:

@@ -224,7 +224,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
             TRY_PUSH_OWNED(list);
             break;
         }
-        case OP_MAP: {
+        case OP_HASHMAP: {
             uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
             value_t map = value_init_map(&vm->stack.arr[vm->stack.size - 2 * n], n, a);
             TRY_NOT_NULL(map.obj.cell, "OOM when creating map");

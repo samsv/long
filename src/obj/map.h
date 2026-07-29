@@ -37,22 +37,22 @@ typedef struct {
 
 typedef struct map_node_t {
     sparse_set_t set;
-    map_t child;
+    hashmap_t child;
     int8_t depth;
 } map_node_t;
 
 sv_rc_cell_def(map_node_t);
 
 typedef struct {
-    map_t root;
+    hashmap_t root;
     map_node_t node;
     int64_t index;
 } map_flat_iter_t;
 
 typedef struct {
-    map_t root;
+    hashmap_t root;
     map_node_t parent;
-    map_t map;
+    hashmap_t map;
     int64_t index;
     int8_t depth;
 } map_depth_iter_t;
@@ -73,39 +73,39 @@ typedef struct {
 /**
  * Initializes a new map from the key values array.
  */
-map_t map_init(const kv_t*, int64_t, const sv_allocator_t*);
+hashmap_t map_init(const kv_t*, int64_t, const sv_allocator_t*);
 /**
  * Deinitializes the map.
  */
-void map_deinit(map_t*, const sv_allocator_t*);
+void map_deinit(hashmap_t*, const sv_allocator_t*);
 
 /**
  * Returns the optional value associated with the key. The value is not borrowed.
  */
-sv_opt_t(value_t) map_get(map_t, value_t);
+sv_opt_t(value_t) map_get(hashmap_t, value_t);
 /**
  * Inserts or update the key into the map.
  */
-map_t map_put(map_t, kv_t, const sv_allocator_t*);
+hashmap_t map_put(hashmap_t, kv_t, const sv_allocator_t*);
 /**
  * Removes the given key from the map.
  */
-map_t map_delete(map_t, value_t, const sv_allocator_t*);
+hashmap_t map_delete(hashmap_t, value_t, const sv_allocator_t*);
 
 /**
  * Counts the amount of items in the map.
  */
-int64_t map_count(map_t);
+int64_t map_count(hashmap_t);
 
 /**
  * Initializes an iterator viewing the map without borrowing it. The map must
  * outlive the iterator; no deinit is needed.
  */
-map_iter_t map_iter_init_no_borrow(map_t);
+map_iter_t map_iter_init_no_borrow(hashmap_t);
 /**
  * Initializes a new iterator from the map.
  */
-map_iter_t map_iter_init(map_t);
+map_iter_t map_iter_init(hashmap_t);
 /**
  * Deinitializes the iterator.
  */
