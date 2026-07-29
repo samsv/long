@@ -754,7 +754,12 @@ vm_t compile(const char* source_code, ctx_t* ctx)
 
     token_t token;
     bool first = true;
-    while ((token = scanner_peek(&s, ctx), token.kind != TOKEN_EOF && token.kind != TOKEN_ERROR)) {
+    for (;;) {
+        parser_skip_semicolons(&s, ctx);
+        token = scanner_peek(&s, ctx);
+        if (token.kind == TOKEN_EOF || token.kind == TOKEN_ERROR)
+            break;
+
         if (!first && !vmb_add_byte(&compiler.builder, OP_POP, token.line, &ctx->alloc)) {
             compiler_oom(ctx, token.line);
             ERR_RETURN;

@@ -168,6 +168,12 @@ static inline void sv_test_compiler_logic(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("\"a\" + 1") == VM_ERR_OP_UNSUPPORTED_ARGS);
    sv_test_run(t, sv_test_compiler_runtime_err("1 + \"a\"") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
+   sv_test_run(t, sv_test_compiler_num("1; 2", 2));
+   sv_test_run(t, sv_test_compiler_num("2;", 2));
+   sv_test_run(t, sv_test_compiler_num("x = nil; (x or 5) + 1", 6));
+   sv_test_run(t, sv_test_compiler_num("i = 1; [5, 6][i]", 6));
+   sv_test_run(t, sv_test_compiler_num("fun f() = 1; 2 end f()", 2));
+
    sv_test_run(t, sv_test_compiler_num("fun inc(x) = x + 1 end\n5 |> inc()", 6));
    sv_test_run(t, sv_test_compiler_num("fun add2(x, y) = x + y end\n1 |> add2(2)", 3));
    sv_test_run(t, sv_test_compiler_num("fun inc(x) = x + 1 end\n5 |> inc() |> inc()", 7));

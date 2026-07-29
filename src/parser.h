@@ -25,4 +25,9 @@ sexpr_t parser_expr(scanner_t* s, ctx_t* ctx);
  */
 sexpr_t parser_program(scanner_t* s, ctx_t* ctx);
 
+/**
+ * Consumes any run of ';' tokens.
+ */
+void parser_skip_semicolons(scanner_t* s, ctx_t* ctx);
+
 #endif

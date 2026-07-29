@@ -214,6 +214,13 @@ static bool parser_check(scanner_t* s, ctx_t* ctx, token_pattern p, token_t* out
     return true;
 }
 
+void parser_skip_semicolons(scanner_t* s, ctx_t* ctx)
+{
+    token_t semi;
+    while (parser_check(s, ctx, kind_pattern(TOKEN_SEMICOLON), &semi))
+        ;
+}
+
 static precedence infix_prec(operator_kind op)
 {
     switch (op) {
@@ -373,6 +380,8 @@ static sexpr_t parse_block(scanner_t* s, ctx_t* ctx, const token_pattern* ends,
             sexpr_free(&e, &ctx->alloc);
             return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, line)));
         }
+
+        parser_skip_semicolons(s, ctx);
 
         for (int64_t k = 0; k < n_ends; k++) {
             if (parser_check(s, ctx, ends[k], term))
@@ -721,6 +730,7 @@ sexpr_t parser_program(scanner_t* s, ctx_t* ctx)
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, 1)));
 
     for (;;) {
+        parser_skip_semicolons(s, ctx);
         token_t peeked = scanner_peek(s, ctx);
         if (peeked.kind == TOKEN_EOF)
             break;

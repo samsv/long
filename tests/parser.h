@@ -109,6 +109,15 @@ static inline void sv_test_parser_program_fn(sv_testing_t* t)
    sv_test_run(t, eb.tag == S_ATOM && eb.atom.kind == TOKEN_ERROR);
    sv_test_run(t, ctx.err.error_code == (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_str_deinit(&ctx.err.msg, &ctx.alloc);
+
+   ctx.err = (error_t){ 0 };
+   scanner_t semis = scanner_init(sv_str_init("x = 1; y = 2;"));
+   sexpr_t es = parser_program(&semis, &ctx);
+   sv_test_run(t, ctx.err.error_code == 0);
+   sv_str_t sf = sexpr_format(es, &ctx.alloc);
+   sv_test_run(t, sv_str_comp(sf, sv_str_init("(do (= x 1) (= y 2))")));
+   sv_str_deinit(&sf, &ctx.alloc);
+   sexpr_free(&es, &ctx.alloc);
 }
 
 static inline void sv_test_parser_maps(sv_testing_t* t)
@@ -128,6 +137,10 @@ static inline void sv_test_parser_maps(sv_testing_t* t)
    sv_test_parse_ok(t, "not a == b", "(not (== a b))");
    sv_test_parse_ok(t, "not a and b", "(and (not a) b)");
    sv_test_parse_ok(t, "f(a or b)", "(f (or a b))");
+   sv_test_parse_ok(t, "if true do 1; 2 end", "(if true (do 1 2))");
+   sv_test_parse_ok(t, "if true do 1; 2; end", "(if true (do 1 2))");
+   sv_test_parse_error(t, "x = ;", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "f(1; 2)", PARSER_ERROR_UNEXPECTED_TOKEN);
 
    sv_test_parse_error(t, "%{1, 2}", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "%{1: }", PARSER_ERROR_UNEXPECTED_TOKEN);
