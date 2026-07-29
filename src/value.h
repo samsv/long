@@ -29,6 +29,12 @@ sv_opt_def(value_t);
 void value_free(value_t*, const sv_allocator_t*);
 value_t value_borrow(value_t);
 bool value_eql(value_t, value_t);
+
+/**
+ * Converts the value a string representation.
+ */
+sv_str_t value_to_str(value_t, const sv_allocator_t*);
+
 /**
  * Creates a list value cloning the values (see ll_init). obj.cell is NULL on
  * allocation failure.
