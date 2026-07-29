@@ -61,6 +61,11 @@ value_t value_init_closure_member(sv_rc_t(closure_group_t), int64_t, const sv_al
  */
 value_t value_init_str(sv_str_t, const sv_allocator_t*);
 /**
+ * Creates a string value taking ownership of the given string. obj.cell is
+ * NULL on allocation failure (the string is freed).
+ */
+value_t value_init_str_own(sv_str_t, const sv_allocator_t*);
+/**
  * Creates a map value borrowing n_pairs (key, value) pairs from the flat
  * array. Later duplicate keys win. obj.cell is NULL on allocation failure.
  */

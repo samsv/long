@@ -54,6 +54,8 @@ static const char* op_name(vm_instructions op)
         case OP_LIST: return "list";
         case OP_MAP: return "map";
         case OP_INDEX: return "index";
+        case OP_NOT: return "not";
+        case OP_DUP: return "dup";
         case OP_RETURN: return "return";
     }
     return "unknown";
@@ -122,6 +124,8 @@ void print_chunk(vm_t v)
             case OP_NEGATE:
             case OP_POP:
             case OP_INDEX:
+            case OP_NOT:
+            case OP_DUP:
             case OP_RETURN:
             default:
                 printf("%" PRId64 " [ %s ]\n", i, op_name(op));

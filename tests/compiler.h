@@ -146,6 +146,34 @@ static inline void sv_test_compiler_indexing(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("5[0]") == VM_ERR_OP_UNSUPPORTED_ARGS);
 }
 
+static inline void sv_test_compiler_logic(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_num("if not false do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if not 5 do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if not nil do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_kind("not nil", VALUE_BOOL));
+
+   sv_test_run(t, sv_test_compiler_num("1 and 2", 2));
+   sv_test_run(t, sv_test_compiler_kind("nil and 2", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_num("false or 3", 3));
+   sv_test_run(t, sv_test_compiler_num("1 or 2", 1));
+   sv_test_run(t, sv_test_compiler_num("x = nil\ny = x or 5\ny + 1", 6));
+   sv_test_run(t, sv_test_compiler_kind("fun boom() = [1][9] end\nfalse and boom()", VALUE_BOOL));
+   sv_test_run(t, sv_test_compiler_num("fun boom() = [1][9] end\n1 or boom()", 1));
+   sv_test_run(t, sv_test_compiler_num("if 1 == 1 and 2 == 2 do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if (false and true) or true do 1 else 0 end", 1));
+
+   sv_test_run(t, sv_test_compiler_num("if \"a\" + \"b\" == \"ab\" do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("s = \"ab\"\nif s + s == \"abab\" do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_runtime_err("\"a\" + 1") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_err("1 + \"a\"") == VM_ERR_OP_UNSUPPORTED_ARGS);
+
+   sv_test_run(t, sv_test_compiler_num("fun inc(x) = x + 1 end\n5 |> inc()", 6));
+   sv_test_run(t, sv_test_compiler_num("fun add2(x, y) = x + y end\n1 |> add2(2)", 3));
+   sv_test_run(t, sv_test_compiler_num("fun inc(x) = x + 1 end\n5 |> inc() |> inc()", 7));
+   sv_test_run(t, sv_test_compiler_err("fun inc(x) = x + 1 end\n5 |> inc") == C_ERR_UNEXPECTED_SEXPR);
+}
+
 static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
 {
    sv_test_run(t, sv_test_compiler_runtime_err("for x in 5 do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
@@ -290,7 +318,8 @@ static inline void sv_test_compiler_errors(sv_testing_t* t)
 {
    sv_test_run(t, sv_test_compiler_err("y + 1") == C_ERR_UNDEFINED_VARIABLE);
    sv_test_run(t, sv_test_compiler_err("x = 1\nx = 2") == C_ERR_REDEFINED);
-   sv_test_run(t, sv_test_compiler_err("1 |> 2") == C_ERR_NOT_IMPLEMENTED);
+   sv_test_run(t, sv_test_compiler_err("1 |> 2") == C_ERR_UNEXPECTED_SEXPR);
+   sv_test_run(t, sv_test_compiler_err("x = 1\nx.y") == C_ERR_NOT_IMPLEMENTED);
 }
 
 static inline void sv_test_compiler(sv_testing_t* t)
@@ -299,6 +328,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_comparisons(t);
    sv_test_compiler_maps(t);
    sv_test_compiler_indexing(t);
+   sv_test_compiler_logic(t);
    sv_test_compiler_for(t);
    sv_test_compiler_functions(t);
    sv_test_compiler_closures(t);

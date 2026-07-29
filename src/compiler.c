@@ -288,6 +288,24 @@ static bool compile_equal(compiler_t* c, const sexpr_t* args, int64_t n, int64_t
     return add_var(c, id, line, ctx);
 }
 
+static bool compile_pipe(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 2)
+        return compiler_malformed(ctx, "pipe", line);
+    TRY(compile_sexpr(c, args[0], ctx));
+
+    sexpr_t rhs = args[1];
+    if (rhs.tag != S_CONS || rhs.cons.size == 0)
+        return compiler_malformed(ctx, "pipe", line);
+
+    sv_str_t fn_name;
+    TRY(expect_id(rhs.cons.arr[0], ctx, &fn_name));
+    for (int64_t i = 1; i < rhs.cons.size; i++)
+        TRY(compile_sexpr(c, rhs.cons.arr[i], ctx));
+    TRY(compile_id(c, fn_name, line, ctx));
+    return emit2(c, ctx, OP_CALL, (uint8_t)rhs.cons.size, line);
+}
+
 static bool compile_binary_op(compiler_t* c, uint8_t instruction, const char* what,
                               const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
@@ -315,8 +333,8 @@ static bool compile_operator(compiler_t* c, operator_kind op, const sexpr_t* arg
         case OPERATOR_LESS: return compile_binary_op(c, OP_LESS, "comparison", args, n, line, ctx);
         case OPERATOR_LESS_EQUAL: return compile_binary_op(c, OP_LESS_EQUAL, "comparison", args, n, line, ctx);
         case OPERATOR_LEFT_BRACKET: return compile_binary_op(c, OP_INDEX, "index", args, n, line, ctx);
+        case OPERATOR_PIPE_FORWARD: return compile_pipe(c, args, n, line, ctx);
         case OPERATOR_DOT:
-        case OPERATOR_PIPE_FORWARD:
         case OPERATOR_COMMA:
         case OPERATOR_LEFT_PAREN: {
             char msg[96];
@@ -411,6 +429,38 @@ static bool compile_map(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     for (int64_t i = 0; i < n; i++)
         TRY(compile_sexpr(c, args[i], ctx));
     return emit2(c, ctx, OP_MAP, (uint8_t)(n / 2), line);
+}
+
+static bool compile_and_or(compiler_t* c, bool is_and, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 2)
+        return compiler_malformed(ctx, is_and ? "and" : "or", line);
+    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(emit(c, ctx, OP_DUP, line));
+
+    int64_t j1 = 0;
+    TRY(jump_emit(ctx, vmb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
+
+    if (is_and) {
+        TRY(emit(c, ctx, OP_POP, line));
+        TRY(compile_sexpr(c, args[1], ctx));
+        return patch_jump(c, ctx, j1, line);
+    }
+
+    int64_t j2 = 0;
+    TRY(jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &j2, line));
+    TRY(patch_jump(c, ctx, j1, line));
+    TRY(emit(c, ctx, OP_POP, line));
+    TRY(compile_sexpr(c, args[1], ctx));
+    return patch_jump(c, ctx, j2, line);
+}
+
+static bool compile_not(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 1)
+        return compiler_malformed(ctx, "not", line);
+    TRY(compile_sexpr(c, args[0], ctx));
+    return emit(c, ctx, OP_NOT, line);
 }
 
 static bool compile_do(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -673,6 +723,10 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
     }
     if (a.kind == TOKEN_KEYWORD && a.keyword == KEYWORD_DO)
         return compile_do(c, cons + 1, n - 1, a.line, ctx);
+    if (a.kind == TOKEN_KEYWORD && (a.keyword == KEYWORD_AND || a.keyword == KEYWORD_OR))
+        return compile_and_or(c, a.keyword == KEYWORD_AND, cons + 1, n - 1, a.line, ctx);
+    if (a.kind == TOKEN_KEYWORD && a.keyword == KEYWORD_NOT)
+        return compile_not(c, cons + 1, n - 1, a.line, ctx);
     if (a.kind == TOKEN_LITERAL && a.literal.kind == LITERAL_IDENTIFIER)
         return compile_call(c, a.literal.literal, cons + 1, n - 1, a.line, ctx);
 

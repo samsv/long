@@ -222,7 +222,7 @@ static precedence infix_prec(operator_kind op)
         case OPERATOR_COMMA:
             return (precedence){ .left = 3, .right = 4, .has_right = true };
         case OPERATOR_PIPE_FORWARD:
-            return (precedence){ .left = 6, .right = 5, .has_right = true };
+            return (precedence){ .left = 6, .right = 7, .has_right = true };
         case OPERATOR_GREATER:
         case OPERATOR_GREATER_EQUAL:
         case OPERATOR_LESS:
@@ -581,6 +581,15 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
         lhs = parse_map(s, ctx, start_token);
         if (is_error_sexpr(lhs))
             return lhs;
+    } else if (start_token.kind == TOKEN_KEYWORD && start_token.keyword == KEYWORD_NOT) {
+        sexpr_t rhs = parse_expr(s, ctx, 7);
+        if (is_error_sexpr(rhs))
+            return rhs;
+
+        sexpr_t items[] = { atom_sexpr(start_token), rhs };
+        lhs = cons_of(ctx, items, 2, start_token.line);
+        if (is_error_sexpr(lhs))
+            return lhs;
     } else {
         return unexpected_token_error(ctx, start_token, "Unexpected token");
     }
@@ -595,6 +604,26 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
         operator_kind op;
         if (token.kind == TOKEN_OPERATOR) {
             op = token.operator;
+        } else if (token.kind == TOKEN_KEYWORD
+                   && (token.keyword == KEYWORD_AND || token.keyword == KEYWORD_OR)) {
+            precedence kprec = token.keyword == KEYWORD_OR
+                ? (precedence){ .left = 5, .right = 6, .has_right = true }
+                : (precedence){ .left = 6, .right = 7, .has_right = true };
+            if (kprec.left < min_prec)
+                break;
+
+            scanner_next(s, ctx);
+            sexpr_t rhs = parse_expr(s, ctx, kprec.right);
+            if (is_error_sexpr(rhs)) {
+                sexpr_free(&lhs, &ctx->alloc);
+                return rhs;
+            }
+
+            sexpr_t items[] = { atom_sexpr(token), lhs, rhs };
+            lhs = cons_of(ctx, items, 3, token.line);
+            if (is_error_sexpr(lhs))
+                return lhs;
+            continue;
         } else if (token.kind == TOKEN_LITERAL || token.kind == TOKEN_SP_FUNCTION) {
             if (token.line != start_token.line)
                 break;

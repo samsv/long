@@ -66,6 +66,7 @@ typedef enum {
     KEYWORD_END,
     KEYWORD_IN,
     KEYWORD_OR,
+    KEYWORD_NOT,
     KEYWORD_SELF,
 } keyword_kind;
 

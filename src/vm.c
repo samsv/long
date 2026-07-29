@@ -188,7 +188,6 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
         case OP_GET_GLOBAL: GET(vm->globals)
         case OP_LOAD_CONSTANT: GET(vm->chunk.constants)
         case OP_SUB: MATH_OP(-)
-        case OP_ADD: MATH_OP(+)
         case OP_MUL: MATH_OP(*)
         case OP_DIV: MATH_OP(/)
         case OP_EQUALS: EQUALS(true)
@@ -229,6 +228,40 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
             TRY_NOT_NULL(map.obj.cell, "OOM when creating map");
             arr_remove_n(&vm->stack, 2 * n, a);
             TRY_PUSH_OWNED(map);
+            break;
+        }
+        case OP_ADD: {
+            value_t v2 = sv_vec_pop(vm->stack);
+            value_t v1 = sv_vec_pop(vm->stack);
+            if (v1.kind == VALUE_NUMBER && v2.kind == VALUE_NUMBER) {
+                value_t res = {.kind = VALUE_NUMBER, .number = v1.number + v2.number};
+                TRY_PUSH_STACK(res);
+                break;
+            }
+            if (v1.kind == VALUE_OBJ && v2.kind == VALUE_OBJ
+                && v1.obj.cell->value.kind == OBJ_STR && v2.obj.cell->value.kind == OBJ_STR
+            ) {
+                sv_str_t s = sv_str_add(v1.obj.cell->value.str, v2.obj.cell->value.str, a);
+                value_free(&v1, a);
+                value_free(&v2, a);
+                TRY_OR(s.size >= 0, (void)0, "OOM when concatenating strings");
+                value_t res = value_init_str_own(s, a);
+                TRY_NOT_NULL(res.obj.cell, "OOM when creating string");
+                TRY_PUSH_OWNED(res);
+                break;
+            }
+            UNSUPPORTED_2(v1, v2, "Unsupported args for +")
+        }
+        case OP_NOT: {
+            value_t v = sv_vec_pop(vm->stack);
+            value_t res = {.kind = VALUE_BOOL, .boolean = !value_is_truthy(v)};
+            value_free(&v, a);
+            TRY_PUSH_STACK(res);
+            break;
+        }
+        case OP_DUP: {
+            value_t top = value_borrow(sv_vec_last(vm->stack));
+            TRY_PUSH_STACK(top);
             break;
         }
         case OP_INDEX: {

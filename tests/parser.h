@@ -120,6 +120,15 @@ static inline void sv_test_parser_maps(sv_testing_t* t)
    sv_test_parse_ok(t, "%{1 + 2: f(3)}", "(map (+ 1 2) (f 3))");
    sv_test_parse_ok(t, "m = %{1: 2}", "(= m (map 1 2))");
 
+   sv_test_parse_ok(t, "a |> f() |> g()", "(|> (|> a (f)) (g))");
+   sv_test_parse_ok(t, "not true", "(not true)");
+   sv_test_parse_ok(t, "1 and 2 or 3", "(or (and 1 2) 3)");
+   sv_test_parse_ok(t, "1 or 2 and 3", "(or 1 (and 2 3))");
+   sv_test_parse_ok(t, "a and b == c", "(and a (== b c))");
+   sv_test_parse_ok(t, "not a == b", "(not (== a b))");
+   sv_test_parse_ok(t, "not a and b", "(and (not a) b)");
+   sv_test_parse_ok(t, "f(a or b)", "(f (or a b))");
+
    sv_test_parse_error(t, "%{1, 2}", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "%{1: }", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "%{1: 2", PARSER_ERROR_EOF);

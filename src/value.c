@@ -158,16 +158,20 @@ value_t value_init_closure_member(sv_rc_t(closure_group_t) group, int64_t index,
     return v;
 }
 
+value_t value_init_str_own(sv_str_t s, const sv_allocator_t* a)
+{
+    value_t v = obj_wrap((obj_t){ .kind = OBJ_STR, .str = s }, a);
+    if (v.obj.cell == NULL)
+        sv_str_deinit(&s, a);
+    return v;
+}
+
 value_t value_init_str(sv_str_t s, const sv_allocator_t* a)
 {
     sv_str_t copy = sv_str_copy(s, a);
     if (copy.chars == NULL)
         return ERR_VALUE;
-
-    value_t v = obj_wrap((obj_t){ .kind = OBJ_STR, .str = copy }, a);
-    if (v.obj.cell == NULL)
-        sv_str_deinit(&copy, a);
-    return v;
+    return value_init_str_own(copy, a);
 }
 
 value_t value_init_map(const value_t* vs, int64_t n_pairs, const sv_allocator_t* a)
