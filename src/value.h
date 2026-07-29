@@ -24,6 +24,24 @@ typedef struct value_t {
     };
 } value_t;
 
+#define IS_STR(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_STR)
+#define IS_ERR(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_ERR)
+#define IS_LIST(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_LIST)
+#define IS_NATIVE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_NATIVE_FN)
+#define IS_CLOSURE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE)
+#define IS_CLOSURE_MEMBER(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE_MEMBER)
+
+#define AS_STR(v) ((v).obj.cell->value.str)
+#define AS_ERR(v) ((v).obj.cell->value.err)
+#define AS_LIST(v) ((v).obj.cell->value.list)
+#define AS_NATIVE(v) ((v).obj.cell->value.fn)
+#define AS_CLOSURE(v) ((v).obj.cell->value.closure)
+#define AS_CLOSURE_MEMBER(v) ((v).obj.cell->value.closure_member)
+
+static const value_t value_nil = { .kind = VALUE_NIL };
+static const value_t value_true = { .kind = VALUE_BOOL, .boolean = true };
+static const value_t value_false = { .kind = VALUE_BOOL, .boolean = false };
+
 sv_opt_def(value_t);
 
 void value_free(value_t*, const sv_allocator_t*);
@@ -50,6 +68,17 @@ value_t value_init_iter(value_t, const sv_allocator_t*);
  * obj.cell is NULL on allocation failure.
  */
 value_t value_init_closure(vm_t*, const value_t*, int64_t, const sv_allocator_t*);
+
+/**
+ * Creates a new error value.
+ */
+value_t value_init_err(error_t, const sv_allocator_t*);
+
+/**
+ * Creates a new native function.
+ */
+value_t value_init_native(native_fn_t, const sv_allocator_t*);
+
 /**
  * Creates a closure member value taking ownership of the group reference.
  * obj.cell is NULL on allocation failure.

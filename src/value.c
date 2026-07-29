@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "value.h"
 #include "obj/list.h"
 #include "obj/map.h"
@@ -79,9 +80,12 @@ bool value_eql(value_t x, value_t y)
                 case OBJ_STR: return sv_str_comp(ox->str, oy->str);
                 case OBJ_LIST: return list_eql(ox->list, oy->list);
                 case OBJ_MAP: return map_eql(ox->map, oy->map);
+                case OBJ_NATIVE_FN:
                 case OBJ_ITER:
                 case OBJ_CLOSURE:
-                case OBJ_CLOSURE_MEMBER: return false;
+                case OBJ_CLOSURE_MEMBER:
+                case OBJ_ERR: // maybe errors should have structural equality
+                    return ox == oy;
             }
             return false;
         }
@@ -98,6 +102,13 @@ static void obj_free(obj_t* o, const sv_allocator_t* a)
         case OBJ_ITER: iter_deinit(&o->iter, a); break;
         case OBJ_CLOSURE: cls_deinit(&o->closure, a); break;
         case OBJ_CLOSURE_MEMBER: clsm_deinit(&o->closure_member, a); break;
+        case OBJ_ERR: {
+            error_t err = o->err;
+            if (err.payload != NULL)
+                sv_free(a, err.payload);
+            break;
+        }
+        case OBJ_NATIVE_FN: break;
     }
 }
 
@@ -119,6 +130,16 @@ value_t value_init_list(const value_t* vs, int64_t len, const sv_allocator_t* a)
     if (v.obj.cell == NULL)
         ll_deinit(&list, a);
     return v;
+}
+
+value_t value_init_err(error_t err, const sv_allocator_t* a)
+{
+    return obj_wrap((obj_t){ .kind = OBJ_ERR, .err = err }, a);
+}
+
+value_t value_init_native(native_fn_t fn, const sv_allocator_t* a)
+{
+    return obj_wrap((obj_t){ .kind = OBJ_NATIVE_FN, .fn = fn }, a);
 }
 
 value_t value_init_iter(value_t from, const sv_allocator_t* a)
@@ -199,6 +220,27 @@ value_t value_init_map(const value_t* vs, int64_t n_pairs, const sv_allocator_t*
     return v;
 }
 
+const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
+{
+    switch (v_kind) {
+        case VALUE_BOOL: return "bool";
+        case VALUE_NIL: return "nil";
+        case VALUE_NUMBER: return "number";
+        case VALUE_OBJ: switch (o_kind) {
+            case OBJ_ITER: return "iter";
+            case OBJ_ERR: return "error";
+            case OBJ_STR: return "string";
+            case OBJ_LIST: return "list";
+            case OBJ_MAP: return "map";
+            case OBJ_NATIVE_FN:
+            case OBJ_CLOSURE:
+            case OBJ_CLOSURE_MEMBER:
+                return "function";
+        }
+    }
+    return "";
+}
+
 static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
 {
     switch (v.kind) {
@@ -259,6 +301,33 @@ static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
             sv_str_t name = clsm_get_vm(v.obj.cell->value.closure_member).name;
             return sv_strb_add(b, name.chars, name.size, a) >= 0;
         }
+        case OBJ_NATIVE_FN: {
+            const char* name = v.obj.cell->value.fn.name;
+            return sv_strb_add(b, name, strlen(name), a) >= 0;
+        }
+        case OBJ_ERR: {
+#define CHECK(expr) if (!(expr)) return false
+            error_t e = AS_ERR(v);
+            CHECK(sv_strb_add(b, e.msg.chars, e.msg.size, a) >= 0);
+
+            vm_err_t* vm_err = e.payload;
+            char buffer[64];
+            int writen = sprintf(buffer, " at line %ld", vm_err->line);
+            CHECK(sv_strb_add(b, buffer, writen, a) >= 0);
+
+            switch (e.error_code) {
+                case VM_ERR_WRONG_TYPE: {
+                    // TODO: Make this a vtable method
+                    vm_wrong_type_err* payload = e.payload;
+                    CHECK(sv_strb_add(b, "got ", strlen("got "), a) >= 0);
+                    CHECK(value_write(payload->got, b, a));
+                    const char* rcv = value_kind_str(payload->expected_v, payload->expected_o);
+                    return sv_strb_add(b, rcv, strlen(rcv), a) >= 0;
+                }
+            }
+            return true;
+#undef CHECK
+        }
     }
     return false;
 }
@@ -272,3 +341,4 @@ sv_str_t value_to_str(value_t v, const sv_allocator_t* a)
     }
     return sv_strb_to_str(&b);
 }
+

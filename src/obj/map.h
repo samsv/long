@@ -23,7 +23,6 @@ typedef struct {
 } sparse_item_t;
 
 sv_vec_def(sparse_item_t);
-sv_vec_def(int64_t);
 
 sv_rc_def(sv_vec_t(sparse_item_t));
 sv_rc_def(sv_vec_t(int64_t));

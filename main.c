@@ -9,6 +9,8 @@ static const char* sample =
     "end\n"
     "\n"
     "x = \"res\"\n"
+    "print(x)\n"
+    "print_vals([\"\nx is: \", x, \"\n\"])\n"
     "%{x: add(1, 2.5)}\n";
 
 int main(void)

@@ -3,16 +3,20 @@
 
 #include "std/string.h"
 #include "common.h"
+#include "error.h"
 #include "obj/iterator.h"
 #include "obj/closure.h"
+#include "obj/native_fns.h"
 
 typedef enum {
     OBJ_STR,
     OBJ_LIST,
     OBJ_MAP,
     OBJ_ITER,
+    OBJ_NATIVE_FN,
     OBJ_CLOSURE,
     OBJ_CLOSURE_MEMBER,
+    OBJ_ERR,
 } obj_kind;
 
 typedef struct obj_t {
@@ -22,8 +26,10 @@ typedef struct obj_t {
         list_t list;
         map_t map;
         iter_t iter;
+        native_fn_t fn;
         closure_t closure;
         closure_member_t closure_member;
+        error_t err;
     };
 } obj_t;
 

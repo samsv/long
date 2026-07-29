@@ -224,7 +224,9 @@ static uint32_t value_hash(value_t v)
                         h += value_hash(kv.value.key) * 31u ^ value_hash(kv.value.value);
                     return h;
                 }
+                case OBJ_ERR:
                 case OBJ_ITER:
+                case OBJ_NATIVE_FN:
                 case OBJ_CLOSURE:
                 case OBJ_CLOSURE_MEMBER: return (uint32_t)((uintptr_t)v.obj.cell >> 4);
             }

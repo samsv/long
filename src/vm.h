@@ -4,8 +4,7 @@
 #include <stdint.h>
 #include "error.h"
 #include "value.h"
-#include "obj/list.h"
-#include "obj/map.h"
+#include "common.h"
 #include "std/string.h"
 #include "std/vector.h"
 
@@ -64,11 +63,11 @@ typedef enum {
     OP_GREATER_EQUAL,
     OP_LESS,
     OP_LESS_EQUAL,
-    OP_RETURN,
     OP_MAP,
     OP_INDEX,
     OP_NOT,
     OP_DUP,
+    OP_RETURN,
 } vm_instructions;
 
 typedef enum {
@@ -79,24 +78,39 @@ typedef enum {
     VM_ERR_NO_GROUP,
     VM_ERR_BAD_ARITY,
     VM_ERR_KEY_NOT_FOUND,
+    VM_ERR_WRONG_TYPE,
 } vm_error_kinds;
 
+/**
+ * All VM error types must have this as their first argument.
+ */
 typedef struct {
     int64_t line;
+} vm_err_t;
+
+typedef struct {
+    vm_err_t vm_err;
     value_t ops[2]; // for infix size is two, prefix size is 1
     int8_t ops_len;
 } vm_op_err;
 
 typedef struct {
-    int64_t line;
+    vm_err_t vm_err;
     uint8_t instruction;
 } vm_instruction_err;
 
 typedef struct {
-    int64_t line;
+    vm_err_t vm_err;
     uint8_t expected;
     uint8_t got;
 } vm_arity_err;
+
+typedef struct {
+    vm_err_t vm_err;
+    value_t got;
+    value_kind expected_v;
+    obj_kind expected_o;
+} vm_wrong_type_err;
 
 sv_opt_def(uint8_t);
 sv_opt_def(int64_t);
@@ -119,6 +133,11 @@ void vm_err_deinit(error_t*, const sv_allocator_t*);
  * Initializes a new builder wrapping an empty vm.
  */
 vm_builder_t vmb_init(sv_str_t);
+
+/**
+ * Adds a global variable to the vm. Returns true on success, false otherwise.
+ */
+bool vmb_add_global(vm_builder_t*, value_t, const sv_allocator_t*);
 /**
  * Returns the built vm and invalidates the builder.
  */

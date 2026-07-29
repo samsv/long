@@ -5,6 +5,8 @@
 #include "std/vector.h"
 #include "std/rc.h"
 
+sv_vec_def(int64_t);
+
 typedef struct value_t value_t;
 typedef struct sv_opt_t(value_t) sv_opt_t(value_t);
 

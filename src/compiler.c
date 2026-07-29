@@ -5,24 +5,7 @@
 #include "scanner.h"
 #include "sexpr.h"
 #include "parser.h"
-
-typedef struct {
-    map_t name_indexes;
-} globals_t;
-
-typedef struct locals_t {
-    map_t name_indexes;
-    struct locals_t* next;
-    int64_t offset;
-} locals_t;
-
-typedef struct {
-    globals_t globals;
-    locals_t upvalues;
-    locals_t* locals;
-    map_t members;
-    vm_builder_t builder;
-} compiler_t;
+#include "std_native.h"
 
 compiler_t compiler_init(void);
 void compiler_free(compiler_t* c, const sv_allocator_t* a);
@@ -742,6 +725,14 @@ bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx)
     return compile_cons(c, sexpr.cons.arr, sexpr.cons.size, ctx);
 }
 
+bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
+{
+    TRY(globals_add(&c->globals, sv_str_init(fn.name), ctx, 0));
+    value_t fn_val = value_init_native(fn, &ctx->alloc);
+    TRY(fn_val.obj.cell != NULL);
+    return vmb_add_global(&c->builder, fn_val, &ctx->alloc);
+}
+
 vm_t compile(const char* source_code, ctx_t* ctx)
 {
 #define ERR_RETURN do {                                                                                       \
@@ -751,6 +742,16 @@ vm_t compile(const char* source_code, ctx_t* ctx)
 
     scanner_t s = scanner_init(sv_str_init(source_code));
     compiler_t compiler = compiler_init();
+
+    #define FNS_SIZE 2
+    native_fn_t native_fns[FNS_SIZE] = {
+        { .arity = 1, .name = "print", .fn = ntv_print_value },
+        { .arity = 1, .name = "print_vals", .fn = ntv_print_value_arr },
+    };
+    for (int64_t i = 0; i < FNS_SIZE; i++)
+        if(!add_native_fn(&compiler, native_fns[i], ctx))
+            ERR_RETURN;
+
 
     token_t token;
     bool first = true;

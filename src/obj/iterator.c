@@ -8,6 +8,8 @@ iter_t iter_init(value_t from)
         case OBJ_STR:
         case OBJ_MAP:
         case OBJ_ITER:
+        case OBJ_ERR:
+        case OBJ_NATIVE_FN:
         case OBJ_CLOSURE:
         case OBJ_CLOSURE_MEMBER: break;
     }

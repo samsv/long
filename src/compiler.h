@@ -3,8 +3,28 @@
 
 #include "ctx.h"
 #include "vm.h"
+#include "obj/native_fns.h"
+
+typedef struct {
+    map_t name_indexes;
+} globals_t;
+
+typedef struct locals_t {
+    map_t name_indexes;
+    struct locals_t* next;
+    int64_t offset;
+} locals_t;
+
+typedef struct {
+    globals_t globals;
+    locals_t upvalues;
+    locals_t* locals;
+    map_t members;
+    vm_builder_t builder;
+} compiler_t;
 
 vm_t compile(const char* source_code, ctx_t*);
+bool add_native_fn(compiler_t*, native_fn_t, ctx_t*);
 
 typedef enum {
     C_ERR_OOM,
