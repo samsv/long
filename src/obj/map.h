@@ -41,6 +41,8 @@ typedef struct map_node_t {
     int8_t depth;
 } map_node_t;
 
+typedef map_node_t transient_hashmap_t;
+
 sv_rc_cell_def(map_node_t);
 
 typedef struct {
@@ -114,5 +116,50 @@ void map_iter_deinit(map_iter_t*, const sv_allocator_t*);
  * Next (non borrowed) kv value.
  */
 sv_opt_t(kv_t) map_iter_next(map_iter_t*);
+
+/**
+ * Initializes an empty transient hashmap sized for the expected number of
+ * items. Transients are mutated in place and must never be shared; wrap
+ * them with transient_to_map to share the result.
+ */
+transient_hashmap_t thm_init(int64_t expected, const sv_allocator_t*);
+/**
+ * Deinitializes a transient hashmap.
+ */
+void thm_deinit(transient_hashmap_t*, const sv_allocator_t*);
+/**
+ * Returns the optional value associated with the key. The value is not
+ * borrowed.
+ */
+sv_opt_t(value_t) thm_get(transient_hashmap_t, value_t);
+/**
+ * Counts the items in the transient hashmap.
+ */
+int64_t thm_count(transient_hashmap_t);
+/**
+ * Inserts or updates the key in place, borrowing the key and value. Grows
+ * the storage when needed.
+ */
+bool thm_put(transient_hashmap_t*, kv_t, const sv_allocator_t*);
+/**
+ * Removes the key in place, freeing the removed value; the key slot remains
+ * as a tombstone until the next growth. Returns whether the key was present.
+ */
+bool thm_delete(transient_hashmap_t*, value_t, const sv_allocator_t*);
+
+/**
+ * Turns a persistent map into a transient, consuming the handle. Only valid
+ * when this is the map's only reference: a shared map is left intact and the
+ * error transient (NULL dense cell) is returned. Adopts the storage in O(1)
+ * when it is exclusively owned; only a map whose storage is still woven into
+ * sibling versions is flattened into a fresh node.
+ */
+transient_hashmap_t map_to_transient(hashmap_t*, const sv_allocator_t*);
+/**
+ * Wraps a transient into a persistent map in O(1), consuming the transient;
+ * the storage is adopted, never copied. The map is the error map on
+ * allocation failure.
+ */
+hashmap_t transient_to_map(transient_hashmap_t*, const sv_allocator_t*);
 
 #endif

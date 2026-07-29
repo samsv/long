@@ -344,9 +344,9 @@ static sv_opt_t(sparse_item_t) depth_iter_next(map_depth_iter_t* it)
 
 static map_iter_t iter_init_node(map_node_t node)
 {
-    return node.depth == 0
-    ? (map_iter_t){ .kind = MAP_ITER_FLAT, .flat = { .node = node } }
-    : (map_iter_t){ .kind = MAP_ITER_DEPTH, .depth = { .parent = node } };
+    return node.depth == 0 ?
+        (map_iter_t){ .kind = MAP_ITER_FLAT, .flat = { .node = node } }
+        : (map_iter_t){ .kind = MAP_ITER_DEPTH, .depth = { .parent = node } };
 }
 
 static sv_opt_t(sparse_item_t) iter_next_item(map_iter_t* it)
@@ -419,6 +419,18 @@ static map_node_t node_grow(map_node_t parent, value_t key, sv_opt_t(value_t) va
     return node;
 }
 
+static map_node_t node_compact(map_node_t parent, const sv_allocator_t* a)
+{
+    map_node_t node = node_init_capacity(capacity_for_size(node_physical_count(parent)), (hashmap_t){0}, a);
+    TRY_NOT_NULL(node.set.dense.cell, ERR_NODE);
+
+    map_iter_t it = iter_init_node(parent);
+    for (sv_opt_t(sparse_item_t) item = iter_next_item(&it); item.is_some; item = iter_next_item(&it))
+        TRY_INSERT_MUT(node, item.value.key, item.value.value, a);
+
+    return node;
+}
+
 static hashmap_t node_wrap(map_node_t node, const sv_allocator_t* a)
 {
     TRY_NOT_NULL(node.set.dense.cell, ERR_MAP);
@@ -438,7 +450,8 @@ static map_node_t node_layer(hashmap_t map, value_t key, sv_opt_t(value_t) value
 
 #undef TRY_INSERT_MUT
 
-static map_node_t map_update_node(hashmap_t map, value_t key, sv_opt_t(value_t) value, int64_t index, const sv_allocator_t* a)
+static map_node_t map_update_node(hashmap_t map, value_t key, sv_opt_t(value_t) value,
+                                  int64_t index, const sv_allocator_t* a)
 {
     map_node_t node = map.cell->value;
     if (node_physical_count(node) <= MAX_COPY_SIZE)
@@ -460,11 +473,7 @@ void map_deinit(hashmap_t* map, const sv_allocator_t* a)
 
 sv_opt_t(value_t) map_get(hashmap_t map, value_t key)
 {
-    map_node_t node = map.cell->value;
-    get_result_t r = node_get_hashed(node, key, value_hash(key), node.child);
-    if (r.kind != GET_ITEM)
-        return sv_opt_none_t(value_t);
-    return sv_opt_some_t(value_t, r.item->value.value);
+    return thm_get(map.cell->value, key);
 }
 
 hashmap_t map_put(hashmap_t map, kv_t kv, const sv_allocator_t* a)
@@ -517,11 +526,7 @@ hashmap_t map_delete(hashmap_t map, value_t key, const sv_allocator_t* a)
 
 int64_t map_count(hashmap_t map)
 {
-    map_iter_t it = iter_init_node(map.cell->value);
-    int64_t count = 0;
-    for (sv_opt_t(sparse_item_t) item = iter_next_item(&it); item.is_some; item = iter_next_item(&it))
-        count++;
-    return count;
+    return thm_count(map.cell->value);
 }
 
 map_iter_t map_iter_init_no_borrow(hashmap_t map)
@@ -554,4 +559,100 @@ sv_opt_t(kv_t) map_iter_next(map_iter_t* it)
         return sv_opt_none_t(kv_t);
     kv_t kv = { .key = item.value.key, .value = item.value.value.value };
     return sv_opt_some_t(kv_t, kv);
+}
+
+transient_hashmap_t thm_init(int64_t expected, const sv_allocator_t* a)
+{
+    return node_init_capacity(capacity_for_size(expected), (hashmap_t){0}, a);
+}
+
+void thm_deinit(transient_hashmap_t* t, const sv_allocator_t* a)
+{
+    node_free(t, a);
+}
+
+sv_opt_t(value_t) thm_get(transient_hashmap_t t, value_t key)
+{
+    get_result_t r = node_get_hashed(t, key, value_hash(key), t.child);
+    if (r.kind != GET_ITEM)
+        return sv_opt_none_t(value_t);
+    return sv_opt_some_t(value_t, r.item->value.value);
+}
+
+int64_t thm_count(transient_hashmap_t t)
+{
+    map_iter_t it = iter_init_node(t);
+    int64_t count = 0;
+    for (sv_opt_t(sparse_item_t) item = iter_next_item(&it); item.is_some; item = iter_next_item(&it))
+        count++;
+    return count;
+}
+
+bool thm_put(transient_hashmap_t* t, kv_t kv, const sv_allocator_t* a)
+{
+    get_result_t r = node_get_hashed(*t, kv.key, value_hash(kv.key), (hashmap_t){0});
+    switch (r.kind) {
+        case GET_ITEM: {
+            int64_t di = t->set.sparse.cell->value.arr[r.index];
+            sparse_item_t* item = &t->set.dense.cell->value.arr[di];
+            value_free(&item->value.value, a);
+            item->value = sv_opt_some_t(value_t, value_borrow(kv.value));
+            return true;
+        }
+        case GET_EMPTY:
+            if (t->set.len * 100 / set_capacity(t->set) < MAX_LOAD_PERCENTAGE)
+                return node_insert_mut(t, kv.key, sv_opt_some_t(value_t, kv.value), a);
+            break;
+        case GET_FULL:
+            break;
+    }
+
+    map_node_t bigger = node_grow(*t, kv.key, sv_opt_some_t(value_t, kv.value), a);
+    if (bigger.set.dense.cell == NULL)
+        return false;
+    node_free(t, a);
+    *t = bigger;
+    return true;
+}
+
+bool thm_delete(transient_hashmap_t* t, value_t key, const sv_allocator_t* a)
+{
+    get_result_t r = node_get_hashed(*t, key, value_hash(key), (hashmap_t){0});
+    if (r.kind != GET_ITEM)
+        return false;
+
+    int64_t di = t->set.sparse.cell->value.arr[r.index];
+    sparse_item_t* item = &t->set.dense.cell->value.arr[di];
+    value_free(&item->value.value, a);
+    item->value = sv_opt_none_t(value_t);
+    return true;
+}
+
+transient_hashmap_t map_to_transient(hashmap_t* map, const sv_allocator_t* a)
+{
+    if (map->cell->count != 1)
+        return ERR_NODE;
+
+    map_node_t node = map->cell->value;
+    bool exclusive = node.child.cell == NULL
+        && node.set.dense.cell->count == 1
+        && node.set.sparse.cell->count == 1
+        && node.set.dense.cell->value.size == node.set.len;
+
+    if (exclusive) {
+        sv_free(a, map->cell);
+        map->cell = NULL;
+        return node;
+    }
+
+    map_node_t flat = node_compact(node, a);
+    map_deinit(map, a);
+    return flat;
+}
+
+hashmap_t transient_to_map(transient_hashmap_t* t, const sv_allocator_t* a)
+{
+    hashmap_t map = node_wrap(*t, a);
+    *t = ERR_NODE;
+    return map;
 }

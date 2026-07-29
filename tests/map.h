@@ -334,6 +334,85 @@ static inline void sv_test_map_oom(sv_testing_t* t)
    sv_test_run(t, sv_test_map_obj_frees == 1);
 }
 
+static inline void sv_test_map_transient(sv_testing_t* t)
+{
+   transient_hashmap_t tm = thm_init(4, &sv_gpa);
+   sv_test_run(t, tm.set.dense.cell != NULL);
+
+   sv_test_map_obj_frees = 0;
+   for (double k = 1; k <= 3; k++) {
+      char name[4] = { 'k', 'e', (char)('0' + (int)k), '\0' };
+      value_t key = sv_test_map_obj(name, &sv_gpa);
+      kv_t kv = { .key = key, .value = sv_test_map_num(k * 10) };
+      sv_test_run(t, thm_put(&tm, kv, &sv_gpa));
+      value_free(&key, &sv_gpa);
+   }
+   sv_test_run(t, thm_count(tm) == 3);
+
+   value_t k2 = sv_test_map_obj("ke2", &sv_gpa);
+   sv_opt_t(value_t) got = thm_get(tm, k2);
+   sv_test_run(t, got.is_some && got.value.number == 20);
+
+   kv_t upd = { .key = k2, .value = sv_test_map_num(99) };
+   sv_test_run(t, thm_put(&tm, upd, &sv_gpa));
+   got = thm_get(tm, k2);
+   sv_test_run(t, got.is_some && got.value.number == 99);
+   sv_test_run(t, thm_count(tm) == 3);
+
+   sv_test_run(t, thm_delete(&tm, k2, &sv_gpa));
+   sv_test_run(t, !thm_get(tm, k2).is_some);
+   sv_test_run(t, thm_count(tm) == 2);
+   sv_test_run(t, !thm_delete(&tm, sv_test_map_num(404), &sv_gpa));
+
+   kv_t re = { .key = k2, .value = sv_test_map_num(7) };
+   sv_test_run(t, thm_put(&tm, re, &sv_gpa));
+   got = thm_get(tm, k2);
+   sv_test_run(t, got.is_some && got.value.number == 7);
+   sv_test_run(t, thm_count(tm) == 3);
+   value_free(&k2, &sv_gpa);
+
+   for (double k = 0; k < 100; k++)
+      sv_test_run(t, thm_put(&tm, sv_test_map_kv(1000 + k, k), &sv_gpa));
+   sv_test_run(t, thm_count(tm) == 103);
+   for (double k = 0; k < 100; k++) {
+      sv_opt_t(value_t) v = thm_get(tm, sv_test_map_num(1000 + k));
+      sv_test_run(t, v.is_some && v.value.number == k);
+   }
+
+   hashmap_t persisted = transient_to_map(&tm, &sv_gpa);
+   sv_test_run(t, persisted.cell != NULL);
+   sv_test_run(t, tm.set.dense.cell == NULL);
+   sv_test_run(t, map_count(persisted) == 103);
+   sv_test_run(t, sv_test_map_get_num(persisted, 1042) == 42);
+
+   transient_hashmap_t back = map_to_transient(&persisted, &sv_gpa);
+   sv_test_run(t, back.set.dense.cell != NULL);
+   sv_test_run(t, persisted.cell == NULL);
+   sv_test_run(t, thm_put(&back, sv_test_map_kv(5000, 1), &sv_gpa));
+   sv_test_run(t, thm_count(back) == 104);
+
+   hashmap_t shared = transient_to_map(&back, &sv_gpa);
+   hashmap_t borrow = sv_rc_borrow(shared);
+   transient_hashmap_t denied = map_to_transient(&shared, &sv_gpa);
+   sv_test_run(t, denied.set.dense.cell == NULL);
+   sv_test_run(t, shared.cell != NULL);
+   sv_test_run(t, map_count(shared) == 104);
+   map_deinit(&borrow, &sv_gpa);
+   map_deinit(&shared, &sv_gpa);
+
+   kv_t base[] = { sv_test_map_kv(1, 1), sv_test_map_kv(2, 2) };
+   hashmap_t v0 = map_init(base, 2, &sv_gpa);
+   hashmap_t v1 = map_put(v0, sv_test_map_kv(3, 3), &sv_gpa);
+   transient_hashmap_t flat = map_to_transient(&v1, &sv_gpa);
+   sv_test_run(t, flat.set.dense.cell != NULL);
+   sv_test_run(t, thm_count(flat) == 3);
+   sv_test_run(t, thm_get(flat, sv_test_map_num(3)).is_some);
+   sv_test_run(t, map_count(v0) == 2);
+   sv_test_run(t, !map_get(v0, sv_test_map_num(3)).is_some);
+   thm_deinit(&flat, &sv_gpa);
+   map_deinit(&v0, &sv_gpa);
+}
+
 static inline void sv_test_map(sv_testing_t* t)
 {
    sv_test_map_init_get(t);
@@ -345,6 +424,7 @@ static inline void sv_test_map(sv_testing_t* t)
    sv_test_map_iter(t);
    sv_test_map_values(t);
    sv_test_map_oom(t);
+   sv_test_map_transient(t);
 }
 
 #endif
