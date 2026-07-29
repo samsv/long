@@ -3,14 +3,15 @@
 
 #include "ctx.h"
 #include "vm.h"
+#include "obj/map.h"
 #include "obj/native_fns.h"
 
 typedef struct {
-    hashmap_t name_indexes;
+    transient_hashmap_t name_indexes;
 } globals_t;
 
 typedef struct locals_t {
-    hashmap_t name_indexes;
+    transient_hashmap_t name_indexes;
     struct locals_t* next;
     int64_t offset;
 } locals_t;
@@ -19,7 +20,7 @@ typedef struct {
     globals_t globals;
     locals_t upvalues;
     locals_t* locals;
-    hashmap_t members;
+    transient_hashmap_t members;
     vm_builder_t builder;
 } compiler_t;
 

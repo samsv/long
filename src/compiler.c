@@ -85,32 +85,32 @@ static bool patch_jump(compiler_t* c, ctx_t* ctx, int64_t ji, int64_t line)
     return true;
 }
 
-static int64_t names_count(hashmap_t names)
+static int64_t names_count(transient_hashmap_t names)
 {
-    return names.cell != NULL ? map_count(names) : 0;
+    return names.set.dense.cell != NULL ? thm_count(names) : 0;
 }
 
-static sv_opt_t(int64_t) names_get(hashmap_t names, sv_str_t id, ctx_t* ctx)
+static sv_opt_t(int64_t) names_get(transient_hashmap_t names, sv_str_t id, ctx_t* ctx)
 {
-    if (names.cell == NULL)
+    if (names.set.dense.cell == NULL)
         return sv_opt_none_t(int64_t);
 
     value_t key = value_init_str(id, &ctx->alloc);
     if (key.obj.cell == NULL)
         return sv_opt_none_t(int64_t);
 
-    sv_opt_t(value_t) v = map_get(names, key);
+    sv_opt_t(value_t) v = thm_get(names, key);
     value_free(&key, &ctx->alloc);
     if (!v.is_some)
         return sv_opt_none_t(int64_t);
     return sv_opt_some_t(int64_t, (int64_t)v.value.number);
 }
 
-static bool names_add(hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
+static bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
 {
-    if (names->cell == NULL) {
-        *names = map_init(NULL, 0, &ctx->alloc);
-        if (names->cell == NULL)
+    if (names->set.dense.cell == NULL) {
+        *names = thm_init(4, &ctx->alloc);
+        if (names->set.dense.cell == NULL)
             return false;
     }
 
@@ -122,15 +122,10 @@ static bool names_add(hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
     if (key.obj.cell == NULL)
         return false;
 
-    kv_t kv = { .key = key, .value = { .kind = VALUE_NUMBER, .number = (double)map_count(*names) } };
-    hashmap_t new_names = map_put(*names, kv, &ctx->alloc);
+    kv_t kv = { .key = key, .value = { .kind = VALUE_NUMBER, .number = (double)thm_count(*names) } };
+    bool ok = thm_put(names, kv, &ctx->alloc);
     value_free(&key, &ctx->alloc);
-    if (new_names.cell == NULL)
-        return false;
-
-    map_deinit(names, &ctx->alloc);
-    *names = new_names;
-    return true;
+    return ok;
 }
 
 static bool globals_add(globals_t* g, sv_str_t id, ctx_t* ctx, int64_t line)
@@ -178,23 +173,23 @@ static bool expect_id(sexpr_t e, ctx_t* ctx, sv_str_t* out)
 compiler_t compiler_init(void)
 {
     return (compiler_t){
-        .globals = { .name_indexes = {0} },
-        .upvalues = { .name_indexes = {0}, .next = NULL, .offset = 0 },
+        .globals = { .name_indexes = { .depth = 0 } },
+        .upvalues = { .name_indexes = { .depth = 0 }, .next = NULL, .offset = 0 },
         .locals = NULL,
-        .members = {0},
+        .members = { .depth = 0 },
         .builder = { .vm = vm_init(sv_str_init("")) },
     };
 }
 
 void compiler_free(compiler_t* c, const sv_allocator_t* a)
 {
-    map_deinit(&c->globals.name_indexes, a);
-    map_deinit(&c->upvalues.name_indexes, a);
-    map_deinit(&c->members, a);
+    thm_deinit(&c->globals.name_indexes, a);
+    thm_deinit(&c->upvalues.name_indexes, a);
+    thm_deinit(&c->members, a);
     while (c->locals != NULL) {
         locals_t* l = c->locals;
         c->locals = l->next;
-        map_deinit(&l->name_indexes, a);
+        thm_deinit(&l->name_indexes, a);
         sv_free(a, l);
     }
 }
@@ -240,7 +235,7 @@ static bool init_scope(compiler_t* c, ctx_t* ctx, int64_t line)
     if (local == NULL)
         return compiler_oom(ctx, line);
     *local = (locals_t){
-        .name_indexes = {0},
+        .name_indexes = { .depth = 0 },
         .next = c->locals,
         .offset = c->locals != NULL ? names_count(c->locals->name_indexes) + c->locals->offset : 0,
     };
@@ -256,7 +251,7 @@ static bool deinit_scope(compiler_t* c, ctx_t* ctx)
 
     uint8_t n = (uint8_t)names_count(local->name_indexes);
     c->locals = local->next;
-    map_deinit(&local->name_indexes, &ctx->alloc);
+    thm_deinit(&local->name_indexes, &ctx->alloc);
     sv_free(&ctx->alloc, local);
     return emit2(c, ctx, OP_POP_LOCAL, n, 0);
 }
@@ -464,7 +459,7 @@ static bool compile_fn_vm(
     sexpr_t body,
     sv_str_t name,
     int64_t upvalue_offset,
-    hashmap_t members,
+    transient_hashmap_t members,
     int64_t line,
     ctx_t* ctx,
     vm_t* out)
@@ -475,8 +470,8 @@ static bool compile_fn_vm(
 
 #define FN_TRY(call) do {                                                                                     \
     if (!(call)) {                                                                                            \
-        fc.members = (hashmap_t){0};                                                                          \
-        fc.globals.name_indexes = (hashmap_t){0};                                                             \
+        fc.members = (transient_hashmap_t){0};                                                                \
+        fc.globals.name_indexes = (transient_hashmap_t){0};                                                   \
         compiler_free(&fc, &ctx->alloc);                                                                      \
         vm_deinit(&fc.builder.vm, &ctx->alloc);                                                               \
         return false;                                                                                         \
@@ -506,8 +501,8 @@ static bool compile_fn_vm(
     *out = vmb_build(&fc.builder);
     out->name = name;
     out->arity = (uint8_t)params->cons.size;
-    fc.members = (hashmap_t){0};
-    fc.globals.name_indexes = (hashmap_t){0};
+    fc.members = (transient_hashmap_t){0};
+    fc.globals.name_indexes = (transient_hashmap_t){0};
     compiler_free(&fc, &ctx->alloc);
     return true;
 }
@@ -544,7 +539,7 @@ static bool compile_fun(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     TRY(expect_id(args[0], ctx, &name));
 
     vm_t fn_vm;
-    TRY(compile_fn_vm(c, cls, params, body, name, 0, (hashmap_t){0}, line, ctx, &fn_vm));
+    TRY(compile_fn_vm(c, cls, params, body, name, 0, (transient_hashmap_t){0}, line, ctx, &fn_vm));
 
     if (!compile_upvalue_loads(c, cls, 0, ctx)) {
         vm_deinit(&fn_vm, &ctx->alloc);
@@ -567,10 +562,10 @@ static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, 
 {
     uint8_t first = (uint8_t)c->builder.vm.chunk.functions.size;
 
-    hashmap_t member_names = {0};
+    transient_hashmap_t member_names = {0};
 #define G_TRY(call) do {                                                                                      \
     if (!(call)) {                                                                                            \
-        map_deinit(&member_names, &ctx->alloc);                                                               \
+        thm_deinit(&member_names, &ctx->alloc);                                                               \
         return false;                                                                                         \
     } } while (0)
 
@@ -628,7 +623,7 @@ static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, 
             G_TRY(emit(c, ctx, OP_POP, line));
     }
 
-    map_deinit(&member_names, &ctx->alloc);
+    thm_deinit(&member_names, &ctx->alloc);
     return true;
 #undef G_TRY
 }
