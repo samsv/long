@@ -8,7 +8,8 @@ static const char* sample =
     "   x + y\n"
     "end\n"
     "\n"
-    "%{\"res\": add(1, 2.5)}\n";
+    "x = \"res\"\n"
+    "%{x: add(1, 2.5)}\n";
 
 int main(void)
 {

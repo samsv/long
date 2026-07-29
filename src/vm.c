@@ -141,23 +141,27 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
     TRY_PUSH_STACK(value_borrow(src.arr[i]));                                                                 \
     break; }
 
+#define OP_ERR_2(code, v1, v2, err_msg) {                                                                     \
+    vm_op_err* op_err_payload = sv_malloc(a, sizeof(vm_op_err));                                              \
+    if (op_err_payload != NULL)                                                                               \
+        *op_err_payload = (vm_op_err){                                                                        \
+            .line = vm->chunk.lines.arr[vm->ip-1],                                                            \
+            .ops = { v1, v2 },                                                                                \
+            .ops_len = 2 };                                                                                   \
+    err = (error_t) { .error_code = code,                                                                     \
+                      .payload = op_err_payload,                                                              \
+                      .msg = sv_str_init(err_msg) };                                                          \
+    value_free(&v1, a);                                                                                       \
+    value_free(&v2, a);                                                                                       \
+    goto error; }
+
+#define UNSUPPORTED_2(v1, v2, err_msg) OP_ERR_2(VM_ERR_OP_UNSUPPORTED_ARGS, v1, v2, err_msg)
+
 #define NUM_BIN_OP(op, res_kind, res_field) {                                                                 \
     value_t v2 = sv_vec_pop(vm->stack);                                                                       \
     value_t v1 = sv_vec_pop(vm->stack);                                                                       \
-    if (v1.kind != VALUE_NUMBER || v2.kind != VALUE_NUMBER) {                                                 \
-        vm_op_err* op_err_payload = sv_malloc(a, sizeof(vm_op_err));                                          \
-        if (op_err_payload != NULL)                                                                           \
-            *op_err_payload = (vm_op_err){                                                                    \
-                .line = vm->chunk.lines.arr[vm->ip-1],                                                        \
-                .ops = { v1, v2 },                                                                            \
-                .ops_len = 2 };                                                                               \
-        err = (error_t) { .error_code = VM_ERR_OP_UNSUPPORTED_ARGS,                                           \
-                          .payload = op_err_payload,                                                          \
-                          .msg = sv_str_init("Unsupported args for " #op) };                                  \
-        value_free(&v1, a);                                                                                   \
-        value_free(&v2, a);                                                                                   \
-        goto error;                                                                                           \
-    }                                                                                                         \
+    if (v1.kind != VALUE_NUMBER || v2.kind != VALUE_NUMBER)                                                   \
+        UNSUPPORTED_2(v1, v2, "Unsupported args for " #op)                                                    \
     value_t res = {.kind = res_kind, .res_field = v1.number op v2.number};                                    \
     TRY_PUSH_STACK(res);                                                                                      \
     break; }
@@ -225,6 +229,31 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
             TRY_NOT_NULL(map.obj.cell, "OOM when creating map");
             arr_remove_n(&vm->stack, 2 * n, a);
             TRY_PUSH_OWNED(map);
+            break;
+        }
+        case OP_INDEX: {
+            value_t key = sv_vec_pop(vm->stack);
+            value_t container = sv_vec_pop(vm->stack);
+            if (container.kind != VALUE_OBJ
+                || (container.obj.cell->value.kind != OBJ_MAP
+                    && container.obj.cell->value.kind != OBJ_LIST))
+                UNSUPPORTED_2(container, key, "Type is not indexable")
+
+            sv_opt_t(value_t) res;
+            if (container.obj.cell->value.kind == OBJ_MAP) {
+                res = map_get(container.obj.cell->value.map, key);
+            } else {
+                if (key.kind != VALUE_NUMBER || key.number != (double)(int64_t)key.number)
+                    UNSUPPORTED_2(container, key, "List index is not an integer")
+                res = ll_get(container.obj.cell->value.list, (int64_t)key.number);
+            }
+            if (!res.is_some)
+                OP_ERR_2(VM_ERR_KEY_NOT_FOUND, container, key, "Key not found")
+
+            value_t out = value_borrow(res.value);
+            value_free(&container, a);
+            value_free(&key, a);
+            TRY_PUSH_OWNED(out);
             break;
         }
         case OP_ITER_CREATE: {
@@ -399,6 +428,8 @@ error:
 #undef MATH_OP
 #undef CMP_OP
 #undef NUM_BIN_OP
+#undef OP_ERR_2
+#undef UNSUPPORTED_2
 #undef EQUALS
 #undef TRY_OR
 #undef TRY_PUSH

@@ -245,13 +245,9 @@ static precedence infix_prec(operator_kind op)
     return (precedence){ .left = 0, .right = 0, .has_right = false };
 }
 
-static sexpr_t parse_container(
-    sv_vec_t(sexpr_t)* list,
-    scanner_t* s,
-    ctx_t* ctx,
-    token_t open_token,
-    token_pattern close
-) {
+static sexpr_t parse_container(sv_vec_t(sexpr_t)* list, scanner_t* s, ctx_t* ctx,
+                               token_t open_token, token_pattern close)
+{
     token_t closer;
     if (parser_check(s, ctx, close, &closer))
         return cons_sexpr(*list);
@@ -361,14 +357,9 @@ static sexpr_t parse_bracket(scanner_t* s, ctx_t* ctx, token_t left_bracket, sex
     return cons_of(ctx, items, 3, left_bracket.line);
 }
 
-static sexpr_t parse_block(
-    scanner_t* s,
-    ctx_t* ctx,
-    const token_pattern* ends,
-    int64_t n_ends,
-    int64_t line,
-    token_t* term
-) {
+static sexpr_t parse_block(scanner_t* s, ctx_t* ctx, const token_pattern* ends,
+                           int64_t n_ends, int64_t line, token_t* term)
+{
     sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
     token_t do_atom = { .kind = TOKEN_KEYWORD, .line = line, .keyword = KEYWORD_DO };
     if (!push_sexpr(&list, atom_sexpr(do_atom), ctx))
@@ -427,15 +418,9 @@ static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
     return cons_of(ctx, items, 3, for_token.line);
 }
 
-static sexpr_t parse_fun_body(
-    scanner_t* s,
-    ctx_t* ctx,
-    sv_vec_t(sexpr_t)* list,
-    token_t fun_token,
-    const token_pattern* ends,
-    int64_t n_ends,
-    token_t* term
-) {
+static sexpr_t parse_fun_body(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list, token_t fun_token,
+                              const token_pattern* ends, int64_t n_ends, token_t* term)
+{
     token_t id = parser_expect_id(s, ctx);
     if (id.kind == TOKEN_ERROR)
         return free_list_error(list, ctx, atom_sexpr(id));

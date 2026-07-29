@@ -43,6 +43,22 @@ static inline bool sv_test_compiler_kind(const char* src, value_kind expected)
    return res;
 }
 
+static inline int sv_test_compiler_runtime_err(const char* src)
+{
+   ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   vm_t vm = compile(src, &ctx);
+   if (vm.chunk.bytecode.arr == NULL) {
+      sv_str_deinit(&ctx.err.msg, &sv_gpa);
+      return -1;
+   }
+   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
+   int code = err.is_some ? err.value.error_code : -2;
+   if (err.is_some)
+      vm_err_deinit(&err.value, &sv_gpa);
+   vm_deinit(&vm, &sv_gpa);
+   return code;
+}
+
 static inline int sv_test_compiler_err(const char* src)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
@@ -110,16 +126,29 @@ static inline void sv_test_compiler_maps(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("if \"a\" == \"b\" do 1 else 0 end", 0));
 }
 
+static inline void sv_test_compiler_indexing(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_num("[10, 20, 30][0]", 10));
+   sv_test_run(t, sv_test_compiler_num("[10, 20, 30][2]", 30));
+   sv_test_run(t, sv_test_compiler_num("i = 1\nx = [5, 6]\nx[i]", 6));
+   sv_test_run(t, sv_test_compiler_num("x = [1, [2, 3]]\nx[1][0]", 2));
+   sv_test_run(t, sv_test_compiler_num("%{\"a\": 1}[\"a\"]", 1));
+   sv_test_run(t, sv_test_compiler_num("%{1: 2, 3: 4}[3]", 4));
+   sv_test_run(t, sv_test_compiler_num("m = %{[1, 2]: 9}\nm[[1, 2]]", 9));
+   sv_test_run(t, sv_test_compiler_num("k = \"a\"\n%{\"a\": 5, \"b\": 6}[k]", 5));
+   sv_test_run(t, sv_test_compiler_num("if %{1: 2}[1] == 2 do 1 else 0 end", 1));
+
+   sv_test_run(t, sv_test_compiler_runtime_err("[1, 2][5]") == VM_ERR_KEY_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("[1][0 - 1]") == VM_ERR_KEY_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("%{1: 2}[3]") == VM_ERR_KEY_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("[1][\"a\"]") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_err("[1][0.5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_err("5[0]") == VM_ERR_OP_UNSUPPORTED_ARGS);
+}
+
 static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
 {
-   ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile("for x in 5 do x end", &ctx);
-   sv_test_run(t, vm.chunk.bytecode.arr != NULL);
-   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
-   sv_test_run(t, err.is_some);
-   sv_test_run(t, err.value.error_code == VM_ERR_OP_UNSUPPORTED_ARGS);
-   vm_err_deinit(&err.value, &sv_gpa);
-   vm_deinit(&vm, &sv_gpa);
+   sv_test_run(t, sv_test_compiler_runtime_err("for x in 5 do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t actx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
    vm_t avm = compile("fun f(x) = x end f(1, 2)", &actx);
@@ -269,6 +298,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_basics(t);
    sv_test_compiler_comparisons(t);
    sv_test_compiler_maps(t);
+   sv_test_compiler_indexing(t);
    sv_test_compiler_for(t);
    sv_test_compiler_functions(t);
    sv_test_compiler_closures(t);

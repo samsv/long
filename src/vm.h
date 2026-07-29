@@ -66,6 +66,7 @@ typedef enum {
     OP_LESS_EQUAL,
     OP_RETURN,
     OP_MAP,
+    OP_INDEX,
 } vm_instructions;
 
 typedef enum {
@@ -75,6 +76,7 @@ typedef enum {
     VM_ERR_NOT_IMPLEMENTED,
     VM_ERR_NO_GROUP,
     VM_ERR_BAD_ARITY,
+    VM_ERR_KEY_NOT_FOUND,
 } vm_error_kinds;
 
 typedef struct {
