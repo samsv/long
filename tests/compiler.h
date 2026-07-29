@@ -212,6 +212,13 @@ static inline void sv_test_compiler_for(sv_testing_t* t)
       "     k = x + 2\n"
       "     k\n"
       "end", 5));
+
+   sv_test_run(t, sv_test_compiler_num("if (for c in \"abc\" do c end) == \"c\" do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if (for c in \"aé😀\" do c end) == \"😀\" do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if (for c in \"ab\" do c + \"!\" end) == \"b!\" do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_kind("for x in [] do x end", VALUE_OBJ));
+   sv_test_run(t, sv_test_compiler_kind("for c in \"\" do c end", VALUE_OBJ));
+   sv_test_run(t, sv_test_compiler_runtime_err("for x in %{} do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
 }
 
 static inline void sv_test_compiler_functions(sv_testing_t* t)

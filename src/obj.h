@@ -20,7 +20,6 @@ typedef enum {
 } obj_kind;
 
 typedef struct obj_t {
-    obj_kind kind;
     union {
         sv_str_t str;
         list_t list;
@@ -31,6 +30,7 @@ typedef struct obj_t {
         closure_member_t closure_member;
         error_t err;
     };
+    obj_kind kind;
 } obj_t;
 
 #endif

@@ -30,6 +30,7 @@ typedef struct value_t {
 #define IS_NATIVE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_NATIVE_FN)
 #define IS_CLOSURE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE)
 #define IS_CLOSURE_MEMBER(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE_MEMBER)
+#define IS_ITER(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_ITER)
 
 #define AS_STR(v) ((v).obj.cell->value.str)
 #define AS_ERR(v) ((v).obj.cell->value.err)
@@ -37,6 +38,7 @@ typedef struct value_t {
 #define AS_NATIVE(v) ((v).obj.cell->value.fn)
 #define AS_CLOSURE(v) ((v).obj.cell->value.closure)
 #define AS_CLOSURE_MEMBER(v) ((v).obj.cell->value.closure_member)
+#define AS_ITER(v) ((v).obj.cell->value.iter)
 
 static const value_t value_nil = { .kind = VALUE_NIL };
 static const value_t value_true = { .kind = VALUE_BOOL, .boolean = true };

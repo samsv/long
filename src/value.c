@@ -292,7 +292,11 @@ static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
             return sv_strb_add_char(b, '}', a) >= 0;
         }
         case OBJ_ITER:
-            return sv_strb_add(b, "list iterator", 13, a) >= 0;
+            switch (AS_ITER(v).kind) {
+                case ITER_LIST: return sv_strb_add(b, "list iterator", 13, a) >= 0;
+                case ITER_STR: return sv_strb_add(b, "string iterator", 15, a) >= 0;
+            }
+            return false;
         case OBJ_CLOSURE: {
             sv_str_t name = cls_get_vm(v.obj.cell->value.closure).name;
             return sv_strb_add(b, name.chars, name.size, a) >= 0;

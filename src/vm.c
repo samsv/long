@@ -293,7 +293,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
         }
         case OP_ITER_CREATE: {
             value_t v = sv_vec_pop(vm->stack);
-            if (v.kind != VALUE_OBJ || v.obj.cell->value.kind != OBJ_LIST)
+            if (!IS_LIST(v) && !IS_STR(v))
                 UNSUPPORTED_1(v, "Type is not iterable")
             value_t iter = value_init_iter(v, a);
             value_free(&v, a);
@@ -303,10 +303,12 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
         }
         case OP_ITER_NEXT: {
             value_t v = sv_vec_pop(vm->stack);
-            if (v.kind != VALUE_OBJ || v.obj.cell->value.kind != OBJ_ITER)
+            if (!IS_ITER(v))
                 UNSUPPORTED_1(v, "Type is not an iterator")
-            value_t res = value_borrow(iter_next(&v.obj.cell->value.iter));
+            value_t res = iter_next(&AS_ITER(v), a);
             value_free(&v, a);
+            TRY_OR(!(res.kind == VALUE_OBJ && res.obj.cell == NULL), (void)0,
+                   "OOM when advancing iterator");
             TRY_PUSH_OWNED(res);
             break;
         }
@@ -391,6 +393,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
     err = (error_t){ .error_code = VM_ERR_BAD_ARITY,                                                          \
         .payload = p,                                                                                         \
         .msg = sv_str_init("wrong number of arguments") };                                                    \
+    sv_vec_deinit(&args, a);                                                                                  \
     value_free(&value, a);                                                                                    \
     goto error; } while (0)
 
@@ -416,6 +419,8 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
                     err = AS_ERR(ret);
                     vm_err_t* vm_err = err.payload;
                     vm_err->line = vm->chunk.lines.arr[vm->ip-1];
+                    sv_vec_deinit(&args, a);
+                    value_free(&value, a);
                     goto error;
                 }
                 arr_deinit(&args, a);
