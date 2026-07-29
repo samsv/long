@@ -91,6 +91,25 @@ static inline void sv_test_compiler_comparisons(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("if nil != 1 do 1 else 0 end", 1));
 }
 
+static inline void sv_test_compiler_maps(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_kind("%{}", VALUE_OBJ));
+   sv_test_run(t, sv_test_compiler_kind("%{\"a\": 1, 2: 0}", VALUE_OBJ));
+   sv_test_run(t, sv_test_compiler_num("if %{1: 2} == %{1: 2} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if %{1: 2} == %{1: 3} do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if %{1: 2} == %{} do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if %{1: 2, 3: 4} == %{3: 4, 1: 2} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if %{1: 2, 1: 3} == %{1: 3} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if %{[1, 2]: \"v\"} == %{[1, 2]: \"v\"} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("x = 5\nif %{x: 1} == %{5: 1} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if %{\"k\": %{1: 2}} == %{\"k\": %{1: 2}} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if [1, 2, 3] == [1, 2, 3] do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if [1, 2] == [1, 2, 3] do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if [1, [2, 3]] == [1, [2, 3]] do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if \"a\" == \"a\" do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if \"a\" == \"b\" do 1 else 0 end", 0));
+}
+
 static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
@@ -249,6 +268,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
 {
    sv_test_compiler_basics(t);
    sv_test_compiler_comparisons(t);
+   sv_test_compiler_maps(t);
    sv_test_compiler_for(t);
    sv_test_compiler_functions(t);
    sv_test_compiler_closures(t);

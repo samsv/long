@@ -128,6 +128,8 @@ bool token_format_builder(token_t token, sv_str_builder* b, const sv_allocator_t
         case TOKEN_RIGHT_BRACE: return add_text(b, "}", a);
         case TOKEN_RIGHT_BRACKET: return add_text(b, "]", a);
         case TOKEN_LEFT_BRACE: return add_text(b, "{", a);
+        case TOKEN_PERCENT_BRACE: return add_text(b, "%{", a);
+        case TOKEN_COLON: return add_text(b, ":", a);
         case TOKEN_SEMICOLON: return add_text(b, ";", a);
         case TOKEN_HASH: return add_text(b, "#", a);
         case TOKEN_PIPE: return add_text(b, "|", a);

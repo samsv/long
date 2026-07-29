@@ -6,6 +6,7 @@
 #include "../std/rc.h"
 #include "../std/vector.h"
 #include "../std/option.h"
+#include "../common.h"
 #include "../value.h"
 
 typedef struct {
@@ -34,11 +35,6 @@ typedef struct {
     sparse_t sparse;
     int64_t len;
 } sparse_set_t;
-
-typedef struct map_node_t map_node_t;
-typedef struct sv_rc_cell_t(map_node_t) sv_rc_cell_t(map_node_t);
-sv_rc_wrapper_def(map_node_t);
-typedef sv_rc_t(map_node_t) map_t;
 
 typedef struct map_node_t {
     sparse_set_t set;
@@ -102,6 +98,11 @@ map_t map_delete(map_t, value_t, const sv_allocator_t*);
  */
 int64_t map_count(map_t);
 
+/**
+ * Initializes an iterator viewing the map without borrowing it. The map must
+ * outlive the iterator; no deinit is needed.
+ */
+map_iter_t map_iter_init_no_borrow(map_t);
 /**
  * Initializes a new iterator from the map.
  */

@@ -305,6 +305,13 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
         case '.': return operator_of(s, OPERATOR_DOT);
         case ',': return operator_of(s, OPERATOR_COMMA);
         case ';': return token_of(s, TOKEN_SEMICOLON);
+        case ':': return token_of(s, TOKEN_COLON);
+        case '%':
+            if (next_char_if_eq(s, '{'))
+                return token_of(s, TOKEN_PERCENT_BRACE);
+            next_codepoint(s);
+            return slice_error_token(s, ctx, SCANNER_ERROR_UNKNOWN_TOKEN,
+                                     "Unknown token", initial_i);
         case '|':
             if (next_char_if_eq(s, '>'))
                 return operator_of(s, OPERATOR_PIPE_FORWARD);

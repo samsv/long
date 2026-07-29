@@ -60,5 +60,10 @@ value_t value_init_closure_member(sv_rc_t(closure_group_t), int64_t, const sv_al
  * allocation failure.
  */
 value_t value_init_str(sv_str_t, const sv_allocator_t*);
+/**
+ * Creates a map value borrowing n_pairs (key, value) pairs from the flat
+ * array. Later duplicate keys win. obj.cell is NULL on allocation failure.
+ */
+value_t value_init_map(const value_t*, int64_t, const sv_allocator_t*);
 
 #endif

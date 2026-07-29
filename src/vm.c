@@ -219,6 +219,14 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
             TRY_PUSH_OWNED(list);
             break;
         }
+        case OP_MAP: {
+            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
+            value_t map = value_init_map(&vm->stack.arr[vm->stack.size - 2 * n], n, a);
+            TRY_NOT_NULL(map.obj.cell, "OOM when creating map");
+            arr_remove_n(&vm->stack, 2 * n, a);
+            TRY_PUSH_OWNED(map);
+            break;
+        }
         case OP_ITER_CREATE: {
             value_t v = sv_vec_pop(vm->stack);
             if (v.kind != VALUE_OBJ || v.obj.cell->value.kind != OBJ_LIST)

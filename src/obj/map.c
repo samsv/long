@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <limits.h>
 #include <math.h>
 #include "map.h"
@@ -188,11 +189,15 @@ static uint32_t str_hash(sv_str_t s)
  * as in Lua. -0.0 is integral, so it hashes like 0.0, matching value_eql.
  * https://www.lua.org/source/5.4/ltable.c.html#l_hashfloat
  *
- * Lists and iterators hash to 0 (only identity equality applies).
- *
  * Strings use luaS_hash with a zero seed (Lua's seed exists for hash
  * flooding resistance).
  * https://www.lua.org/source/5.4/lstring.c.html#luaS_hash
+ *
+ * Lists combine their element hashes in order with boost's hash_combine mix,
+ * and maps sum a per-entry key/value mix so the result is independent of
+ * iteration order, both matching structural value_eql. Iterators and
+ * closures hash their cell address (only identity equality applies), shifted
+ * right to drop the allocation-alignment zero bits.
  *
  * Nil and booleans are fixed small constants.
  */
@@ -205,10 +210,23 @@ static uint32_t value_hash(value_t v)
         case VALUE_OBJ:
             switch (v.obj.cell->value.kind) {
                 case OBJ_STR: return str_hash(v.obj.cell->value.str);
-                case OBJ_LIST:
+                case OBJ_LIST: {
+                    uint32_t h = 17;
+                    ll_iter_t it = ll_iter_init_no_borrow(v.obj.cell->value.list);
+                    for (sv_opt_t(value_t) e = ll_iter_next(&it); e.is_some; e = ll_iter_next(&it))
+                        h ^= value_hash(e.value) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                    return h;
+                }
+                case OBJ_MAP: {
+                    uint32_t h = 0;
+                    map_iter_t it = map_iter_init_no_borrow(v.obj.cell->value.map);
+                    for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it))
+                        h += value_hash(kv.value.key) * 31u ^ value_hash(kv.value.value);
+                    return h;
+                }
                 case OBJ_ITER:
                 case OBJ_CLOSURE:
-                case OBJ_CLOSURE_MEMBER: return 0;
+                case OBJ_CLOSURE_MEMBER: return (uint32_t)((uintptr_t)v.obj.cell >> 4);
             }
             return 0;
     }
@@ -504,9 +522,14 @@ int64_t map_count(map_t map)
     return count;
 }
 
+map_iter_t map_iter_init_no_borrow(map_t map)
+{
+    return iter_init_node(map.cell->value);
+}
+
 map_iter_t map_iter_init(map_t map)
 {
-    map_iter_t it = iter_init_node(map.cell->value);
+    map_iter_t it = map_iter_init_no_borrow(map);
     if (it.kind == MAP_ITER_FLAT)
         it.flat.root = sv_rc_borrow(map);
     else

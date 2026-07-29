@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "value.h"
 #include "obj/list.h"
+#include "obj/map.h"
 #include "obj/iterator.h"
 #include "obj/closure.h"
 #include "vm.h"
@@ -30,6 +31,35 @@ value_t value_borrow(value_t v)
     }
 }
 
+static bool list_eql(list_t x, list_t y)
+{
+    if (ll_count(x) != ll_count(y))
+        return false;
+    ll_iter_t ix = ll_iter_init_no_borrow(x);
+    ll_iter_t iy = ll_iter_init_no_borrow(y);
+    for (;;) {
+        sv_opt_t(value_t) ex = ll_iter_next(&ix);
+        sv_opt_t(value_t) ey = ll_iter_next(&iy);
+        if (!ex.is_some)
+            return true;
+        if (!value_eql(ex.value, ey.value))
+            return false;
+    }
+}
+
+static bool map_eql(map_t x, map_t y)
+{
+    if (map_count(x) != map_count(y))
+        return false;
+    map_iter_t it = map_iter_init_no_borrow(x);
+    for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it)) {
+        sv_opt_t(value_t) other = map_get(y, kv.value.key);
+        if (!other.is_some || !value_eql(kv.value.value, other.value))
+            return false;
+    }
+    return true;
+}
+
 bool value_eql(value_t x, value_t y)
 {
     if (x.kind != y.kind)
@@ -41,9 +71,19 @@ bool value_eql(value_t x, value_t y)
         case VALUE_OBJ: {
             if (x.obj.cell == y.obj.cell)
                 return true;
-            if (x.obj.cell->value.kind != OBJ_STR || y.obj.cell->value.kind != OBJ_STR)
+            const obj_t* ox = &x.obj.cell->value;
+            const obj_t* oy = &y.obj.cell->value;
+            if (ox->kind != oy->kind)
                 return false;
-            return sv_str_comp(x.obj.cell->value.str, y.obj.cell->value.str);
+            switch (ox->kind) {
+                case OBJ_STR: return sv_str_comp(ox->str, oy->str);
+                case OBJ_LIST: return list_eql(ox->list, oy->list);
+                case OBJ_MAP: return map_eql(ox->map, oy->map);
+                case OBJ_ITER:
+                case OBJ_CLOSURE:
+                case OBJ_CLOSURE_MEMBER: return false;
+            }
+            return false;
         }
     }
     return false;
@@ -54,6 +94,7 @@ static void obj_free(obj_t* o, const sv_allocator_t* a)
     switch (o->kind) {
         case OBJ_STR: sv_str_deinit(&o->str, a); break;
         case OBJ_LIST: ll_deinit(&o->list, a); break;
+        case OBJ_MAP: map_deinit(&o->map, a); break;
         case OBJ_ITER: iter_deinit(&o->iter, a); break;
         case OBJ_CLOSURE: cls_deinit(&o->closure, a); break;
         case OBJ_CLOSURE_MEMBER: clsm_deinit(&o->closure_member, a); break;
@@ -129,6 +170,31 @@ value_t value_init_str(sv_str_t s, const sv_allocator_t* a)
     return v;
 }
 
+value_t value_init_map(const value_t* vs, int64_t n_pairs, const sv_allocator_t* a)
+{
+    kv_t* kvs = NULL;
+    if (n_pairs > 0) {
+        kvs = sv_malloc(a, (size_t)n_pairs * sizeof(kv_t));
+        if (kvs == NULL)
+            return ERR_VALUE;
+        for (int64_t i = 0; i < n_pairs; i++) {
+            const value_t* pair = &vs[2 * (n_pairs - 1 - i)];
+            kvs[i] = (kv_t){ .key = pair[0], .value = pair[1] };
+        }
+    }
+
+    map_t map = map_init(kvs, n_pairs, a);
+    if (kvs != NULL)
+        sv_free(a, kvs);
+    if (map.cell == NULL)
+        return ERR_VALUE;
+
+    value_t v = obj_wrap((obj_t){ .kind = OBJ_MAP, .map = map }, a);
+    if (v.obj.cell == NULL)
+        map_deinit(&map, a);
+    return v;
+}
+
 static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
 {
     switch (v.kind) {
@@ -160,6 +226,24 @@ static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
             }
             ll_iter_deinit(&iter, a);
             return sv_strb_add_char(b, ']', a) >= 0;
+        }
+        case OBJ_MAP: {
+            if (sv_strb_add(b, "%{", 2, a) < 0)
+                return false;
+            map_iter_t it = map_iter_init(v.obj.cell->value.map);
+            bool first = true;
+            for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it)) {
+                if ((!first && sv_strb_add(b, ", ", 2, a) < 0)
+                    || !value_write(kv.value.key, b, a)
+                    || sv_strb_add(b, ": ", 2, a) < 0
+                    || !value_write(kv.value.value, b, a)) {
+                    map_iter_deinit(&it, a);
+                    return false;
+                }
+                first = false;
+            }
+            map_iter_deinit(&it, a);
+            return sv_strb_add_char(b, '}', a) >= 0;
         }
         case OBJ_ITER:
             return sv_strb_add(b, "list iterator", 13, a) >= 0;

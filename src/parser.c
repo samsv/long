@@ -298,6 +298,50 @@ static sexpr_t parse_list(scanner_t* s, ctx_t* ctx, token_t open, token_pattern 
     return parse_container(&list, s, ctx, open, close);
 }
 
+static sexpr_t parse_map(scanner_t* s, ctx_t* ctx, token_t open)
+{
+    sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
+    token_t map_atom = { .kind = TOKEN_SP_FUNCTION, .line = open.line, .fn = FN_MAP };
+    if (!push_sexpr(&list, atom_sexpr(map_atom), ctx))
+        return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+
+    token_t closer;
+    if (parser_check(s, ctx, kind_pattern(TOKEN_RIGHT_BRACE), &closer))
+        return cons_sexpr(list);
+
+    for (;;) {
+        sexpr_t key = parse_expr(s, ctx, 5);
+        if (is_error_sexpr(key))
+            return free_list_error(&list, ctx, key);
+        if (!push_sexpr(&list, key, ctx)) {
+            sexpr_free(&key, &ctx->alloc);
+            return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+        }
+
+        token_t colon = parser_expect(s, ctx, kind_pattern(TOKEN_COLON));
+        if (colon.kind == TOKEN_ERROR)
+            return free_list_error(&list, ctx, atom_sexpr(colon));
+
+        sexpr_t value = parse_expr(s, ctx, 5);
+        if (is_error_sexpr(value))
+            return free_list_error(&list, ctx, value);
+        if (!push_sexpr(&list, value, ctx)) {
+            sexpr_free(&value, &ctx->alloc);
+            return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+        }
+
+        token_t comma;
+        if (!parser_check(s, ctx, op_pattern(OPERATOR_COMMA), &comma))
+            break;
+    }
+
+    token_t closed = parser_expect_close(s, ctx, open, kind_pattern(TOKEN_RIGHT_BRACE));
+    if (closed.kind == TOKEN_ERROR)
+        return free_list_error(&list, ctx, atom_sexpr(closed));
+
+    return cons_sexpr(list);
+}
+
 static sexpr_t parse_bracket(scanner_t* s, ctx_t* ctx, token_t left_bracket, sexpr_t lhs)
 {
     sexpr_t rhs = parse_expr(s, ctx, 0);
@@ -548,6 +592,10 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
         }
     } else if (start_token.kind == TOKEN_LITERAL) {
         lhs = atom_sexpr(start_token);
+    } else if (start_token.kind == TOKEN_PERCENT_BRACE) {
+        lhs = parse_map(s, ctx, start_token);
+        if (is_error_sexpr(lhs))
+            return lhs;
     } else {
         return unexpected_token_error(ctx, start_token, "Unexpected token");
     }

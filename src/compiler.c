@@ -404,6 +404,13 @@ static bool compile_list(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
     return emit2(c, ctx, OP_LIST, (uint8_t)n, line);
 }
 
+static bool compile_map(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    for (int64_t i = 0; i < n; i++)
+        TRY(compile_sexpr(c, args[i], ctx));
+    return emit2(c, ctx, OP_MAP, (uint8_t)(n / 2), line);
+}
+
 static bool compile_do(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
     TRY(init_scope(c, ctx, line));
@@ -648,9 +655,9 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
             case FN_IF: return compile_if(c, cons + 1, n - 1, a.line, ctx);
             case FN_FOR: return compile_for(c, cons + 1, n - 1, a.line, ctx);
             case FN_LIST: return compile_list(c, cons + 1, n - 1, a.line, ctx);
+            case FN_MAP: return compile_map(c, cons + 1, n - 1, a.line, ctx);
             case FN_FUN: return compile_fun(c, cons + 1, n - 1, a.line, ctx);
             case FN_CLASS:
-            case FN_MAP:
             case FN_MAPF:
             case FN_MATCH:
             case FN_REDUCE:

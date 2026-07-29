@@ -350,13 +350,20 @@ int64_t ll_count(list_t l)
     return ll_count_rec(l, 0);
 }
 
-ll_iter_t ll_iter_init(list_t l)
+ll_iter_t ll_iter_init_no_borrow(list_t l)
 {
     return (ll_iter_t){
-        .root = sv_rc_borrow(l),
+        .root = {0},
         .node = l,
         .index = l.cell->value.start + l.cell->value.len - 1,
     };
+}
+
+ll_iter_t ll_iter_init(list_t l)
+{
+    ll_iter_t it = ll_iter_init_no_borrow(l);
+    it.root = sv_rc_borrow(l);
+    return it;
 }
 
 void ll_iter_deinit(ll_iter_t* it, const sv_allocator_t* a)

@@ -65,6 +65,7 @@ typedef enum {
     OP_LESS,
     OP_LESS_EQUAL,
     OP_RETURN,
+    OP_MAP,
 } vm_instructions;
 
 typedef enum {
