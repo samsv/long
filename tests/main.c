@@ -7,6 +7,7 @@
 #include "list.h"
 #include "map.h"
 #include "str_iter.h"
+#include "tuple.h"
 #include "compiler.h"
 #include "parser.h"
 
@@ -21,6 +22,7 @@ int main(void)
     sv_test_list(&t);
     sv_test_map(&t);
     sv_test_str_iter(&t);
+    sv_test_tuple(&t);
     sv_test_compiler(&t);
     sv_test_parser(&t);
 

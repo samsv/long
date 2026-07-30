@@ -1,10 +1,12 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "value.h"
 #include "obj/list.h"
 #include "obj/map.h"
 #include "obj/iterator.h"
 #include "obj/closure.h"
+#include "std/logger.h"
 #include "vm.h"
 
 #define ERR_VALUE (value_t){ .kind = VALUE_OBJ }
@@ -80,6 +82,7 @@ bool value_eql(value_t x, value_t y)
                 case OBJ_STR: return sv_str_comp(ox->str, oy->str);
                 case OBJ_LIST: return list_eql(ox->list, oy->list);
                 case OBJ_MAP: return map_eql(ox->map, oy->map);
+                case OBJ_TUPLE: return tuple_eql(ox->tuple, oy->tuple);
                 case OBJ_NATIVE_FN:
                 case OBJ_ITER:
                 case OBJ_CLOSURE:
@@ -101,6 +104,7 @@ static void obj_free(obj_t* o, const sv_allocator_t* a)
         case OBJ_MAP: map_deinit(&o->map, a); break;
         case OBJ_ITER: iter_deinit(&o->iter, a); break;
         case OBJ_CLOSURE: cls_deinit(&o->closure, a); break;
+        case OBJ_TUPLE: tuple_deinit(&o->tuple, a); break;
         case OBJ_CLOSURE_MEMBER: clsm_deinit(&o->closure_member, a); break;
         case OBJ_ERR: {
             error_t err = o->err;
@@ -197,26 +201,27 @@ value_t value_init_str(sv_str_t s, const sv_allocator_t* a)
 
 value_t value_init_map(const value_t* vs, int64_t n_pairs, const sv_allocator_t* a)
 {
-    kv_t* kvs = NULL;
-    if (n_pairs > 0) {
-        kvs = sv_malloc(a, (size_t)n_pairs * sizeof(kv_t));
-        if (kvs == NULL)
-            return ERR_VALUE;
-        for (int64_t i = 0; i < n_pairs; i++) {
-            const value_t* pair = &vs[2 * (n_pairs - 1 - i)];
-            kvs[i] = (kv_t){ .key = pair[0], .value = pair[1] };
-        }
-    }
-
-    hashmap_t map = map_init(kvs, n_pairs, a);
-    if (kvs != NULL)
-        sv_free(a, kvs);
+    hashmap_t map = map_init(vs, n_pairs * 2, a);
     if (map.cell == NULL)
         return ERR_VALUE;
 
     value_t v = obj_wrap((obj_t){ .kind = OBJ_MAP, .map = map }, a);
     if (v.obj.cell == NULL)
         map_deinit(&map, a);
+    return v;
+}
+
+value_t value_init_tuple(const value_t* vs, uint8_t n, const sv_allocator_t* a)
+{
+    value_t v = obj_wrap((obj_t){ .kind = OBJ_TUPLE, .tuple = {0} }, a);
+    if (v.obj.cell == NULL)
+        return ERR_VALUE;
+
+    tuple_t tuple = tuple_init(vs, n, a);
+    if (tuple.items == NULL)
+        return ERR_VALUE;
+
+    v.obj.cell->value.tuple = tuple;
     return v;
 }
 
@@ -232,6 +237,7 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
             case OBJ_STR: return "string";
             case OBJ_LIST: return "list";
             case OBJ_MAP: return "hashmap";
+            case OBJ_TUPLE: return "tuple";
             case OBJ_NATIVE_FN:
             case OBJ_CLOSURE:
             case OBJ_CLOSURE_MEMBER:
@@ -241,8 +247,10 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
     return "";
 }
 
-static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
+static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
 {
+    const sv_allocator_t* a = ctx->alloc;
+#define CHECK(expr) if (!(expr)) return false
     switch (v.kind) {
         case VALUE_NIL: return sv_strb_add(b, "nil", 3, a) >= 0;
         case VALUE_BOOL:
@@ -259,13 +267,11 @@ static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
         case OBJ_STR:
             return sv_strb_add(b, v.obj.cell->value.str.chars, v.obj.cell->value.str.size, a) >= 0;
         case OBJ_LIST: {
-            if (sv_strb_add_char(b, '[', a) < 0)
-                return false;
-            ll_iter_t iter = ll_iter_init(v.obj.cell->value.list);
+            CHECK(sv_strb_add_char(b, '[', a) >= 0);
+            ll_iter_t iter = ll_iter_init_no_borrow(v.obj.cell->value.list);
             bool first = true;
             for (sv_opt_t(value_t) e = ll_iter_next(&iter); e.is_some; e = ll_iter_next(&iter)) {
-                if ((!first && sv_strb_add(b, ", ", 2, a) < 0) || !value_write(e.value, b, a)) {
-                    ll_iter_deinit(&iter, a);
+                if ((!first && sv_strb_add(b, ", ", 2, a) < 0) || !value_write(e.value, b, ctx)) {
                     return false;
                 }
                 first = false;
@@ -274,16 +280,15 @@ static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
             return sv_strb_add_char(b, ']', a) >= 0;
         }
         case OBJ_MAP: {
-            if (sv_strb_add(b, "%{", 2, a) < 0)
-                return false;
-            map_iter_t it = map_iter_init(v.obj.cell->value.map);
+            CHECK(sv_strb_add(b, "%{", 2, a) >= 0);
+            map_iter_t it = map_iter_init_no_borrow(v.obj.cell->value.map);
             bool first = true;
             for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it)) {
                 if ((!first && sv_strb_add(b, ", ", 2, a) < 0)
-                    || !value_write(kv.value.key, b, a)
+                    || !value_write(kv.value.key, b, ctx)
                     || sv_strb_add(b, ": ", 2, a) < 0
-                    || !value_write(kv.value.value, b, a)) {
-                    map_iter_deinit(&it, a);
+                    || !value_write(kv.value.value, b, ctx)
+                ) {
                     return false;
                 }
                 first = false;
@@ -309,8 +314,24 @@ static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
             const char* name = v.obj.cell->value.fn.name;
             return sv_strb_add(b, name, strlen(name), a) >= 0;
         }
+        case OBJ_TUPLE: {
+            CHECK(sv_strb_add(b, "{", 1, a) >= 0);
+
+            tuple_t tuple = AS_TUPLE(v);
+            for (uint8_t i = 0; i < tuple.size; i++) {
+                tuple_item_t item = tuple.items[i];
+                if (i > 0)
+                    CHECK(sv_strb_add(b, ", ", 2, a) >= 0);
+
+                const char* name = ctx->tuple_key_names[item.id];
+                CHECK(sv_strb_add(b, name, (int64_t)strlen(name), a) >= 0);
+                CHECK(sv_strb_add(b, ": ", 2, a) >= 0);
+                CHECK(value_write(item.value, b, ctx));
+            }
+
+            return sv_strb_add(b, "}", 1, a) >= 0;
+        }
         case OBJ_ERR: {
-#define CHECK(expr) if (!(expr)) return false
             error_t e = AS_ERR(v);
             CHECK(sv_strb_add(b, e.msg.chars, e.msg.size, a) >= 0);
 
@@ -324,7 +345,7 @@ static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
                     // TODO: Make this a vtable method
                     vm_wrong_type_err* payload = e.payload;
                     CHECK(sv_strb_add(b, "got ", strlen("got "), a) >= 0);
-                    CHECK(value_write(payload->got, b, a));
+                    CHECK(value_write(payload->got, b, ctx));
                     const char* rcv = value_kind_str(payload->expected_v, payload->expected_o);
                     return sv_strb_add(b, rcv, strlen(rcv), a) >= 0;
                 }
@@ -336,11 +357,11 @@ static bool value_write(value_t v, sv_str_builder* b, const sv_allocator_t* a)
     return false;
 }
 
-sv_str_t value_to_str(value_t v, const sv_allocator_t* a)
+sv_str_t value_to_str(value_t v, const vm_ctx_t* ctx)
 {
     sv_str_builder b = sv_strb_init();
-    if (!value_write(v, &b, a)) {
-        sv_strb_deinit(&b, a);
+    if (!value_write(v, &b, ctx)) {
+        sv_strb_deinit(&b, ctx->alloc);
         return sv_str_err();
     }
     return sv_strb_to_str(&b);

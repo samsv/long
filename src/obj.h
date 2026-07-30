@@ -7,10 +7,12 @@
 #include "obj/iterator.h"
 #include "obj/closure.h"
 #include "obj/native_fns.h"
+#include "obj/tuple.h"
 
 typedef enum {
     OBJ_STR,
     OBJ_LIST,
+    OBJ_TUPLE,
     OBJ_MAP,
     OBJ_ITER,
     OBJ_NATIVE_FN,
@@ -22,6 +24,7 @@ typedef enum {
 typedef struct obj_t {
     union {
         sv_str_t str;
+        tuple_t tuple;
         list_t list;
         hashmap_t map;
         iter_t iter;
@@ -32,5 +35,7 @@ typedef struct obj_t {
     };
     obj_kind kind;
 } obj_t;
+
+sv_rc_cell_def(obj_t);
 
 #endif

@@ -5,6 +5,7 @@
 #include "../src/std/allocator_std.h"
 #include "../src/value.h"
 #include "../src/obj/map.h"
+#include "../src/obj.h"
 #include "string.h"
 
 static int sv_test_map_obj_frees = 0;
@@ -51,8 +52,12 @@ static inline hashmap_t sv_test_map_big(int64_t n, const sv_allocator_t* a)
 
 static inline void sv_test_map_init_get(sv_testing_t* t)
 {
-   kv_t kvs[] = { sv_test_map_kv(1, 10), sv_test_map_kv(2, 20), sv_test_map_kv(3, 30) };
-   hashmap_t m = map_init(kvs, 3, &sv_gpa);
+   value_t kvs[] = {
+      sv_test_map_num(1), sv_test_map_num(10),
+      sv_test_map_num(2), sv_test_map_num(20),
+      sv_test_map_num(3), sv_test_map_num(30),
+   };
+   hashmap_t m = map_init(kvs, 6, &sv_gpa);
    sv_test_run(t, m.cell != NULL);
    sv_test_run(t, map_count(m) == 3);
    sv_test_run(t, sv_test_map_get_num(m, 1) == 10);
@@ -61,12 +66,12 @@ static inline void sv_test_map_init_get(sv_testing_t* t)
    sv_test_run(t, !map_get(m, sv_test_map_num(99)).is_some);
    map_deinit(&m, &sv_gpa);
 
-   kv_t edge_kvs[] = {
-      sv_test_map_kv(-7, 70),
-      sv_test_map_kv(2.5, 25),
-      sv_test_map_kv(0, 1),
+   value_t edge_kvs[] = {
+      sv_test_map_num(-7), sv_test_map_num(70),
+      sv_test_map_num(2.5), sv_test_map_num(25),
+      sv_test_map_num(0), sv_test_map_num(1),
    };
-   hashmap_t edges = map_init(edge_kvs, 3, &sv_gpa);
+   hashmap_t edges = map_init(edge_kvs, 6, &sv_gpa);
    sv_test_run(t, sv_test_map_get_num(edges, -7) == 70);
    sv_test_run(t, sv_test_map_get_num(edges, 2.5) == 25);
    sv_test_run(t, sv_test_map_get_num(edges, -0.0) == 1);
@@ -118,8 +123,11 @@ static inline void sv_test_map_put(sv_testing_t* t)
 
 static inline void sv_test_map_fork(sv_testing_t* t)
 {
-   kv_t base[] = { sv_test_map_kv(1, 1), sv_test_map_kv(2, 2) };
-   hashmap_t parent = map_init(base, 2, &sv_gpa);
+   value_t base[] = {
+      sv_test_map_num(1), sv_test_map_num(1),
+      sv_test_map_num(2), sv_test_map_num(2),
+   };
+   hashmap_t parent = map_init(base, 4, &sv_gpa);
 
    hashmap_t a = map_put(parent, sv_test_map_kv(10, 100), &sv_gpa);
    hashmap_t b = map_put(parent, sv_test_map_kv(20, 200), &sv_gpa);
@@ -148,8 +156,12 @@ static inline void sv_test_map_fork(sv_testing_t* t)
 
 static inline void sv_test_map_delete(sv_testing_t* t)
 {
-   kv_t kvs[] = { sv_test_map_kv(1, 1), sv_test_map_kv(2, 2), sv_test_map_kv(3, 3) };
-   hashmap_t m = map_init(kvs, 3, &sv_gpa);
+   value_t kvs[] = {
+      sv_test_map_num(1), sv_test_map_num(1),
+      sv_test_map_num(2), sv_test_map_num(2),
+      sv_test_map_num(3), sv_test_map_num(3),
+   };
+   hashmap_t m = map_init(kvs, 6, &sv_gpa);
 
    hashmap_t d = map_delete(m, sv_test_map_num(2), &sv_gpa);
    sv_test_run(t, d.cell != NULL);
@@ -227,8 +239,11 @@ static inline void sv_test_map_flatten(sv_testing_t* t)
 
 static inline void sv_test_map_iter(sv_testing_t* t)
 {
-   kv_t kvs[] = { sv_test_map_kv(1, 10), sv_test_map_kv(2, 20) };
-   hashmap_t m = map_init(kvs, 2, &sv_gpa);
+   value_t kvs[] = {
+      sv_test_map_num(1), sv_test_map_num(10),
+      sv_test_map_num(2), sv_test_map_num(20),
+   };
+   hashmap_t m = map_init(kvs, 4, &sv_gpa);
    map_iter_t it = map_iter_init(m);
    map_deinit(&m, &sv_gpa);
 
@@ -276,8 +291,8 @@ static inline void sv_test_map_values(sv_testing_t* t)
    value_t v = sv_test_map_obj("shared", &sv_gpa);
    sv_test_run(t, v.obj.cell->count == 1);
 
-   kv_t kv = { .key = k, .value = v };
-   hashmap_t m = map_init(&kv, 1, &sv_gpa);
+   value_t kv[] = { k, v };
+   hashmap_t m = map_init(kv, 2, &sv_gpa);
    sv_test_run(t, k.obj.cell->count == 2);
    sv_test_run(t, v.obj.cell->count == 2);
 
@@ -303,11 +318,14 @@ static inline void sv_test_map_oom(sv_testing_t* t)
 {
    sv_test_map_obj_frees = 0;
 
-   kv_t kvs[] = { sv_test_map_kv(1, 1), sv_test_map_kv(2, 2) };
-   hashmap_t failed = map_init(kvs, 2, &sv_test_fail_alloc);
+   value_t kvs[] = {
+      sv_test_map_num(1), sv_test_map_num(1),
+      sv_test_map_num(2), sv_test_map_num(2),
+   };
+   hashmap_t failed = map_init(kvs, 4, &sv_test_fail_alloc);
    sv_test_run(t, failed.cell == NULL);
 
-   hashmap_t good = map_init(kvs, 2, &sv_gpa);
+   hashmap_t good = map_init(kvs, 4, &sv_gpa);
    hashmap_t bad_put = map_put(good, sv_test_map_kv(3, 3), &sv_test_fail_alloc);
    sv_test_run(t, bad_put.cell == NULL);
    sv_test_run(t, map_count(good) == 2);
@@ -323,8 +341,8 @@ static inline void sv_test_map_oom(sv_testing_t* t)
          .vtable = &sv_test_countdown_vtable,
          .self = &counter,
       };
-      kv_t kv = { .key = sv_test_map_num(1), .value = v };
-      hashmap_t partial = map_init(&kv, 1, &countdown);
+      value_t kv[] = { sv_test_map_num(1), v };
+      hashmap_t partial = map_init(kv, 2, &countdown);
       if (partial.cell != NULL)
          map_deinit(&partial, &countdown);
    }
@@ -400,8 +418,11 @@ static inline void sv_test_map_transient(sv_testing_t* t)
    map_deinit(&borrow, &sv_gpa);
    map_deinit(&shared, &sv_gpa);
 
-   kv_t base[] = { sv_test_map_kv(1, 1), sv_test_map_kv(2, 2) };
-   hashmap_t v0 = map_init(base, 2, &sv_gpa);
+   value_t base[] = {
+      sv_test_map_num(1), sv_test_map_num(1),
+      sv_test_map_num(2), sv_test_map_num(2),
+   };
+   hashmap_t v0 = map_init(base, 4, &sv_gpa);
    hashmap_t v1 = map_put(v0, sv_test_map_kv(3, 3), &sv_gpa);
    transient_hashmap_t flat = map_to_transient(&v1, &sv_gpa);
    sv_test_run(t, flat.set.dense.cell != NULL);

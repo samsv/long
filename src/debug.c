@@ -6,14 +6,14 @@
 #include <inttypes.h>
 #include <stdio.h>
 
-static void print_arr(sv_vec_t(value_t) vec, const char* name)
+static void print_arr(sv_vec_t(value_t) vec, const char* name, vm_t vm)
 {
     printf("========= %s =========\n", name);
     printf("[");
     for (int64_t i = 0; i < vec.size; i++) {
-        sv_str_t s = value_to_str(vec.arr[i], &sv_gpa);
+        sv_str_t s = value_to_str(vec.arr[i], &vm.ctx);
         printf("%.*s", (int)s.size, s.chars);
-        sv_str_deinit(&s, &sv_gpa);
+        sv_str_deinit(&s, vm.ctx.alloc);
         if (i < vec.size - 1)
             printf(", ");
     }
@@ -53,7 +53,9 @@ static const char* op_name(vm_instructions op)
         case OP_JUMP_IF_FALSE: return "jump_if_false";
         case OP_LIST: return "list";
         case OP_HASHMAP: return "hashmap";
+        case OP_TUPLE: return "tuple";
         case OP_INDEX: return "index";
+        case OP_TUPLE_GET: return "tuple_get";
         case OP_NOT: return "not";
         case OP_DUP: return "dup";
         case OP_RETURN: return "return";
@@ -77,6 +79,7 @@ void print_chunk(vm_t v)
                 i += 3;
                 break;
             }
+            case OP_TUPLE:
             case OP_LIST:
                 printf("%" PRId64 " [ %s ] size %u\n", i, op_name(op), code[i + 1]);
                 i += 2;
@@ -99,6 +102,7 @@ void print_chunk(vm_t v)
             case OP_GET_GLOBAL:
             case OP_GET_LOCAL:
             case OP_GET_UPVALUE:
+            case OP_TUPLE_GET:
             case OP_GET_MEMBER:
                 printf("%" PRId64 " [ %s ] index %u\n", i, op_name(op), code[i + 1]);
                 i += 2;
@@ -137,22 +141,22 @@ void print_chunk(vm_t v)
 
 void print_globals(vm_t v)
 {
-    print_arr(v.globals, "GLOBALS");
+    print_arr(v.globals, "GLOBALS", v);
 }
 
 void print_locals(vm_t v)
 {
-    print_arr(v.locals, "LOCALS");
+    print_arr(v.locals, "LOCALS", v);
 }
 
 void print_upvalues(vm_t v)
 {
-    print_arr(v.upvalues, "UPVALUES");
+    print_arr(v.upvalues, "UPVALUES", v);
 }
 
 void print_stack(vm_t v)
 {
-    print_arr(v.stack, "STACK");
+    print_arr(v.stack, "STACK", v);
 }
 
 void print_vm(vm_t v)

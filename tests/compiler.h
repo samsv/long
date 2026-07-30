@@ -16,7 +16,7 @@ static inline value_t sv_test_compiler_eval(const char* src, bool* ok)
       return (value_t){ .kind = VALUE_NIL };
    }
 
-   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
+   sv_opt_t(error_t) err = vm_run(&vm);
    *ok = !err.is_some && vm.stack.size == 1;
    value_t res = *ok ? value_borrow(sv_vec_last(vm.stack)) : (value_t){ .kind = VALUE_NIL };
    if (err.is_some)
@@ -51,7 +51,7 @@ static inline int sv_test_compiler_runtime_err(const char* src)
       sv_str_deinit(&ctx.err.msg, &sv_gpa);
       return -1;
    }
-   sv_opt_t(error_t) err = vm_run(&vm, &sv_gpa);
+   sv_opt_t(error_t) err = vm_run(&vm);
    int code = err.is_some ? err.value.error_code : -2;
    if (err.is_some)
       vm_err_deinit(&err.value, &sv_gpa);
@@ -187,7 +187,7 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    ctx_t actx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
    vm_t avm = compile("fun f(x) = x end f(1, 2)", &actx);
    sv_test_run(t, avm.chunk.bytecode.arr != NULL);
-   sv_opt_t(error_t) aerr = vm_run(&avm, &sv_gpa);
+   sv_opt_t(error_t) aerr = vm_run(&avm);
    sv_test_run(t, aerr.is_some);
    sv_test_run(t, aerr.value.error_code == VM_ERR_BAD_ARITY);
    sv_test_run(t, ((vm_arity_err*)aerr.value.payload)->expected == 1);
@@ -198,7 +198,7 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    ctx_t cctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
    vm_t cvm = compile("[1] < 2", &cctx);
    sv_test_run(t, cvm.chunk.bytecode.arr != NULL);
-   sv_opt_t(error_t) cerr = vm_run(&cvm, &sv_gpa);
+   sv_opt_t(error_t) cerr = vm_run(&cvm);
    sv_test_run(t, cerr.is_some);
    sv_test_run(t, cerr.value.error_code == VM_ERR_OP_UNSUPPORTED_ARGS);
    vm_err_deinit(&cerr.value, &sv_gpa);

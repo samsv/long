@@ -2,6 +2,7 @@
 #include <limits.h>
 #include <math.h>
 #include "map.h"
+#include "../obj.h"
 
 #define ERR_SET (sparse_set_t){0}
 #define TRY_NOT_NULL(val, err) if ((val) == NULL) return err
@@ -217,6 +218,14 @@ static uint32_t value_hash(value_t v)
                         h ^= value_hash(e.value) + 0x9e3779b9u + (h << 6) + (h >> 2);
                     return h;
                 }
+                case OBJ_TUPLE: {
+                    uint32_t h = 34;
+                    tuple_t t = v.obj.cell->value.tuple;
+                    for (uint8_t i = 0; i < t.size; i++)
+                        h ^= (t.items[i].id * 31u ^ value_hash(t.items[i].value))
+                             + 0x9e3779b9u + (h << 6) + (h >> 2);
+                    return h;
+                }
                 case OBJ_MAP: {
                     uint32_t h = 0;
                     map_iter_t it = map_iter_init_no_borrow(v.obj.cell->value.map);
@@ -375,19 +384,19 @@ static bool node_insert_mut(map_node_t* node, value_t key, sv_opt_t(value_t) val
     return false;
 }
 
-#define TRY_INSERT_MUT(node, k, v, a) do {\
-    if (!node_insert_mut(&(node), k, v, a)) {\
-        node_free(&(node), a);\
-        return ERR_NODE;\
-    }\
+#define TRY_INSERT_MUT(node, k, v, a) do {                                                                    \
+    if (!node_insert_mut(&(node), k, v, a)) {                                                                 \
+        node_free(&(node), a);                                                                                \
+        return ERR_NODE;                                                                                      \
+    }                                                                                                         \
 } while (0)
 
-static map_node_t node_init_kvs(const kv_t* kvs, int64_t len, const sv_allocator_t* a)
+static map_node_t node_init_kvs(const value_t* kvs, int64_t len, const sv_allocator_t* a)
 {
     map_node_t node = node_init_capacity(capacity_for_size(len), (hashmap_t){0}, a);
     TRY_NOT_NULL(node.set.dense.cell, ERR_NODE);
-    for (int64_t i = 0; i < len; i++)
-        TRY_INSERT_MUT(node, kvs[i].key, sv_opt_some_t(value_t, kvs[i].value), a);
+    for (int64_t i = 0; i < len; i+=2)
+        TRY_INSERT_MUT(node, kvs[len - i - 2], sv_opt_some_t(value_t, kvs[len - i - 1]), a);
     return node;
 }
 
@@ -461,7 +470,7 @@ static map_node_t map_update_node(hashmap_t map, value_t key, sv_opt_t(value_t) 
     return node_layer(map, key, value, a);
 }
 
-hashmap_t map_init(const kv_t* kvs, int64_t len, const sv_allocator_t* a)
+hashmap_t map_init(const value_t* kvs, int64_t len, const sv_allocator_t* a)
 {
     return node_wrap(node_init_kvs(kvs, len, a), a);
 }

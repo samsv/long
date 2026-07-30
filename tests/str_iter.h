@@ -4,7 +4,7 @@
 #include "../src/std/test.h"
 #include "../src/std/allocator_std.h"
 #include "../src/value.h"
-#include "string.h"
+#include "../src/obj.h"
 
 static inline void sv_test_str_iter(sv_testing_t* t)
 {

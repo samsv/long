@@ -6,6 +6,7 @@
 #include "../src/value.h"
 #include "../src/obj/list.h"
 #include "string.h"
+#include "../src/obj.h"
 
 static int sv_test_list_obj_frees = 0;
 

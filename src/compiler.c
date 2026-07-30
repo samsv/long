@@ -779,6 +779,8 @@ vm_t compile(const char* source_code, ctx_t* ctx)
         ERR_RETURN;
 
     compiler_free(&compiler, &ctx->alloc);
-    return vmb_build(&compiler.builder);
+    vm_t vm = vmb_build(&compiler.builder);
+    vm.ctx.alloc = &ctx->alloc;
+    return vm;
 #undef ERR_RETURN
 }

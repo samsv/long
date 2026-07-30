@@ -1,6 +1,7 @@
 #include "vm.h"
 #include "obj/list.h"
 #include "obj/map.h"
+#include "std/logger.h"
 
 static void arr_remove(value_arr* arr, const sv_allocator_t* a)
 {
@@ -77,6 +78,7 @@ vm_t vm_init(sv_str_t name)
         .upvalues = sv_vec_init(value_t),
         .group = {0},
         .ip = 0,
+        .ctx = { .alloc = NULL, .logger = sv_std_logger, .tuple_key_names = NULL, .tuple_names_sizes = 0 },
     };
 }
 
@@ -99,8 +101,10 @@ void vm_err_deinit(error_t* err, const sv_allocator_t* a)
     err->payload = NULL;
 }
 
-sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
+sv_opt_t(error_t) vm_run(vm_t* vm)
 {
+    const sv_allocator_t* a = vm->ctx.alloc;
+
 #define TRY_OR(cond, cleanup, err_msg) {                                                                      \
     if (!(cond)) {                                                                                            \
         cleanup;                                                                                              \
@@ -216,22 +220,18 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
             TRY_PUSH_STACK(res);
             break;
         }
-        case OP_LIST: {
-            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
-            value_t list = value_init_list(&vm->stack.arr[vm->stack.size - n], n, a);
-            TRY_NOT_NULL(list.obj.cell, "OOM when creating list");
-            arr_remove_n(&vm->stack, n, a);
-            TRY_PUSH_OWNED(list);
-            break;
-        }
-        case OP_HASHMAP: {
-            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
-            value_t map = value_init_map(&vm->stack.arr[vm->stack.size - 2 * n], n, a);
-            TRY_NOT_NULL(map.obj.cell, "OOM when creating map");
-            arr_remove_n(&vm->stack, 2 * n, a);
-            TRY_PUSH_OWNED(map);
-            break;
-        }
+
+#define VALUE_FROM_ARR(mult, init_fn) {                                                                       \
+            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];                                                     \
+            value_t arr = init_fn(&vm->stack.arr[vm->stack.size - (mult) * n], n, a);                         \
+            TRY_NOT_NULL(arr.obj.cell, "OOM when creating collection");                                       \
+            arr_remove_n(&vm->stack, (mult) * n, a);                                                          \
+            TRY_PUSH_OWNED(arr);                                                                              \
+            break; }
+
+        case OP_LIST: VALUE_FROM_ARR(1, value_init_list);
+        case OP_HASHMAP: VALUE_FROM_ARR(2, value_init_map);
+        case OP_TUPLE: VALUE_FROM_ARR(2, value_init_tuple);
         case OP_ADD: {
             value_t v2 = sv_vec_pop(vm->stack);
             value_t v1 = sv_vec_pop(vm->stack);
@@ -288,6 +288,24 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
             value_t out = value_borrow(res.value);
             value_free(&container, a);
             value_free(&key, a);
+            TRY_PUSH_OWNED(out);
+            break;
+        }
+        case OP_TUPLE_GET: {
+            value_t maybe_tuple = sv_vec_pop(vm->stack);
+            uint8_t id = vm->chunk.bytecode.arr[vm->ip++];
+            if (!IS_TUPLE(maybe_tuple))
+                UNSUPPORTED_1(maybe_tuple, "Type is not subscriptable");
+
+            tuple_t tuple = AS_TUPLE(maybe_tuple);
+            sv_opt_t(value_t) v = tuple_get(tuple, id);
+            if (!v.is_some) {
+                value_t n = {.kind = VALUE_NUMBER, .number = (double)id};
+                OP_ERR_2(VM_ERR_KEY_NOT_FOUND, maybe_tuple, n, "Key not found");
+            }
+
+            value_t out = value_borrow(v.value);
+            value_free(&maybe_tuple, a);
             TRY_PUSH_OWNED(out);
             break;
         }
@@ -382,7 +400,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
             break;
         }
         case OP_CALL: {
-#define ERR_WRONG_ARITY(arity) do {                                                                               \
+#define ERR_WRONG_ARITY(arity) do {                                                                           \
     vm_arity_err* p = sv_malloc(a, sizeof(vm_arity_err));                                                     \
     if (p != NULL)                                                                                            \
         *p = (vm_arity_err){                                                                                  \
@@ -414,7 +432,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
                 if (fn.arity != arg_count)
                     ERR_WRONG_ARITY(fn.arity);
 
-                value_t ret = fn.fn(args.arr, args.size, a);
+                value_t ret = fn.fn(args.arr, args.size, &vm->ctx);
                 if (IS_ERR(ret)) {
                     err = AS_ERR(ret);
                     vm_err_t* vm_err = err.payload;
@@ -445,6 +463,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
                 ERR_WRONG_ARITY(fn_vm.arity);
 
             fn_vm.globals = vm->globals;
+            fn_vm.ctx = vm->ctx;
 
             fn_vm.locals = args;
             fn_vm.locals.arr[arg_count] = value_borrow(value);
@@ -452,7 +471,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm, const sv_allocator_t* a)
 
             vm->stack.size -= arg_count;
 
-            sv_opt_t(error_t) fn_err = vm_run(&fn_vm, a);
+            sv_opt_t(error_t) fn_err = vm_run(&fn_vm);
             if (fn_err.is_some) {
                 vm_fn_deinit(&fn_vm, a);
                 value_free(&value, a);
@@ -591,3 +610,4 @@ bool vmb_add_global(vm_builder_t* b, value_t v, const sv_allocator_t* a)
     sv_vec_push(&b->vm.globals, v, &success, a);
     return success > 0;
 }
+

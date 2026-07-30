@@ -2,11 +2,15 @@
 #define LONG_VALUE_H
 
 #include <stdbool.h>
-#include "obj.h"
+#include <stdint.h>
+#include "common.h"
 #include "std/rc.h"
 #include "std/option.h"
-
-sv_rc_def(obj_t);
+#include "std/string.h"
+#include "std/allocator.h"
+#include "obj/native_fns.h"
+#include "obj/closure.h"
+#include "error.h"
 
 typedef enum {
     VALUE_NUMBER,
@@ -31,6 +35,7 @@ typedef struct value_t {
 #define IS_CLOSURE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE)
 #define IS_CLOSURE_MEMBER(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE_MEMBER)
 #define IS_ITER(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_ITER)
+#define IS_TUPLE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_TUPLE)
 
 #define AS_STR(v) ((v).obj.cell->value.str)
 #define AS_ERR(v) ((v).obj.cell->value.err)
@@ -39,6 +44,7 @@ typedef struct value_t {
 #define AS_CLOSURE(v) ((v).obj.cell->value.closure)
 #define AS_CLOSURE_MEMBER(v) ((v).obj.cell->value.closure_member)
 #define AS_ITER(v) ((v).obj.cell->value.iter)
+#define AS_TUPLE(v) ((v).obj.cell->value.tuple)
 
 static const value_t value_nil = { .kind = VALUE_NIL };
 static const value_t value_true = { .kind = VALUE_BOOL, .boolean = true };
@@ -53,7 +59,7 @@ bool value_eql(value_t, value_t);
 /**
  * Converts the value a string representation.
  */
-sv_str_t value_to_str(value_t, const sv_allocator_t*);
+sv_str_t value_to_str(value_t, const vm_ctx_t*);
 
 /**
  * Creates a list value cloning the values (see ll_init). obj.cell is NULL on
@@ -101,5 +107,10 @@ value_t value_init_str_own(sv_str_t, const sv_allocator_t*);
  * array. Later duplicate keys win. obj.cell is NULL on allocation failure.
  */
 value_t value_init_map(const value_t*, int64_t, const sv_allocator_t*);
+/**
+ * Creates a tuple value borrowing the values. The value array order must be (id, value).
+ * obj.cell is NULL on allocation failure.
+ */
+value_t value_init_tuple(const value_t*, uint8_t, const sv_allocator_t*);
 
 #endif

@@ -73,9 +73,9 @@ typedef struct {
 } map_iter_t;
 
 /**
- * Initializes a new map from the key values array.
+ * Initializes a new map from the (key, values) pair array.
  */
-hashmap_t map_init(const kv_t*, int64_t, const sv_allocator_t*);
+hashmap_t map_init(const value_t*, int64_t, const sv_allocator_t*);
 /**
  * Deinitializes the map.
  */

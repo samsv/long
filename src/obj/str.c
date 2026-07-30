@@ -1,5 +1,6 @@
 #include "str.h"
 #include "../value.h"
+#include "../obj.h"
 
 static sv_rc_t(obj_t) str_obj(sv_str_t* s)
 {

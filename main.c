@@ -29,7 +29,7 @@ int main(void)
         return 1;
     }
 
-    sv_opt_t(error_t) err = vm_run(&vm, &ctx.alloc);
+    sv_opt_t(error_t) err = vm_run(&vm);
     print_vm(vm);
     if (err.is_some) {
         sv_log_error(&ctx.logger, "%.*s", (int)err.value.msg.size, err.value.msg.chars);

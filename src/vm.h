@@ -3,7 +3,9 @@
 
 #include <stdint.h>
 #include "error.h"
+#include "std/logger.h"
 #include "value.h"
+#include "obj.h"
 #include "common.h"
 #include "std/string.h"
 #include "std/vector.h"
@@ -21,16 +23,33 @@ typedef struct {
     sv_vec_t(vm_t) functions;
 } chunk_t;
 
+/**
+ * A VM context to be passed to native functions.
+ */
+typedef struct vm_ctx_t {
+    const sv_allocator_t* alloc;
+    sv_logger_t logger;
+
+    const char** tuple_key_names;
+    uint32_t tuple_names_sizes;
+} vm_ctx_t;
+
 typedef struct vm_t {
     sv_str_t name;
     uint8_t arity;
+
     chunk_t chunk;
+
     value_arr globals;
     value_arr locals;
     value_arr stack;
     value_arr upvalues;
+
     sv_rc_t(closure_group_t) group;
+
     int64_t ip;
+
+    vm_ctx_t ctx;
 } vm_t;
 
 typedef enum {
@@ -57,14 +76,16 @@ typedef enum {
     OP_JUMP,
     OP_JUMP_BACK,
     OP_JUMP_IF_FALSE,
-    OP_LIST,
     OP_NOT_EQUALS,
     OP_GREATER,
     OP_GREATER_EQUAL,
     OP_LESS,
     OP_LESS_EQUAL,
+    OP_LIST,
     OP_HASHMAP,
+    OP_TUPLE,
     OP_INDEX,
+    OP_TUPLE_GET,
     OP_NOT,
     OP_DUP,
     OP_RETURN,
@@ -121,9 +142,15 @@ typedef struct {
 
 chunk_t chunk_init(void);
 void chunk_deinit(chunk_t*, const sv_allocator_t*);
+
 vm_t vm_init(sv_str_t);
 void vm_deinit(vm_t*, const sv_allocator_t*);
-sv_opt_t(error_t) vm_run(vm_t*, const sv_allocator_t*);
+
+/**
+ * Interprets the VM bytecode.
+ */
+sv_opt_t(error_t) vm_run(vm_t*);
+
 /**
  * Frees the payload of an error returned by vm_run.
  */
