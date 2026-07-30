@@ -808,10 +808,11 @@ vm_t compile(const char* source_code, ctx_t* ctx)
     transient_hashmap_t tuple_fields = { .depth = 0 };
     compiler.tuple_fields = &tuple_fields;
 
-    #define FNS_SIZE 2
+    #define FNS_SIZE 3
     native_fn_t native_fns[FNS_SIZE] = {
-        { .arity = 1, .name = "print", .fn = ntv_print_value },
-        { .arity = 1, .name = "print_vals", .fn = ntv_print_value_arr },
+        { .arity = 1, .name = "print", .fn = ntv_print },
+        { .arity = 1, .name = "println", .fn = ntv_println },
+        { .arity = 1, .name = "print_vals", .fn = ntv_print_arr },
     };
     for (int64_t i = 0; i < FNS_SIZE; i++)
         if(!add_native_fn(&compiler, native_fns[i], ctx))

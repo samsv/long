@@ -1,6 +1,6 @@
 #include "str.h"
 #include "../value.h"
-#include "../obj.h"
+#include "../obj.h" // IWYU pragma: keep
 
 static sv_rc_t(obj_t) str_obj(sv_str_t* s)
 {

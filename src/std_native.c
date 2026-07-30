@@ -8,7 +8,7 @@
 #include <assert.h>
 
 
-value_t ntv_print_value(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
+value_t ntv_print(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
 {
     assert(n == 1);
 
@@ -22,7 +22,14 @@ value_t ntv_print_value(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
     return value_nil;
 }
 
-value_t ntv_print_value_arr(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
+value_t ntv_println(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
+{
+    value_t ret = ntv_print(values, n, ctx);
+    printf("\n");
+    return ret;
+}
+
+value_t ntv_print_arr(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
 {
     assert(n == 1);
 
@@ -45,7 +52,7 @@ value_t ntv_print_value_arr(const value_t* values, uint8_t n, const vm_ctx_t* ct
 
     ll_iter_t iter = ll_iter_init_no_borrow(AS_LIST(maybe_list));
     for (sv_opt_t(value_t) v = ll_iter_next(&iter); v.is_some; v = ll_iter_next(&iter)) {
-        ntv_print_value(&v.value, 1, ctx);
+        ntv_print(&v.value, 1, ctx);
     }
 
     return value_nil;

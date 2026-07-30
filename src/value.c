@@ -6,7 +6,6 @@
 #include "obj/map.h"
 #include "obj/iterator.h"
 #include "obj/closure.h"
-#include "std/logger.h"
 #include "vm.h"
 
 #define ERR_VALUE (value_t){ .kind = VALUE_OBJ }

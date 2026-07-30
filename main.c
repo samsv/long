@@ -4,14 +4,10 @@
 #include "src/std/allocator_std.h"
 
 static const char* sample =
-    "fun add(x, y) =\n"
-    "   x + y\n"
-    "end\n"
-    "\n"
-    "x = \"res\"\n"
-    "print(x)\n"
-    "print_vals([\"\nx is: \", x, \"\n\"])\n"
-    "%{x: add(1, 2.5)}\n";
+    "x = {x: 1, y: 2}\n"
+    "y = {y: 4, x: 3}\n"
+    "println(x)\n"
+    "println(y)\n";
 
 int main(void)
 {
