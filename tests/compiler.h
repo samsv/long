@@ -43,6 +43,21 @@ static inline bool sv_test_compiler_kind(const char* src, value_kind expected)
    return res;
 }
 
+static inline bool sv_test_compiler_cmp(const char* src, value_t expected, bool (*cmp)(value_t, value_t))
+{
+   bool ok = false;
+   value_t v = sv_test_compiler_eval(src, &ok);
+   bool res = ok && cmp(v, expected);
+   value_free(&v, &sv_gpa);
+   value_free(&expected, &sv_gpa);
+   return res;
+}
+
+static inline value_t sv_test_compiler_val(double n)
+{
+   return (value_t){ .kind = VALUE_NUMBER, .number = n };
+}
+
 static inline int sv_test_compiler_runtime_err(const char* src)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
@@ -144,6 +159,59 @@ static inline void sv_test_compiler_indexing(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("[1][\"a\"]") == VM_ERR_OP_UNSUPPORTED_ARGS);
    sv_test_run(t, sv_test_compiler_runtime_err("[1][0.5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
    sv_test_run(t, sv_test_compiler_runtime_err("5[0]") == VM_ERR_OP_UNSUPPORTED_ARGS);
+}
+
+static inline void sv_test_compiler_tuples(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_kind("{}", VALUE_OBJ));
+   sv_test_run(t, sv_test_compiler_num("t = {x: 10, y: 20}\nt.x", 10));
+   sv_test_run(t, sv_test_compiler_num("t = {x: 10, y: 20}\nt.y", 20));
+   sv_test_run(t, sv_test_compiler_num("{a: {b: 5}}.a.b", 5));
+   sv_test_run(t, sv_test_compiler_num("if {x: 1, y: 2} == {y: 2, x: 1} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if {x: 1} == {y: 1} do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if {x: 1} == {x: 2} do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num(
+      "fun add(v1, v2) =\n"
+      "    x = v1.x + v2.x\n"
+      "    y = v1.y + v2.y\n"
+      "    {x: x, y: y}\n"
+      "end\n"
+      "add({x: 1, y: 2}, {x: 3, y: 4}).y", 6));
+   sv_test_run(t, sv_test_compiler_num("a = {y: 1}\nb = {x: 2, y: 3}\nb.y", 3));
+
+   value_t add_items[] = {
+      sv_test_compiler_val(0), sv_test_compiler_val(4),
+      sv_test_compiler_val(1), sv_test_compiler_val(6),
+   };
+   sv_test_run(t, sv_test_compiler_cmp(
+      "fun add(v1, v2) =\n"
+      "    x = v1.x + v2.x\n"
+      "    y = v1.y + v2.y\n"
+      "    {x: x, y: y}\n"
+      "end\n"
+      "add({x: 1, y: 2}, {x: 3, y: 4})",
+      value_init_tuple(add_items, 2, &sv_gpa), value_eql));
+
+   value_t inner_items[] = { sv_test_compiler_val(1), sv_test_compiler_val(5) };
+   value_t inner = value_init_tuple(inner_items, 1, &sv_gpa);
+   value_t outer_items[] = { sv_test_compiler_val(0), inner };
+   sv_test_run(t, sv_test_compiler_cmp("{a: {b: 5}}",
+      value_init_tuple(outer_items, 1, &sv_gpa), value_eql));
+   value_free(&inner, &sv_gpa);
+
+   sv_test_run(t, sv_test_compiler_err("{x: 1, x: 2}") == C_ERR_REDEFINED);
+   sv_test_run(t, sv_test_compiler_runtime_err("{x: 1}.y") == VM_ERR_KEY_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("t = 5\nt.x") == VM_ERR_OP_UNSUPPORTED_ARGS);
+
+   ctx_t pctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   vm_t pvm = compile("t = {x: 10, y: 20}\nt", &pctx);
+   sv_test_run(t, pvm.chunk.bytecode.arr != NULL);
+   sv_opt_t(error_t) perr = vm_run(&pvm);
+   sv_test_run(t, !perr.is_some);
+   sv_str_t ptext = value_to_str(pvm.stack.arr[pvm.stack.size - 1], &pvm.ctx);
+   sv_test_run(t, sv_str_comp(ptext, sv_str_init("{x: 10, y: 20}")));
+   sv_str_deinit(&ptext, &sv_gpa);
+   vm_deinit(&pvm, &sv_gpa);
 }
 
 static inline void sv_test_compiler_logic(sv_testing_t* t)
@@ -332,7 +400,7 @@ static inline void sv_test_compiler_errors(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_err("y + 1") == C_ERR_UNDEFINED_VARIABLE);
    sv_test_run(t, sv_test_compiler_err("x = 1\nx = 2") == C_ERR_REDEFINED);
    sv_test_run(t, sv_test_compiler_err("1 |> 2") == C_ERR_UNEXPECTED_SEXPR);
-   sv_test_run(t, sv_test_compiler_err("x = 1\nx.y") == C_ERR_NOT_IMPLEMENTED);
+   sv_test_run(t, sv_test_compiler_err("1, 2") == C_ERR_NOT_IMPLEMENTED);
 }
 
 static inline void sv_test_compiler(sv_testing_t* t)
@@ -341,6 +409,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_comparisons(t);
    sv_test_compiler_maps(t);
    sv_test_compiler_indexing(t);
+   sv_test_compiler_tuples(t);
    sv_test_compiler_logic(t);
    sv_test_compiler_for(t);
    sv_test_compiler_functions(t);

@@ -570,6 +570,11 @@ sv_opt_t(kv_t) map_iter_next(map_iter_t* it)
     return sv_opt_some_t(kv_t, kv);
 }
 
+map_iter_t thm_iter_init(transient_hashmap_t t)
+{
+    return iter_init_node(t);
+}
+
 transient_hashmap_t thm_init(int64_t expected, const sv_allocator_t* a)
 {
     return node_init_capacity(capacity_for_size(expected), (hashmap_t){0}, a);

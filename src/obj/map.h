@@ -118,6 +118,11 @@ void map_iter_deinit(map_iter_t*, const sv_allocator_t*);
 sv_opt_t(kv_t) map_iter_next(map_iter_t*);
 
 /**
+ * Initializes an iterator viewing the transient hashmap; no deinit is
+ * needed.
+ */
+map_iter_t thm_iter_init(transient_hashmap_t);
+/**
  * Initializes an empty transient hashmap sized for the expected number of
  * items. Transients are mutated in place and must never be shared; wrap
  * them with transient_to_map to share the result.

@@ -21,6 +21,7 @@ typedef struct {
     locals_t upvalues;
     locals_t* locals;
     transient_hashmap_t members;
+    transient_hashmap_t* tuple_fields;
     vm_builder_t builder;
 } compiler_t;
 

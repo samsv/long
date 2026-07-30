@@ -6,7 +6,7 @@
 #include "../src/parser.h"
 #include "string.h"
 
-static ctx_t sv_test_parse_ctx(void)
+static inline ctx_t sv_test_parse_ctx(void)
 {
    return (ctx_t){
       .alloc = sv_gpa,
@@ -15,7 +15,7 @@ static ctx_t sv_test_parse_ctx(void)
    };
 }
 
-static void sv_test_parse_ok(sv_testing_t* t, const char* src, const char* expected)
+static inline void sv_test_parse_ok(sv_testing_t* t, const char* src, const char* expected)
 {
    ctx_t ctx = sv_test_parse_ctx();
    scanner_t s = scanner_init(sv_str_init(src));
@@ -31,7 +31,7 @@ static void sv_test_parse_ok(sv_testing_t* t, const char* src, const char* expec
    sexpr_free(&e, &ctx.alloc);
 }
 
-static void sv_test_parse_error(sv_testing_t* t, const char* src, int expected_code)
+static inline void sv_test_parse_error(sv_testing_t* t, const char* src, int expected_code)
 {
    ctx_t ctx = sv_test_parse_ctx();
    scanner_t s = scanner_init(sv_str_init(src));
@@ -141,6 +141,16 @@ static inline void sv_test_parser_maps(sv_testing_t* t)
    sv_test_parse_ok(t, "if true do 1; 2; end", "(if true (do 1 2))");
    sv_test_parse_error(t, "x = ;", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "f(1; 2)", PARSER_ERROR_UNEXPECTED_TOKEN);
+
+   sv_test_parse_ok(t, "{x: 1, y: 2}", "(tuple x 1 y 2)");
+   sv_test_parse_ok(t, "{}", "(tuple)");
+   sv_test_parse_ok(t, "{x: 1 + 2}", "(tuple x (+ 1 2))");
+   sv_test_parse_ok(t, "v.x + v.y", "(+ (. v x) (. v y))");
+   sv_test_parse_ok(t, "{x: 1}.x", "(. (tuple x 1) x)");
+   sv_test_parse_ok(t, "t.a.b", "(. (. t a) b)");
+   sv_test_parse_error(t, "{1: 2}", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "{x 1}", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "{x: 1", PARSER_ERROR_EOF);
 
    sv_test_parse_error(t, "%{1, 2}", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "%{1: }", PARSER_ERROR_UNEXPECTED_TOKEN);

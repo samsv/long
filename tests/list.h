@@ -10,18 +10,18 @@
 
 static int sv_test_list_obj_frees = 0;
 
-static void sv_test_list_free_obj(obj_t* o, const sv_allocator_t* a)
+static inline void sv_test_list_free_obj(obj_t* o, const sv_allocator_t* a)
 {
    sv_str_deinit(&o->str, a);
    sv_test_list_obj_frees++;
 }
 
-static value_t sv_test_list_num(double n)
+static inline value_t sv_test_list_num(double n)
 {
    return (value_t){ .kind = VALUE_NUMBER, .number = n };
 }
 
-static value_t sv_test_list_obj(const char* text, const sv_allocator_t* a)
+static inline value_t sv_test_list_obj(const char* text, const sv_allocator_t* a)
 {
    obj_t o = { .kind = OBJ_STR, .str = sv_str_copy(sv_str_init(text), a) };
    sv_rc_t(obj_t) rc = sv_rc_init(obj_t, o, sv_test_list_free_obj, a);

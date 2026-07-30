@@ -7,14 +7,14 @@
 #include "../src/std/string.h"
 #include "../src/std/allocator_std.h"
 
-static void* sv_test_fail_malloc(void* self, size_t size)
+static inline void* sv_test_fail_malloc(void* self, size_t size)
 {
    (void)self;
    (void)size;
    return NULL;
 }
 
-static void* sv_test_fail_realloc(void* self, void* ptr, size_t size)
+static inline void* sv_test_fail_realloc(void* self, void* ptr, size_t size)
 {
    (void)self;
    (void)ptr;
@@ -22,7 +22,7 @@ static void* sv_test_fail_realloc(void* self, void* ptr, size_t size)
    return NULL;
 }
 
-static void sv_test_fail_free(void* self, void* ptr)
+static inline void sv_test_fail_free(void* self, void* ptr)
 {
    (void)self;
    (void)ptr;
@@ -43,7 +43,7 @@ typedef struct {
    int64_t remaining;
 } sv_test_countdown_t;
 
-static void* sv_test_countdown_malloc(void* self, size_t size)
+static inline void* sv_test_countdown_malloc(void* self, size_t size)
 {
    sv_test_countdown_t* c = self;
    if (c->remaining <= 0)
@@ -52,7 +52,7 @@ static void* sv_test_countdown_malloc(void* self, size_t size)
    return malloc(size);
 }
 
-static void* sv_test_countdown_realloc(void* self, void* ptr, size_t size)
+static inline void* sv_test_countdown_realloc(void* self, void* ptr, size_t size)
 {
    sv_test_countdown_t* c = self;
    if (c->remaining <= 0)
@@ -61,7 +61,7 @@ static void* sv_test_countdown_realloc(void* self, void* ptr, size_t size)
    return realloc(ptr, size);
 }
 
-static void sv_test_countdown_free(void* self, void* ptr)
+static inline void sv_test_countdown_free(void* self, void* ptr)
 {
    (void)self;
    free(ptr);

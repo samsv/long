@@ -12,7 +12,7 @@ sv_rc_def(sv_str_t);
 
 static int sv_test_rc_frees = 0;
 
-static void sv_test_rc_free_int(int* v, const sv_allocator_t* a)
+static inline void sv_test_rc_free_int(int* v, const sv_allocator_t* a)
 {
    (void)v;
    (void)a;

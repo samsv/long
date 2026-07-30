@@ -53,6 +53,7 @@ typedef enum {
     FN_LIST,
     FN_MAP,
     FN_HASHMAP,
+    FN_TUPLE,
     FN_MAPF,
     FN_MATCH,
     FN_REDUCE,

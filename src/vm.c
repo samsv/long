@@ -90,6 +90,11 @@ static void vm_fn_deinit(vm_t* vm, const sv_allocator_t* a)
 
 void vm_deinit(vm_t* vm, const sv_allocator_t* a)
 {
+    if (vm->ctx.tuple_key_names != NULL) {
+        for (uint32_t i = 0; i < vm->ctx.tuple_names_sizes; i++)
+            sv_free(a, (void*)vm->ctx.tuple_key_names[i]);
+        sv_free(a, (void*)vm->ctx.tuple_key_names);
+    }
     arr_deinit(&vm->globals, a);
     vm_fn_deinit(vm, a);
     chunk_deinit(&vm->chunk, a);
