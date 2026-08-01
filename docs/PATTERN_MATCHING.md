@@ -569,3 +569,8 @@ One last application of the constructor and empty rules on `u2` finishes the com
 Every test is an `is-nil?`/`is-cons?` check, every binding an assignment, and every FAIL a fall into a `cond` default: the
 pattern match is gone. The bodies are ordinary `lóng` s expressions the compiler already handles; `cond`, the predicates and
 `head`/`tail` are the new internal forms it must learn to emit.
+
+## Sources:
+[THE IMPLEMENTATION OF FUNCTIONAL PROGRAMMING LANGUAGES](https://www.microsoft.com/en-us/research/wp-content/uploads/1987/01/slpj-book-1987.pdf)
+[Compiling Pattern Matching to good Decision Trees](https://www.cs.tufts.edu/~nr/cs257/archive/luc-maranget/jun08.pdf)
+[Clojure's core.match](https://github.com/clojure/core.match/wiki/Overview)
