@@ -7,15 +7,11 @@
 typedef sv_vec_t(sexpr_t) cons_t;
 
 typedef struct {
-    cons_t pattern;
-    sexpr_t expr;
-} pattern_item_t;
-
-typedef struct {
     sexpr_t* variables;
     int32_t var_len;
 
-    pattern_item_t* patterns;
+    sexpr_t* patterns;
+    sexpr_t* expr;
     int32_t pattern_size;
 
     sexpr_t default_expr;

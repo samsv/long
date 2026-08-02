@@ -41,9 +41,7 @@ int main(void)
     const char* match_code =
         "match (a, b)\n"
         "| (false, y) = y\n"
-        "| (true, true) = false\n"
-        "| [x, ..xs] = true\n"
-        "| (x, x) = true\n"
+        "| [x, y, ..xs] = f(x, xs)\n"
         "| 0 = true\n"
         "| 1 = true\n"
         "| \"hello\" = true\n"
