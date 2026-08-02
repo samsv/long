@@ -81,9 +81,9 @@ Translates as
 We can also define guards using lambda calculus. Consider the function
 ```ml
 fun first_neg_or_last(lst) =
-| [x :: xs] when x < 0 = x
-| [x :: []] = x
-| [x :: xs] = first_neg_or_last(xs)
+| [x, ..xs] when x < 0 = x
+| [x, ..[]] = x
+| [x, ..xs] = first_neg_or_last(xs)
 end
 ```
 We can translate it to
@@ -135,8 +135,8 @@ Let's consider a function `f`, in the form
 ```
 fun fn(f, lst1, lst2) =
 | (f, [], ys) = A(f, ys)
-| (f, [x :: xs], []) = B(f, x, xs)
-| (f, [x :: xs], [y :: ys]) = C(f, x, xs, y, ys)
+| (f, [x, ..xs], []) = B(f, x, xs)
+| (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
 end
 ```
 where `A`, `B` and `C` are defined elsewhere. We may translate it into lambda calculus
@@ -257,7 +257,7 @@ Consider the following case:
 fun fn(f, lst1, lst2) =
 | (f, [], ys) = A(f, ys)
 | (f, xs, []) = B(f, xs)
-| (f, [x :: xs], [y :: ys]) = C(f, x, xs, y, ys)
+| (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
 end
 ```
 Converting it into a match expression yields
@@ -327,7 +327,7 @@ the example
 fun fn(f, lst1, lst2) =
 | (f, [], ys) = A(f, ys)
 | (f, xs, []) = B(f, xs)
-| (f, [x :: xs], [y :: ys]) = C(f, x, xs, y, ys)
+| (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
 end
 ```
 and transform it into our lambda calculus representation, using the variable rule to optimize out the `f` pattern.
@@ -483,7 +483,7 @@ Let's convert the whole `fn` example from the column reordering section:
 fun fn(f, lst1, lst2) =
 | (f, [], ys) = A(f, ys)
 | (f, xs, []) = B(f, xs)
-| (f, [x :: xs], [y :: ys]) = C(f, x, xs, y, ys)
+| (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
 end
 ```
 After the variable rule removes `f`, the match becomes the s expression

@@ -176,6 +176,37 @@ static inline void sv_test_parser_maps(sv_testing_t* t)
    sv_test_parse_error(t, "% 1", SCANNER_ERROR_UNKNOWN_TOKEN);
 }
 
+static inline void sv_test_parser_match(sv_testing_t* t)
+{
+   sv_test_parse_ok(t, "match x | 1 = 2 end", "(match x 1 2)");
+   sv_test_parse_ok(t, "match x end", "(match x)");
+   sv_test_parse_ok(t,
+      "match (a, b)\n"
+      "| (false, y) = y\n"
+      "| (true, true) = false\n"
+      "| (true, false) = true\n"
+      "end",
+      "(match (tuple a b) (tuple false y) y (tuple true true) false (tuple true false) true)");
+   sv_test_parse_ok(t, "match x | [h, ..t] = h end", "(match x (list h (.. t)) h)");
+   sv_test_parse_ok(t, "match x | [] = 0 | [a, b] = a end", "(match x (list) 0 (list a b) a)");
+   sv_test_parse_ok(t, "match x | {x: 1, y: p} = p end", "(match x (record x 1 y p) p)");
+   sv_test_parse_ok(t, "match x | {x: 1, ..} = 1 end", "(match x (record x 1 ..) 1)");
+   sv_test_parse_ok(t, "match x | {..} = 1 end", "(match x (record ..) 1)");
+   sv_test_parse_ok(t, "match x | %{\"k\": v} = v end", "(match x (hashmap \"k\" v) v)");
+   sv_test_parse_ok(t, "match x | (1, [2, ..r]) = r end", "(match x (tuple 1 (list 2 (.. r))) r)");
+   sv_test_parse_ok(t, "match x | (1) = 2 end", "(match x 1 2)");
+   sv_test_parse_ok(t, "match x | (\"a\",) = 1 end", "(match x (tuple \"a\") 1)");
+   sv_test_parse_ok(t, "match f(1) | y = y end", "(match (f 1) y y)");
+
+   sv_test_parse_error(t, "match x | 1 = 2", PARSER_ERROR_EOF);
+   sv_test_parse_error(t, "match x | 1 2 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | = 2 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | [.., t] = 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | [..t, 1] = 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | %{k: 1} = 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | 1 + 1 = 2 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+}
+
 static inline void sv_test_parser_errors(sv_testing_t* t)
 {
    sv_test_parse_error(t, "", (int)PARSER_ERROR_EOF);
@@ -253,6 +284,7 @@ static inline void sv_test_parser(sv_testing_t* t)
    sv_test_parser_forms(t);
    sv_test_parser_program_fn(t);
    sv_test_parser_maps(t);
+   sv_test_parser_match(t);
    sv_test_parser_errors(t);
    sv_test_parser_oom(t);
 }

@@ -1,7 +1,10 @@
+#include <stdio.h>
 #define SV_IMPLEMENTATION
 #include "src/compiler.h"
 #include "src/debug.h"
 #include "src/std/allocator_std.h"
+#include "src/scanner.h"
+#include "src/parser.h"
 
 static const char* sample =
     "x = {x: 1, y: 2}\n"
@@ -33,6 +36,27 @@ int main(void)
     }
 
     vm_deinit(&vm, &ctx.alloc);
+
+    // test match expr
+    const char* match_code =
+        "match (a, b)\n"
+        "| (false, y) = y\n"
+        "| (true, true) = false\n"
+        "| [x, ..xs] = true\n"
+        "| (x, x) = true\n"
+        "| 0 = true\n"
+        "| 1 = true\n"
+        "| \"hello\" = true\n"
+        "| {x: a, y: b} = true\n"
+        "| {x: a, y: b, ..} = true\n"
+        "| _ = true\n"
+        "end"
+        ;
+
+    scanner_t s = scanner_init(sv_str_init(match_code));
+    sexpr_t sexpr = parser_expr(&s, &ctx);
+    sv_str_t str = sexpr_format(sexpr, &sv_gpa);
+    printf("\n\nmatch expr: %.*s\n", (int)str.size, str.chars);
 
     return 0;
 }

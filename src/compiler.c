@@ -810,7 +810,7 @@ vm_t compile(const char* source_code, ctx_t* ctx)
 #define ERR_RETURN do {                                                                                       \
     compiler_free(&compiler, &ctx->alloc);                                                                    \
     vm_deinit(&compiler.builder.vm, &ctx->alloc);                                                             \
-    thm_deinit(&record_fields, &ctx->alloc);                                                                   \
+    thm_deinit(&record_fields, &ctx->alloc);                                                                  \
     return (vm_t){0}; } while (0)
 
     scanner_t s = scanner_init(sv_str_init(source_code));
@@ -818,7 +818,7 @@ vm_t compile(const char* source_code, ctx_t* ctx)
     transient_hashmap_t record_fields = { .depth = 0 };
     compiler.record_fields = &record_fields;
 
-    #define FNS_SIZE 3
+#define FNS_SIZE 3
     native_fn_t native_fns[FNS_SIZE] = {
         { .arity = 1, .name = "print", .fn = ntv_print },
         { .arity = 1, .name = "println", .fn = ntv_println },
@@ -827,7 +827,7 @@ vm_t compile(const char* source_code, ctx_t* ctx)
     for (int64_t i = 0; i < FNS_SIZE; i++)
         if(!add_native_fn(&compiler, native_fns[i], ctx))
             ERR_RETURN;
-
+#undef FNS_SIZE
 
     token_t token;
     bool first = true;

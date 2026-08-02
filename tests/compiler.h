@@ -436,6 +436,7 @@ static inline void sv_test_compiler_errors(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_err("y + 1") == C_ERR_UNDEFINED_VARIABLE);
    sv_test_run(t, sv_test_compiler_err("x = 1\nx = 2") == C_ERR_REDEFINED);
    sv_test_run(t, sv_test_compiler_err("1 |> 2") == C_ERR_UNEXPECTED_SEXPR);
+   sv_test_run(t, sv_test_compiler_err("match 1 | 1 = 2 end") == C_ERR_NOT_IMPLEMENTED);
 }
 
 static inline void sv_test_compiler(sv_testing_t* t)

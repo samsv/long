@@ -302,7 +302,10 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
         case '*': return operator_of(s, OPERATOR_STAR);
         case '/': return operator_of(s, OPERATOR_SLASH);
         case '#': return token_of(s, TOKEN_HASH);
-        case '.': return operator_of(s, OPERATOR_DOT);
+        case '.':
+            if (next_char_if_eq(s, '.'))
+                return token_of(s, TOKEN_DOT_DOT);
+            return operator_of(s, OPERATOR_DOT);
         case ',': return token_of(s, TOKEN_COMMA);
         case ';': return token_of(s, TOKEN_SEMICOLON);
         case ':': return token_of(s, TOKEN_COLON);
