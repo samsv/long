@@ -7,11 +7,13 @@
 #include "obj/iterator.h"
 #include "obj/closure.h"
 #include "obj/native_fns.h"
+#include "obj/record.h"
 #include "obj/tuple.h"
 
 typedef enum {
     OBJ_STR,
     OBJ_LIST,
+    OBJ_RECORD,
     OBJ_TUPLE,
     OBJ_MAP,
     OBJ_ITER,
@@ -24,6 +26,7 @@ typedef enum {
 typedef struct obj_t {
     union {
         sv_str_t str;
+        record_t record;
         tuple_t tuple;
         list_t list;
         hashmap_t map;

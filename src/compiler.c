@@ -178,7 +178,7 @@ compiler_t compiler_init(void)
         .upvalues = { .name_indexes = { .depth = 0 }, .next = NULL, .offset = 0 },
         .locals = NULL,
         .members = { .depth = 0 },
-        .tuple_fields = NULL,
+        .record_fields = NULL,
         .builder = { .vm = vm_init(sv_str_init("")) },
     };
 }
@@ -286,16 +286,16 @@ static bool compile_pipe(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
     return emit2(c, ctx, OP_CALL, (uint8_t)rhs.cons.size, line);
 }
 
-static bool tuple_field_id(compiler_t* c, sv_str_t name, int64_t line, ctx_t* ctx, uint32_t* out)
+static bool record_field_id(compiler_t* c, sv_str_t name, int64_t line, ctx_t* ctx, uint32_t* out)
 {
     bool existed = false;
-    if (!names_add(c->tuple_fields, name, ctx, &existed))
+    if (!names_add(c->record_fields, name, ctx, &existed))
         return compiler_oom(ctx, line);
 
-    sv_opt_t(int64_t) id = names_get(*c->tuple_fields, name, ctx);
+    sv_opt_t(int64_t) id = names_get(*c->record_fields, name, ctx);
     if (id.value > UINT8_MAX) {
         char msg[96];
-        snprintf(msg, sizeof(msg), "More than %d tuple fields at line %" PRId64, UINT8_MAX + 1, line);
+        snprintf(msg, sizeof(msg), "More than %d record fields at line %" PRId64, UINT8_MAX + 1, line);
         return compiler_error(ctx, C_ERR_NOT_IMPLEMENTED, msg);
     }
     *out = (uint32_t)id.value;
@@ -304,8 +304,18 @@ static bool tuple_field_id(compiler_t* c, sv_str_t name, int64_t line, ctx_t* ct
 
 static bool compile_tuple(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
-    if (n % 2 != 0 || n / 2 > UINT8_MAX)
+    if (n < 1 || n > UINT8_MAX)
         return compiler_malformed(ctx, "tuple", line);
+
+    for (int64_t i = 0; i < n; i++)
+        TRY(compile_sexpr(c, args[i], ctx));
+    return emit2(c, ctx, OP_TUPLE, (uint8_t)n, line);
+}
+
+static bool compile_record(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n % 2 != 0 || n / 2 > UINT8_MAX)
+        return compiler_malformed(ctx, "record", line);
 
     struct { uint32_t id; sv_str_t name; const sexpr_t* value; } fields[UINT8_MAX];
     int64_t n_fields = n / 2;
@@ -313,7 +323,7 @@ static bool compile_tuple(compiler_t* c, const sexpr_t* args, int64_t n, int64_t
         sv_str_t name;
         TRY(expect_id(args[2 * i], ctx, &name));
         uint32_t id = 0;
-        TRY(tuple_field_id(c, name, line, ctx, &id));
+        TRY(record_field_id(c, name, line, ctx, &id));
 
         int64_t j = i;
         for (; j > 0 && fields[j - 1].id > id; j--)
@@ -325,13 +335,13 @@ static bool compile_tuple(compiler_t* c, const sexpr_t* args, int64_t n, int64_t
 
     for (int64_t i = 1; i < n_fields; i++)
         if (fields[i - 1].id == fields[i].id)
-            return compiler_error_name(ctx, C_ERR_REDEFINED, line, "Tuple field", fields[i].name);
+            return compiler_error_name(ctx, C_ERR_REDEFINED, line, "Record field", fields[i].name);
 
     for (int64_t i = 0; i < n_fields; i++) {
         TRY(add_const(c, ctx, (value_t){ .kind = VALUE_NUMBER, .number = (double)fields[i].id }, line));
         TRY(compile_sexpr(c, *fields[i].value, ctx));
     }
-    return emit2(c, ctx, OP_TUPLE, (uint8_t)n_fields, line);
+    return emit2(c, ctx, OP_RECORD, (uint8_t)n_fields, line);
 }
 
 static bool compile_dot(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -342,10 +352,10 @@ static bool compile_dot(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     sv_str_t name;
     TRY(expect_id(args[1], ctx, &name));
     uint32_t id = 0;
-    TRY(tuple_field_id(c, name, line, ctx, &id));
+    TRY(record_field_id(c, name, line, ctx, &id));
 
     TRY(compile_sexpr(c, args[0], ctx));
-    return emit2(c, ctx, OP_TUPLE_GET, (uint8_t)id, line);
+    return emit2(c, ctx, OP_RECORD_GET, (uint8_t)id, line);
 }
 
 static bool compile_binary_op(compiler_t* c, uint8_t instruction, const char* what,
@@ -377,7 +387,6 @@ static bool compile_operator(compiler_t* c, operator_kind op, const sexpr_t* arg
         case OPERATOR_LEFT_BRACKET: return compile_binary_op(c, OP_INDEX, "index", args, n, line, ctx);
         case OPERATOR_PIPE_FORWARD: return compile_pipe(c, args, n, line, ctx);
         case OPERATOR_DOT: return compile_dot(c, args, n, line, ctx);
-        case OPERATOR_COMMA:
         case OPERATOR_LEFT_PAREN: {
             char msg[96];
             snprintf(msg, sizeof(msg), "Operator not implemented at line %" PRId64, line);
@@ -531,7 +540,7 @@ static bool compile_fn_vm(
     compiler_t fc = compiler_init();
     fc.members = members;
     fc.globals = c->globals;
-    fc.tuple_fields = c->tuple_fields;
+    fc.record_fields = c->record_fields;
 
 #define FN_TRY(call) do {                                                                                     \
     if (!(call)) {                                                                                            \
@@ -751,6 +760,7 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
             case FN_FOR: return compile_for(c, cons + 1, n - 1, a.line, ctx);
             case FN_LIST: return compile_list(c, cons + 1, n - 1, a.line, ctx);
             case FN_HASHMAP: return compile_hashmap(c, cons + 1, n - 1, a.line, ctx);
+            case FN_RECORD: return compile_record(c, cons + 1, n - 1, a.line, ctx);
             case FN_TUPLE: return compile_tuple(c, cons + 1, n - 1, a.line, ctx);
             case FN_FUN: return compile_fun(c, cons + 1, n - 1, a.line, ctx);
             case FN_CLASS:
@@ -800,13 +810,13 @@ vm_t compile(const char* source_code, ctx_t* ctx)
 #define ERR_RETURN do {                                                                                       \
     compiler_free(&compiler, &ctx->alloc);                                                                    \
     vm_deinit(&compiler.builder.vm, &ctx->alloc);                                                             \
-    thm_deinit(&tuple_fields, &ctx->alloc);                                                                   \
+    thm_deinit(&record_fields, &ctx->alloc);                                                                   \
     return (vm_t){0}; } while (0)
 
     scanner_t s = scanner_init(sv_str_init(source_code));
     compiler_t compiler = compiler_init();
-    transient_hashmap_t tuple_fields = { .depth = 0 };
-    compiler.tuple_fields = &tuple_fields;
+    transient_hashmap_t record_fields = { .depth = 0 };
+    compiler.record_fields = &record_fields;
 
     #define FNS_SIZE 3
     native_fn_t native_fns[FNS_SIZE] = {
@@ -852,20 +862,20 @@ vm_t compile(const char* source_code, ctx_t* ctx)
     vm_t vm = vmb_build(&compiler.builder);
     vm.ctx.alloc = &ctx->alloc;
 
-    int64_t n_fields = names_count(tuple_fields);
+    int64_t n_fields = names_count(record_fields);
     if (n_fields > 0) {
         const char** names = sv_malloc(&ctx->alloc, sizeof(char*) * (size_t)n_fields);
         if (names == NULL) {
             compiler_oom(ctx, 0);
             vm_deinit(&vm, &ctx->alloc);
-            thm_deinit(&tuple_fields, &ctx->alloc);
+            thm_deinit(&record_fields, &ctx->alloc);
             return (vm_t){0};
         }
 
         for (int64_t i = 0; i < n_fields; i++)
             names[i] = NULL;
 
-        map_iter_t it = thm_iter_init(tuple_fields);
+        map_iter_t it = thm_iter_init(record_fields);
         for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it)) {
             sv_str_t name = AS_STR(kv.value.key);
             char* copy = sv_malloc(&ctx->alloc, (size_t)name.size + 1);
@@ -876,18 +886,18 @@ vm_t compile(const char* source_code, ctx_t* ctx)
                         sv_free(&ctx->alloc, (void*)names[i]);
                 sv_free(&ctx->alloc, names);
                 vm_deinit(&vm, &ctx->alloc);
-                thm_deinit(&tuple_fields, &ctx->alloc);
+                thm_deinit(&record_fields, &ctx->alloc);
                 return (vm_t){0};
             }
             memcpy(copy, name.chars, (size_t)name.size);
             copy[name.size] = '\0';
             names[(int64_t)kv.value.value.number] = copy;
         }
-        vm.ctx.tuple_key_names = names;
-        vm.ctx.tuple_names_sizes = (uint32_t)n_fields;
+        vm.ctx.record_key_names = names;
+        vm.ctx.record_names_sizes = (uint32_t)n_fields;
     }
 
-    thm_deinit(&tuple_fields, &ctx->alloc);
+    thm_deinit(&record_fields, &ctx->alloc);
     return vm;
 #undef ERR_RETURN
 }

@@ -35,7 +35,9 @@ typedef struct value_t {
 #define IS_CLOSURE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE)
 #define IS_CLOSURE_MEMBER(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE_MEMBER)
 #define IS_ITER(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_ITER)
+#define IS_RECORD(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_RECORD)
 #define IS_TUPLE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_TUPLE)
+#define IS_MAP(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_MAP)
 
 #define AS_STR(v) ((v).obj.cell->value.str)
 #define AS_ERR(v) ((v).obj.cell->value.err)
@@ -44,7 +46,9 @@ typedef struct value_t {
 #define AS_CLOSURE(v) ((v).obj.cell->value.closure)
 #define AS_CLOSURE_MEMBER(v) ((v).obj.cell->value.closure_member)
 #define AS_ITER(v) ((v).obj.cell->value.iter)
+#define AS_RECORD(v) ((v).obj.cell->value.record)
 #define AS_TUPLE(v) ((v).obj.cell->value.tuple)
+#define AS_MAP(v) ((v).obj.cell->value.map)
 
 static const value_t value_nil = { .kind = VALUE_NIL };
 static const value_t value_true = { .kind = VALUE_BOOL, .boolean = true };
@@ -110,6 +114,11 @@ value_t value_init_map(const value_t*, int64_t, const sv_allocator_t*);
 /**
  * Creates a tuple value borrowing the values. The value array order must be (id, value).
  * obj.cell is NULL on allocation failure.
+ */
+value_t value_init_record(const value_t*, uint8_t, const sv_allocator_t*);
+/**
+ * Creates a tuple value borrowing the values. obj.cell is NULL on allocation
+ * failure.
  */
 value_t value_init_tuple(const value_t*, uint8_t, const sv_allocator_t*);
 

@@ -78,7 +78,7 @@ vm_t vm_init(sv_str_t name)
         .upvalues = sv_vec_init(value_t),
         .group = {0},
         .ip = 0,
-        .ctx = { .alloc = NULL, .logger = sv_std_logger, .tuple_key_names = NULL, .tuple_names_sizes = 0 },
+        .ctx = { .alloc = NULL, .logger = sv_std_logger, .record_key_names = NULL, .record_names_sizes = 0 },
     };
 }
 
@@ -90,10 +90,10 @@ static void vm_fn_deinit(vm_t* vm, const sv_allocator_t* a)
 
 void vm_deinit(vm_t* vm, const sv_allocator_t* a)
 {
-    if (vm->ctx.tuple_key_names != NULL) {
-        for (uint32_t i = 0; i < vm->ctx.tuple_names_sizes; i++)
-            sv_free(a, (void*)vm->ctx.tuple_key_names[i]);
-        sv_free(a, (void*)vm->ctx.tuple_key_names);
+    if (vm->ctx.record_key_names != NULL) {
+        for (uint32_t i = 0; i < vm->ctx.record_names_sizes; i++)
+            sv_free(a, (void*)vm->ctx.record_key_names[i]);
+        sv_free(a, (void*)vm->ctx.record_key_names);
     }
     arr_deinit(&vm->globals, a);
     vm_fn_deinit(vm, a);
@@ -236,7 +236,8 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
         case OP_LIST: VALUE_FROM_ARR(1, value_init_list);
         case OP_HASHMAP: VALUE_FROM_ARR(2, value_init_map);
-        case OP_TUPLE: VALUE_FROM_ARR(2, value_init_tuple);
+        case OP_RECORD: VALUE_FROM_ARR(2, value_init_record);
+        case OP_TUPLE: VALUE_FROM_ARR(1, value_init_tuple);
         case OP_ADD: {
             value_t v2 = sv_vec_pop(vm->stack);
             value_t v1 = sv_vec_pop(vm->stack);
@@ -274,18 +275,18 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         case OP_INDEX: {
             value_t key = sv_vec_pop(vm->stack);
             value_t container = sv_vec_pop(vm->stack);
-            if (container.kind != VALUE_OBJ
-                || (container.obj.cell->value.kind != OBJ_MAP
-                    && container.obj.cell->value.kind != OBJ_LIST))
+            if (!IS_MAP(container) && !IS_LIST(container) && !IS_TUPLE(container))
                 UNSUPPORTED_2(container, key, "Type is not indexable")
 
             sv_opt_t(value_t) res;
-            if (container.obj.cell->value.kind == OBJ_MAP) {
-                res = map_get(container.obj.cell->value.map, key);
+            if (IS_MAP(container)) {
+                res = map_get(AS_MAP(container), key);
             } else {
                 if (key.kind != VALUE_NUMBER || key.number != (double)(int64_t)key.number)
-                    UNSUPPORTED_2(container, key, "List index is not an integer")
-                res = ll_get(container.obj.cell->value.list, (int64_t)key.number);
+                    UNSUPPORTED_2(container, key, "Index is not an integer")
+                res = IS_LIST(container)
+                    ? ll_get(AS_LIST(container), (int64_t)key.number)
+                    : tuple_get(AS_TUPLE(container), (int64_t)key.number);
             }
             if (!res.is_some)
                 OP_ERR_2(VM_ERR_KEY_NOT_FOUND, container, key, "Key not found")
@@ -296,14 +297,14 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             TRY_PUSH_OWNED(out);
             break;
         }
-        case OP_TUPLE_GET: {
+        case OP_RECORD_GET: {
             value_t maybe_tuple = sv_vec_pop(vm->stack);
             uint8_t id = vm->chunk.bytecode.arr[vm->ip++];
-            if (!IS_TUPLE(maybe_tuple))
+            if (!IS_RECORD(maybe_tuple))
                 UNSUPPORTED_1(maybe_tuple, "Type is not subscriptable");
 
-            tuple_t tuple = AS_TUPLE(maybe_tuple);
-            sv_opt_t(value_t) v = tuple_get(tuple, id);
+            record_t tuple = AS_RECORD(maybe_tuple);
+            sv_opt_t(value_t) v = record_get(tuple, id);
             if (!v.is_some) {
                 value_t n = {.kind = VALUE_NUMBER, .number = (double)id};
                 OP_ERR_2(VM_ERR_KEY_NOT_FOUND, maybe_tuple, n, "Key not found");

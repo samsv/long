@@ -9,6 +9,7 @@ iter_t iter_init(value_t from)
         case OBJ_STR: return (iter_t){ .kind = ITER_STR, .str = str_iter_init(&AS_STR(from)) };
         case OBJ_MAP:
         case OBJ_ITER:
+        case OBJ_RECORD:
         case OBJ_TUPLE:
         case OBJ_ERR:
         case OBJ_NATIVE_FN:

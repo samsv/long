@@ -30,8 +30,8 @@ typedef struct vm_ctx_t {
     const sv_allocator_t* alloc;
     sv_logger_t logger;
 
-    const char** tuple_key_names;
-    uint32_t tuple_names_sizes;
+    const char** record_key_names;
+    uint32_t record_names_sizes;
 } vm_ctx_t;
 
 typedef struct vm_t {
@@ -83,9 +83,10 @@ typedef enum {
     OP_LESS_EQUAL,
     OP_LIST,
     OP_HASHMAP,
+    OP_RECORD,
     OP_TUPLE,
     OP_INDEX,
-    OP_TUPLE_GET,
+    OP_RECORD_GET,
     OP_NOT,
     OP_DUP,
     OP_RETURN,

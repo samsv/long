@@ -226,8 +226,6 @@ static precedence infix_prec(operator_kind op)
     switch (op) {
         case OPERATOR_EQUAL:
             return (precedence){ .left = 2, .right = 1, .has_right = true };
-        case OPERATOR_COMMA:
-            return (precedence){ .left = 3, .right = 4, .has_right = true };
         case OPERATOR_PIPE_FORWARD:
             return (precedence){ .left = 6, .right = 7, .has_right = true };
         case OPERATOR_GREATER:
@@ -269,7 +267,7 @@ static sexpr_t parse_container(sv_vec_t(sexpr_t)* list, scanner_t* s, ctx_t* ctx
         }
 
         token_t comma;
-        if (!parser_check(s, ctx, op_pattern(OPERATOR_COMMA), &comma))
+        if (!parser_check(s, ctx, kind_pattern(TOKEN_COMMA), &comma))
             break;
     }
 
@@ -334,7 +332,7 @@ static sexpr_t parse_hashmap(scanner_t* s, ctx_t* ctx, token_t open)
         }
 
         token_t comma;
-        if (!parser_check(s, ctx, op_pattern(OPERATOR_COMMA), &comma))
+        if (!parser_check(s, ctx, kind_pattern(TOKEN_COMMA), &comma))
             break;
     }
 
@@ -345,10 +343,10 @@ static sexpr_t parse_hashmap(scanner_t* s, ctx_t* ctx, token_t open)
     return cons_sexpr(list);
 }
 
-static sexpr_t parse_tuple(scanner_t* s, ctx_t* ctx, token_t open)
+static sexpr_t parse_record(scanner_t* s, ctx_t* ctx, token_t open)
 {
     sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
-    token_t tuple_atom = { .kind = TOKEN_SP_FUNCTION, .line = open.line, .fn = FN_TUPLE };
+    token_t tuple_atom = { .kind = TOKEN_SP_FUNCTION, .line = open.line, .fn = FN_RECORD };
     if (!push_sexpr(&list, atom_sexpr(tuple_atom), ctx))
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
 
@@ -376,7 +374,7 @@ static sexpr_t parse_tuple(scanner_t* s, ctx_t* ctx, token_t open)
         }
 
         token_t comma;
-        if (!parser_check(s, ctx, op_pattern(OPERATOR_COMMA), &comma))
+        if (!parser_check(s, ctx, kind_pattern(TOKEN_COMMA), &comma))
             break;
     }
 
@@ -597,6 +595,44 @@ static sexpr_t parse_if(scanner_t* s, ctx_t* ctx, token_t if_token)
     return out;
 }
 
+static sexpr_t parse_tuple(scanner_t* s, ctx_t* ctx, token_t open, sexpr_t first)
+{
+    sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
+    token_t tuple_atom = { .kind = TOKEN_SP_FUNCTION, .line = open.line, .fn = FN_TUPLE };
+    if (!push_sexpr(&list, atom_sexpr(tuple_atom), ctx)) {
+        sexpr_free(&first, &ctx->alloc);
+        return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+    }
+    if (!push_sexpr(&list, first, ctx)) {
+        sexpr_free(&first, &ctx->alloc);
+        return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+    }
+
+    for (;;) {
+        token_t closer;
+        if (parser_check(s, ctx, kind_pattern(TOKEN_RIGHT_PAREN), &closer))
+            return cons_sexpr(list);
+
+        sexpr_t e = parse_expr(s, ctx, 0);
+        if (is_error_sexpr(e))
+            return free_list_error(&list, ctx, e);
+        if (!push_sexpr(&list, e, ctx)) {
+            sexpr_free(&e, &ctx->alloc);
+            return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+        }
+
+        token_t comma;
+        if (!parser_check(s, ctx, kind_pattern(TOKEN_COMMA), &comma))
+            break;
+    }
+
+    token_t closed = parser_expect_close(s, ctx, open, kind_pattern(TOKEN_RIGHT_PAREN));
+    if (closed.kind == TOKEN_ERROR)
+        return free_list_error(&list, ctx, atom_sexpr(closed));
+
+    return cons_sexpr(list);
+}
+
 static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uint8_t min_prec)
 {
     sexpr_t lhs;
@@ -605,10 +641,18 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
             lhs = parse_expr(s, ctx, 0);
             if (is_error_sexpr(lhs))
                 return lhs;
-            token_t closed = parser_expect_close(s, ctx, start_token, kind_pattern(TOKEN_RIGHT_PAREN));
-            if (closed.kind == TOKEN_ERROR) {
-                sexpr_free(&lhs, &ctx->alloc);
-                return atom_sexpr(closed);
+
+            token_t comma;
+            if (parser_check(s, ctx, kind_pattern(TOKEN_COMMA), &comma)) {
+                lhs = parse_tuple(s, ctx, start_token, lhs);
+                if (is_error_sexpr(lhs))
+                    return lhs;
+            } else {
+                token_t closed = parser_expect_close(s, ctx, start_token, kind_pattern(TOKEN_RIGHT_PAREN));
+                if (closed.kind == TOKEN_ERROR) {
+                    sexpr_free(&lhs, &ctx->alloc);
+                    return atom_sexpr(closed);
+                }
             }
         } else if (start_token.operator == OPERATOR_LEFT_BRACKET) {
             lhs = parse_list(s, ctx, start_token, kind_pattern(TOKEN_RIGHT_BRACKET));
@@ -633,7 +677,7 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
         if (is_error_sexpr(lhs))
             return lhs;
     } else if (start_token.kind == TOKEN_LEFT_BRACE) {
-        lhs = parse_tuple(s, ctx, start_token);
+        lhs = parse_record(s, ctx, start_token);
         if (is_error_sexpr(lhs))
             return lhs;
     } else if (start_token.kind == TOKEN_KEYWORD && start_token.keyword == KEYWORD_NOT) {
@@ -747,6 +791,7 @@ static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
             case FN_CLASS:
             case FN_MAP:
             case FN_HASHMAP:
+            case FN_RECORD:
             case FN_TUPLE:
             case FN_MAPF:
             case FN_MATCH:

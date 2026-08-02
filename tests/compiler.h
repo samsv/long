@@ -190,13 +190,13 @@ static inline void sv_test_compiler_tuples(sv_testing_t* t)
       "    {x: x, y: y}\n"
       "end\n"
       "add({x: 1, y: 2}, {x: 3, y: 4})",
-      value_init_tuple(add_items, 2, &sv_gpa), value_eql));
+      value_init_record(add_items, 2, &sv_gpa), value_eql));
 
    value_t inner_items[] = { sv_test_compiler_val(1), sv_test_compiler_val(5) };
-   value_t inner = value_init_tuple(inner_items, 1, &sv_gpa);
+   value_t inner = value_init_record(inner_items, 1, &sv_gpa);
    value_t outer_items[] = { sv_test_compiler_val(0), inner };
    sv_test_run(t, sv_test_compiler_cmp("{a: {b: 5}}",
-      value_init_tuple(outer_items, 1, &sv_gpa), value_eql));
+      value_init_record(outer_items, 1, &sv_gpa), value_eql));
    value_free(&inner, &sv_gpa);
 
    sv_test_run(t, sv_test_compiler_err("{x: 1, x: 2}") == C_ERR_REDEFINED);
@@ -212,6 +212,42 @@ static inline void sv_test_compiler_tuples(sv_testing_t* t)
    sv_test_run(t, sv_str_comp(ptext, sv_str_init("{x: 10, y: 20}")));
    sv_str_deinit(&ptext, &sv_gpa);
    vm_deinit(&pvm, &sv_gpa);
+}
+
+static inline void sv_test_compiler_tuple_type(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_num("t = (1, \"a\")\nt[0]", 1));
+   sv_test_run(t, sv_test_compiler_num("if (1, \"a\")[1] == \"a\" do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("(1,)[0]", 1));
+   sv_test_run(t, sv_test_compiler_num("x = ((1, 2), 3)\nx[0][1]", 2));
+   sv_test_run(t, sv_test_compiler_num("if (1, 2) == (1, 2) do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if (1, 2) == (2, 1) do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if (1, 2) == (1, 2, 3) do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("i = 1\nt = (5, 6)\nt[i]", 6));
+
+   sv_test_run(t, sv_test_compiler_runtime_err("(1, 2)[5]") == VM_ERR_KEY_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("(1, 2)[0 - 1]") == VM_ERR_KEY_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("(1, 2)[0.5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
+
+   ctx_t tctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   vm_t tvm = compile("t = (1, (2, \"s\"))\nt", &tctx);
+   sv_test_run(t, tvm.chunk.bytecode.arr != NULL);
+   sv_opt_t(error_t) terr = vm_run(&tvm);
+   sv_test_run(t, !terr.is_some);
+   sv_str_t ttext = value_to_str(tvm.stack.arr[tvm.stack.size - 1], &tvm.ctx);
+   sv_test_run(t, sv_str_comp(ttext, sv_str_init("(1, (2, s))")));
+   sv_str_deinit(&ttext, &sv_gpa);
+   vm_deinit(&tvm, &sv_gpa);
+
+   ctx_t octx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   vm_t ovm = compile("(1,)", &octx);
+   sv_test_run(t, ovm.chunk.bytecode.arr != NULL);
+   sv_opt_t(error_t) oerr = vm_run(&ovm);
+   sv_test_run(t, !oerr.is_some);
+   sv_str_t otext = value_to_str(ovm.stack.arr[ovm.stack.size - 1], &ovm.ctx);
+   sv_test_run(t, sv_str_comp(otext, sv_str_init("(1,)")));
+   sv_str_deinit(&otext, &sv_gpa);
+   vm_deinit(&ovm, &sv_gpa);
 }
 
 static inline void sv_test_compiler_logic(sv_testing_t* t)
@@ -400,7 +436,6 @@ static inline void sv_test_compiler_errors(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_err("y + 1") == C_ERR_UNDEFINED_VARIABLE);
    sv_test_run(t, sv_test_compiler_err("x = 1\nx = 2") == C_ERR_REDEFINED);
    sv_test_run(t, sv_test_compiler_err("1 |> 2") == C_ERR_UNEXPECTED_SEXPR);
-   sv_test_run(t, sv_test_compiler_err("1, 2") == C_ERR_NOT_IMPLEMENTED);
 }
 
 static inline void sv_test_compiler(sv_testing_t* t)
@@ -410,6 +445,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_maps(t);
    sv_test_compiler_indexing(t);
    sv_test_compiler_tuples(t);
+   sv_test_compiler_tuple_type(t);
    sv_test_compiler_logic(t);
    sv_test_compiler_for(t);
    sv_test_compiler_functions(t);

@@ -52,7 +52,18 @@ static inline void sv_test_parser_exprs(sv_testing_t* t)
    sv_test_parse_ok(t, "- 1 * (2 + 3)", "(* (- 1) (+ 2 3))");
    sv_test_parse_ok(t, "x.hwllo |> world()", "(|> (. x hwllo) (world))");
    sv_test_parse_ok(t, "x[0][1]", "([ ([ x 0) 1)");
-   sv_test_parse_ok(t, "x, y = 1, 2", "(= (, x y) (, 1 2))");
+   sv_test_parse_error(t, ", 2", PARSER_ERROR_UNEXPECTED_TOKEN);
+
+   sv_test_parse_ok(t, "(1, 2)", "(tuple 1 2)");
+   sv_test_parse_ok(t, "(a, b, c)", "(tuple a b c)");
+   sv_test_parse_ok(t, "(1,)", "(tuple 1)");
+   sv_test_parse_ok(t, "(a, b,)", "(tuple a b)");
+   sv_test_parse_ok(t, "(1)", "1");
+   sv_test_parse_ok(t, "((1, 2))", "(tuple 1 2)");
+   sv_test_parse_ok(t, "(myfun(x, y),)", "(tuple (myfun x y))");
+   sv_test_parse_ok(t, "(1 + 2, 3)", "(tuple (+ 1 2) 3)");
+   sv_test_parse_error(t, "()", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "(1, 2", PARSER_ERROR_EOF);
    sv_test_parse_ok(t, "x = y = 2", "(= x (= y 2))");
    sv_test_parse_ok(t, "world(1, 2, 3)", "(world 1 2 3)");
    sv_test_parse_ok(t, "3.14", "3.14");
@@ -111,6 +122,13 @@ static inline void sv_test_parser_program_fn(sv_testing_t* t)
    sv_str_deinit(&ctx.err.msg, &ctx.alloc);
 
    ctx.err = (error_t){ 0 };
+   scanner_t commas = scanner_init(sv_str_init("x, y = 1, 2"));
+   sexpr_t ec = parser_program(&commas, &ctx);
+   sv_test_run(t, ec.tag == S_ATOM && ec.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, ctx.err.error_code == (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_str_deinit(&ctx.err.msg, &ctx.alloc);
+
+   ctx.err = (error_t){ 0 };
    scanner_t semis = scanner_init(sv_str_init("x = 1; y = 2;"));
    sexpr_t es = parser_program(&semis, &ctx);
    sv_test_run(t, ctx.err.error_code == 0);
@@ -142,11 +160,11 @@ static inline void sv_test_parser_maps(sv_testing_t* t)
    sv_test_parse_error(t, "x = ;", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "f(1; 2)", PARSER_ERROR_UNEXPECTED_TOKEN);
 
-   sv_test_parse_ok(t, "{x: 1, y: 2}", "(tuple x 1 y 2)");
-   sv_test_parse_ok(t, "{}", "(tuple)");
-   sv_test_parse_ok(t, "{x: 1 + 2}", "(tuple x (+ 1 2))");
+   sv_test_parse_ok(t, "{x: 1, y: 2}", "(record x 1 y 2)");
+   sv_test_parse_ok(t, "{}", "(record)");
+   sv_test_parse_ok(t, "{x: 1 + 2}", "(record x (+ 1 2))");
    sv_test_parse_ok(t, "v.x + v.y", "(+ (. v x) (. v y))");
-   sv_test_parse_ok(t, "{x: 1}.x", "(. (tuple x 1) x)");
+   sv_test_parse_ok(t, "{x: 1}.x", "(. (record x 1) x)");
    sv_test_parse_ok(t, "t.a.b", "(. (. t a) b)");
    sv_test_parse_error(t, "{1: 2}", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "{x 1}", PARSER_ERROR_UNEXPECTED_TOKEN);

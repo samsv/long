@@ -17,7 +17,6 @@ static const char* operator_text(operator_kind op)
         case OPERATOR_PIPE_FORWARD: return "|>";
         case OPERATOR_STAR: return "*";
         case OPERATOR_SLASH: return "/";
-        case OPERATOR_COMMA: return ",";
         case OPERATOR_LEFT_PAREN: return "(";
         case OPERATOR_LEFT_BRACKET: return "[";
         case OPERATOR_BANG_EQUAL: return "!=";
@@ -41,6 +40,7 @@ const char* special_fn_text(special_fn_kind fn)
         case FN_LIST: return "list";
         case FN_MAP: return "map";
         case FN_HASHMAP: return "hashmap";
+        case FN_RECORD: return "record";
         case FN_TUPLE: return "tuple";
         case FN_MAPF: return "mapf";
         case FN_MATCH: return "match";
@@ -133,6 +133,7 @@ bool token_format_builder(token_t token, sv_str_builder* b, const sv_allocator_t
         case TOKEN_LEFT_BRACE: return add_text(b, "{", a);
         case TOKEN_PERCENT_BRACE: return add_text(b, "%{", a);
         case TOKEN_COLON: return add_text(b, ":", a);
+        case TOKEN_COMMA: return add_text(b, ",", a);
         case TOKEN_SEMICOLON: return add_text(b, ";", a);
         case TOKEN_HASH: return add_text(b, "#", a);
         case TOKEN_PIPE: return add_text(b, "|", a);

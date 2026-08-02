@@ -52,9 +52,10 @@ static const char* op_name(vm_instructions op)
         case OP_JUMP_IF_FALSE: return "jump_if_false";
         case OP_LIST: return "list";
         case OP_HASHMAP: return "hashmap";
+        case OP_RECORD: return "record";
         case OP_TUPLE: return "tuple";
         case OP_INDEX: return "index";
-        case OP_TUPLE_GET: return "tuple_get";
+        case OP_RECORD_GET: return "record_get";
         case OP_NOT: return "not";
         case OP_DUP: return "dup";
         case OP_RETURN: return "return";
@@ -78,6 +79,7 @@ void print_chunk(vm_t v)
                 i += 3;
                 break;
             }
+            case OP_RECORD:
             case OP_TUPLE:
             case OP_LIST:
                 printf("%" PRId64 " [ %s ] size %u\n", i, op_name(op), code[i + 1]);
@@ -101,7 +103,7 @@ void print_chunk(vm_t v)
             case OP_GET_GLOBAL:
             case OP_GET_LOCAL:
             case OP_GET_UPVALUE:
-            case OP_TUPLE_GET:
+            case OP_RECORD_GET:
             case OP_GET_MEMBER:
                 printf("%" PRId64 " [ %s ] index %u\n", i, op_name(op), code[i + 1]);
                 i += 2;

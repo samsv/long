@@ -81,6 +81,7 @@ bool value_eql(value_t x, value_t y)
                 case OBJ_STR: return sv_str_comp(ox->str, oy->str);
                 case OBJ_LIST: return list_eql(ox->list, oy->list);
                 case OBJ_MAP: return map_eql(ox->map, oy->map);
+                case OBJ_RECORD: return record_eql(ox->record, oy->record);
                 case OBJ_TUPLE: return tuple_eql(ox->tuple, oy->tuple);
                 case OBJ_NATIVE_FN:
                 case OBJ_ITER:
@@ -103,6 +104,7 @@ static void obj_free(obj_t* o, const sv_allocator_t* a)
         case OBJ_MAP: map_deinit(&o->map, a); break;
         case OBJ_ITER: iter_deinit(&o->iter, a); break;
         case OBJ_CLOSURE: cls_deinit(&o->closure, a); break;
+        case OBJ_RECORD: record_deinit(&o->record, a); break;
         case OBJ_TUPLE: tuple_deinit(&o->tuple, a); break;
         case OBJ_CLOSURE_MEMBER: clsm_deinit(&o->closure_member, a); break;
         case OBJ_ERR: {
@@ -210,6 +212,22 @@ value_t value_init_map(const value_t* vs, int64_t n_pairs, const sv_allocator_t*
     return v;
 }
 
+value_t value_init_record(const value_t* vs, uint8_t n, const sv_allocator_t* a)
+{
+    value_t v = obj_wrap((obj_t){ .kind = OBJ_RECORD, .record = {0} }, a);
+    if (v.obj.cell == NULL)
+        return ERR_VALUE;
+
+    record_t record = record_init(vs, n, a);
+    if (record.items == NULL) {
+        value_free(&v, a);
+        return ERR_VALUE;
+    }
+
+    v.obj.cell->value.record = record;
+    return v;
+}
+
 value_t value_init_tuple(const value_t* vs, uint8_t n, const sv_allocator_t* a)
 {
     value_t v = obj_wrap((obj_t){ .kind = OBJ_TUPLE, .tuple = {0} }, a);
@@ -217,8 +235,10 @@ value_t value_init_tuple(const value_t* vs, uint8_t n, const sv_allocator_t* a)
         return ERR_VALUE;
 
     tuple_t tuple = tuple_init(vs, n, a);
-    if (tuple.items == NULL)
+    if (tuple.items == NULL) {
+        value_free(&v, a);
         return ERR_VALUE;
+    }
 
     v.obj.cell->value.tuple = tuple;
     return v;
@@ -236,6 +256,7 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
             case OBJ_STR: return "string";
             case OBJ_LIST: return "list";
             case OBJ_MAP: return "hashmap";
+            case OBJ_RECORD: return "record";
             case OBJ_TUPLE: return "tuple";
             case OBJ_NATIVE_FN:
             case OBJ_CLOSURE:
@@ -295,6 +316,20 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
             map_iter_deinit(&it, a);
             return sv_strb_add_char(b, '}', a) >= 0;
         }
+        case OBJ_TUPLE: {
+            CHECK(sv_strb_add(b, "(", 1, a) >= 0);
+
+            tuple_t tuple = AS_TUPLE(v);
+            for (uint8_t i = 0; i < tuple.size; i++) {
+                if (i > 0)
+                    CHECK(sv_strb_add(b, ", ", 2, a) >= 0);
+                CHECK(value_write(tuple.items[i], b, ctx));
+            }
+
+            if (tuple.size == 1)
+                CHECK(sv_strb_add(b, ",", 1, a) >= 0);
+            return sv_strb_add(b, ")", 1, a) >= 0;
+        }
         case OBJ_ITER:
             switch (AS_ITER(v).kind) {
                 case ITER_LIST: return sv_strb_add(b, "list iterator", 13, a) >= 0;
@@ -313,16 +348,16 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
             const char* name = v.obj.cell->value.fn.name;
             return sv_strb_add(b, name, strlen(name), a) >= 0;
         }
-        case OBJ_TUPLE: {
+        case OBJ_RECORD: {
             CHECK(sv_strb_add(b, "{", 1, a) >= 0);
 
-            tuple_t tuple = AS_TUPLE(v);
+            record_t tuple = AS_RECORD(v);
             for (uint8_t i = 0; i < tuple.size; i++) {
-                tuple_item_t item = tuple.items[i];
+                record_item_t item = tuple.items[i];
                 if (i > 0)
                     CHECK(sv_strb_add(b, ", ", 2, a) >= 0);
 
-                const char* name = ctx->tuple_key_names[item.id];
+                const char* name = ctx->record_key_names[item.id];
                 CHECK(sv_strb_add(b, name, (int64_t)strlen(name), a) >= 0);
                 CHECK(sv_strb_add(b, ": ", 2, a) >= 0);
                 CHECK(value_write(item.value, b, ctx));

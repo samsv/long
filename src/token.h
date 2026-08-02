@@ -16,6 +16,7 @@ typedef enum {
     TOKEN_LEFT_BRACE,
     TOKEN_PERCENT_BRACE,
     TOKEN_COLON,
+    TOKEN_COMMA,
     TOKEN_SEMICOLON,
     TOKEN_HASH,
     TOKEN_PIPE,
@@ -32,7 +33,6 @@ typedef enum {
     OPERATOR_STAR,
     OPERATOR_SLASH,
 
-    OPERATOR_COMMA,
     OPERATOR_LEFT_PAREN,
     OPERATOR_LEFT_BRACKET,
 
@@ -53,6 +53,7 @@ typedef enum {
     FN_LIST,
     FN_MAP,
     FN_HASHMAP,
+    FN_RECORD,
     FN_TUPLE,
     FN_MAPF,
     FN_MATCH,

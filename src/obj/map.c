@@ -219,8 +219,15 @@ static uint32_t value_hash(value_t v)
                     return h;
                 }
                 case OBJ_TUPLE: {
-                    uint32_t h = 34;
+                    uint32_t h = 51;
                     tuple_t t = v.obj.cell->value.tuple;
+                    for (uint8_t i = 0; i < t.size; i++)
+                        h ^= value_hash(t.items[i]) + 0x9e3779b9u + (h << 6) + (h >> 2);
+                    return h;
+                }
+                case OBJ_RECORD: {
+                    uint32_t h = 34;
+                    record_t t = v.obj.cell->value.record;
                     for (uint8_t i = 0; i < t.size; i++)
                         h ^= (t.items[i].id * 31u ^ value_hash(t.items[i].value))
                              + 0x9e3779b9u + (h << 6) + (h >> 2);
