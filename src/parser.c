@@ -683,6 +683,10 @@ static sexpr_t parse_list_pattern(scanner_t* s, ctx_t* ctx, token_t open)
     for (;;) {
         token_t dots;
         if (parser_check(s, ctx, kind_pattern(TOKEN_DOT_DOT), &dots)) {
+            if (list.size == 1)
+                return free_list_error(&list, ctx,
+                    unexpected_token_error(ctx, dots, "List tail must follow an element"));
+
             token_t tail = parser_expect_id(s, ctx);
             if (tail.kind == TOKEN_ERROR)
                 return free_list_error(&list, ctx, atom_sexpr(tail));

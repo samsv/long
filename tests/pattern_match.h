@@ -14,6 +14,7 @@
 #define T4 "$000000000004"
 #define T5 "$000000000005"
 #define T6 "$000000000006"
+#define T7 "$000000000007"
 
 static inline void sv_test_match_ok(sv_testing_t* t, const char* src, const char* expected)
 {
@@ -162,20 +163,60 @@ static inline void sv_test_match_records(sv_testing_t* t)
 
 static inline void sv_test_match_lists(sv_testing_t* t)
 {
-   /* Lists still compare by value until the CONS lowering lands. */
-   sv_test_match_ok(t, "match x | [1, 2] = 3 end",
+   /* The empty list is the else arm: NIL and CONS are disjoint. */
+   sv_test_match_ok(t, "match x | [] = 0 end",
       "(do (= " T1 " x) (| (if (is-list? " T1 ")"
-      " (if (== " T1 " (list 1 2)) 3 fail) fail) nil))");
+      " (if (is-cons? " T1 ") fail 0) fail) nil))");
+
+   /* A fixed length list requires the final tail to be empty. No `is-list?` is
+    * emitted for a tail column, which is known to be a list already. */
+   sv_test_match_ok(t, "match x | [a] = a end",
+      "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ")"
+      " (do (= " T2 " (head " T1 ")) (do (= " T3 " (tail " T1 "))"
+      " (if (is-cons? " T3 ") fail (do (= a " T2 ") a)))) fail) fail) nil))");
+
+   /* A tail variable binds the tail temp directly, with no further test. */
+   sv_test_match_ok(t, "match x | [h, ..t] = h end",
+      "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ")"
+      " (do (= " T2 " (head " T1 ")) (do (= " T3 " (tail " T1 "))"
+      " (do (= t " T3 ") (do (= h " T2 ") h)))) fail) fail) nil))");
+
+   sv_test_match_ok(t, "match x | [1, 2] = 3 end",
+      "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ")"
+      " (do (= " T2 " (head " T1 ")) (do (= " T3 " (tail " T1 "))"
+      " (if (is-number? " T2 ") (if (== " T2 " 1)"
+      " (if (is-cons? " T3 ") (do (= " T4 " (head " T3 ")) (do (= " T5 " (tail " T3 "))"
+      " (if (is-number? " T4 ") (if (== " T4 " 2)"
+      " (if (is-cons? " T5 ") fail 3) fail) fail))) fail)"
+      " fail) fail))) fail) fail) nil))");
+
+   /* Rows sharing a prefix share the head test and the tail decomposition, then
+    * branch on the second element. Both bodies stay reachable. */
+   sv_test_match_ok(t, "match x | [1, 2] = a | [1, 3] = b end",
+      "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ")"
+      " (do (= " T2 " (head " T1 ")) (do (= " T3 " (tail " T1 "))"
+      " (if (is-number? " T2 ") (if (== " T2 " 1)"
+      " (if (is-cons? " T3 ") (do (= " T4 " (head " T3 ")) (do (= " T5 " (tail " T3 "))"
+      " (if (is-number? " T4 ")"
+      " (if (== " T4 " 2) (if (is-cons? " T5 ") fail a)"
+      " (if (== " T4 " 3) (if (is-cons? " T5 ") fail b) fail)) fail))) fail)"
+      " fail) fail))) fail) fail) nil))");
+
+   sv_test_match_ok(t, "match x | [] = 0 | [a, ..r] = a end",
+      "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ")"
+      " (do (= " T2 " (head " T1 ")) (do (= " T3 " (tail " T1 "))"
+      " (do (= r " T3 ") (do (= a " T2 ") a)))) 0) fail) nil))");
 }
 
 static inline void sv_test_match_oom(sv_testing_t* t)
 {
    const char* src =
-      "match x | 1 = 2 | \"a\" = 3 | (4, 5) = 6 | {k: 7, j: 8} = 9 | (a, 1) = a | y = y end";
+      "match x | 1 = 2 | \"a\" = 3 | (4, 5) = 6 | {k: 7, j: 8} = 9"
+      " | [1, ..zs] = zs | (a, 1) = a | y = y end";
    int64_t errored = 0;
    int64_t completed = 0;
 
-   for (int64_t budget = 0; budget < 200; budget++) {
+   for (int64_t budget = 0; budget < 260; budget++) {
       sv_test_countdown_t counter = { .remaining = 1000000 };
       sv_allocator_t countdown = { .vtable = &sv_test_countdown_vtable, .self = &counter };
       ctx_t ctx = { .alloc = countdown, .logger = sv_std_logger, .err = { 0 } };

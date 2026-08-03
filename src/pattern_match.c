@@ -15,6 +15,7 @@
 typedef sv_vec_t(sexpr_t) cons_t;
 
 typedef enum {
+    PAT_UNKNOWN,
     PAT_STR,
     PAT_NUMBER,
     PAT_NIL,
@@ -32,9 +33,29 @@ typedef enum {
  * pointers into the input tree: moving one out means reading it and writing
  * `nil` back through the pointer, so the input spine never double frees.
  */
+/**
+ * A pattern to test. Normally the slot holding it in the input tree. A list
+ * decomposition also produces the unconsumed remainder of a list pattern, which
+ * has no slot of its own, so it is the list pattern plus a count of elements
+ * already consumed.
+ */
 typedef struct {
-    sexpr_t* cols;
-    sexpr_t** cells;
+    sexpr_t* slot;
+    int64_t taken;
+} cell_t;
+
+/**
+ * A column subject and what is already known about the values reaching it, so a
+ * test the decomposition has already made is not repeated.
+ */
+typedef struct {
+    sexpr_t subject;
+    pattern_class known;
+} col_t;
+
+typedef struct {
+    col_t* cols;
+    cell_t* cells;
     sexpr_t** bodies;
     int64_t n_cols;
     int64_t n_rows;
@@ -183,6 +204,67 @@ static pattern_class pattern_class_of(sexpr_t pattern)
     return PAT_VAR;
 }
 
+/**
+ * True when the list pattern ends in a `(.. t)` tail element.
+ */
+static bool list_has_tail(sexpr_t list)
+{
+    if (list.cons.size < 2)
+        return false;
+
+    sexpr_t last = list.cons.arr[list.cons.size - 1];
+    return last.tag == S_CONS && last.cons.arr[0].atom.kind == TOKEN_DOT_DOT;
+}
+
+static int64_t list_n_fixed(sexpr_t list)
+{
+    return list.cons.size - 1 - (list_has_tail(list) ? 1 : 0);
+}
+
+static cell_t cell_of(sexpr_t* slot)
+{
+    return (cell_t){ .slot = slot, .taken = 0 };
+}
+
+/**
+ * The pattern a cell denotes. Only valid for a cell that is not a remainder.
+ */
+static sexpr_t cell_pattern(cell_t c)
+{
+    return *c.slot;
+}
+
+static pattern_class cell_class(cell_t c)
+{
+    return c.taken == 0 ? pattern_class_of(*c.slot) : PAT_LIST;
+}
+
+/**
+ * True when nothing is left of the list pattern, i.e. it matches only the empty
+ * list. A remainder that still has a tail variable is never in this state: it is
+ * normalised into the variable's own slot when it is built.
+ */
+static bool cell_is_nil(cell_t c)
+{
+    sexpr_t list = *c.slot;
+    return c.taken == list_n_fixed(list) && !list_has_tail(list);
+}
+
+static cell_t cell_head(cell_t c)
+{
+    return cell_of(&c.slot->cons.arr[1 + c.taken]);
+}
+
+static cell_t cell_rest(cell_t c)
+{
+    sexpr_t list = *c.slot;
+    int64_t next = c.taken + 1;
+    if (next == list_n_fixed(list) && list_has_tail(list))
+        return cell_of(&c.slot->cons.arr[list.cons.size - 1].cons.arr[1]);
+
+    return (cell_t){ .slot = c.slot, .taken = next };
+}
+
 static const char* class_predicate(pattern_class class)
 {
     switch (class) {
@@ -194,14 +276,15 @@ static const char* class_predicate(pattern_class class)
         case PAT_HASHMAP: return "is-hashmap?";
         case PAT_RECORD: return "is-record?";
         case PAT_TUPLE: return "is-tuple?";
-        case PAT_VAR: return "";
+        case PAT_VAR:
+        case PAT_UNKNOWN: return "";
     }
     return "";
 }
 
-static bool is_var_cell(sexpr_t p)
+static bool is_var_cell(cell_t c)
 {
-    return pattern_class_of(p) == PAT_VAR;
+    return cell_class(c) == PAT_VAR;
 }
 
 static bool is_named(sexpr_t e, const char* name)
@@ -274,16 +357,6 @@ static bool same_record_shape(sexpr_t a, sexpr_t b)
     return true;
 }
 
-static bool same_arity(sexpr_t a, sexpr_t b)
-{
-    return a.cons.size == b.cons.size;
-}
-
-static bool same_class(sexpr_t a, sexpr_t b)
-{
-    return pattern_class_of(a) == pattern_class_of(b);
-}
-
 static bool same_hashmap_shape(sexpr_t a, sexpr_t b)
 {
     if (a.cons.size != b.cons.size)
@@ -306,6 +379,16 @@ static sexpr_t** alloc_slots(int64_t n, const sv_allocator_t* a)
     return n == 0 ? NULL : sv_malloc(a, sizeof(sexpr_t*) * (size_t)n);
 }
 
+static cell_t* alloc_cells(int64_t n, const sv_allocator_t* a)
+{
+    return n == 0 ? NULL : sv_malloc(a, sizeof(cell_t) * (size_t)n);
+}
+
+static col_t* alloc_cols(int64_t n, const sv_allocator_t* a)
+{
+    return n == 0 ? NULL : sv_malloc(a, sizeof(col_t) * (size_t)n);
+}
+
 static bool alloc_ok(const void* p, int64_t n)
 {
     return n == 0 || p != NULL;
@@ -314,8 +397,8 @@ static bool alloc_ok(const void* p, int64_t n)
 static bool matrix_alloc(matrix_t* m, int64_t n_cols, int64_t n_rows, ctx_t* ctx)
 {
     *m = (matrix_t){ .n_cols = n_cols, .n_rows = n_rows };
-    m->cols = alloc_sexprs(n_cols, &ctx->alloc);
-    m->cells = alloc_slots(n_cols * n_rows, &ctx->alloc);
+    m->cols = alloc_cols(n_cols, &ctx->alloc);
+    m->cells = alloc_cells(n_cols * n_rows, &ctx->alloc);
     m->bodies = alloc_slots(n_rows, &ctx->alloc);
 
     return alloc_ok(m->cols, n_cols)
@@ -358,7 +441,7 @@ static int64_t best_column(const matrix_t* m)
     for (int64_t j = 0; j < m->n_cols; j++) {
         int64_t score = 0;
         for (int64_t i = 0; i < m->n_rows; i++) {
-            if (is_var_cell(*CELL(m, i, j)))
+            if (is_var_cell(CELL(m, i, j)))
                 break;
             score++;
         }
@@ -404,7 +487,7 @@ error:
  */
 static bool wrap_binds(
     sexpr_t* out,
-    const sexpr_t* names,
+    const col_t* cols,
     sexpr_t* reads,
     int64_t n,
     sexpr_t body,
@@ -416,7 +499,7 @@ static bool wrap_binds(
         reads[i] = (sexpr_t){ 0 };
 
         sexpr_t wrapped;
-        if (!lower_bind(&wrapped, names[i], read, body, line, ctx))
+        if (!lower_bind(&wrapped, cols[i].subject, read, body, line, ctx))
             return false;
         body = wrapped;
     }
@@ -503,9 +586,9 @@ static bool specialise(
     int64_t col,
     const int64_t* rows,
     int64_t n_rows,
-    const sexpr_t* new_cols,
+    const col_t* new_cols,
     int64_t n_new,
-    sexpr_t* const* new_cells,
+    const cell_t* new_cells,
     ctx_t* ctx
 ) {
     if (!matrix_alloc(out, n_new + m->n_cols - 1, n_rows, ctx))
@@ -536,20 +619,20 @@ static bool specialise(
  * read out must zero its slot.
  */
 typedef struct {
-    sexpr_t* names;
+    col_t* cols;
     sexpr_t* reads;
-    sexpr_t** cells;
+    cell_t* cells;
     int64_t n;
 } decomp_t;
 
 static bool decomp_alloc(decomp_t* d, int64_t n_new, int64_t n_rows, int64_t line, ctx_t* ctx)
 {
     *d = (decomp_t){ 0 };
-    d->names = alloc_sexprs(n_new, &ctx->alloc);
+    d->cols = alloc_cols(n_new, &ctx->alloc);
     d->reads = alloc_sexprs(n_new, &ctx->alloc);
-    d->cells = alloc_slots(n_new * n_rows, &ctx->alloc);
+    d->cells = alloc_cells(n_new * n_rows, &ctx->alloc);
 
-    if (!alloc_ok(d->names, n_new) || !alloc_ok(d->reads, n_new)
+    if (!alloc_ok(d->cols, n_new) || !alloc_ok(d->reads, n_new)
         || !alloc_ok(d->cells, n_new * n_rows))
         return match_oom(ctx, line);
 
@@ -565,7 +648,7 @@ static void decomp_free(decomp_t* d, ctx_t* ctx)
     for (int64_t i = 0; i < d->n; i++)
         sexpr_free(&d->reads[i], &ctx->alloc);
 
-    sv_free(&ctx->alloc, d->names);
+    sv_free(&ctx->alloc, d->cols);
     sv_free(&ctx->alloc, d->reads);
     sv_free(&ctx->alloc, d->cells);
     *d = (decomp_t){ 0 };
@@ -593,18 +676,9 @@ static const layout_t MAP_LAYOUT = { OPERATOR_LEFT_BRACKET, 2, 2, 1, 2 };
  * plus the sub pattern pointers the sub matrix will test. Releases the
  * decomposition on failure.
  */
-static bool decomp_build(
-    decomp_t* d,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    int64_t n_new,
-    sexpr_t shape,
-    const layout_t* layout,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool decomp_build(decomp_t* d, const matrix_t* m, int64_t col, const int64_t* rows,
+                         int64_t n_rows, int64_t n_new, sexpr_t shape, const layout_t* layout, int64_t line, ctx_t* ctx)
+{
     if (!decomp_alloc(d, n_new, n_rows, line, ctx))
         goto error;
 
@@ -613,16 +687,18 @@ static bool decomp_build(
             ? num_atom((double)j, line)
             : shape.cons.arr[layout->key_first + layout->key_stride * j];
 
-        if (!next_temp(&d->names[j], line, ctx)
-            || !build_op2(&d->reads[j], layout->read_op, m->cols[col], key, line, ctx))
+        if (!next_temp(&d->cols[j].subject, line, ctx)
+            || !build_op2(&d->reads[j], layout->read_op, m->cols[col].subject, key, line, ctx))
             goto error;
+
+        d->cols[j].known = PAT_UNKNOWN;
     }
 
     for (int64_t r = 0; r < n_rows; r++) {
-        sexpr_t* pattern = CELL(m, rows[r], col);
+        sexpr_t* pattern = CELL(m, rows[r], col).slot;
         for (int64_t j = 0; j < n_new; j++)
             d->cells[r * n_new + j] =
-                &pattern->cons.arr[layout->cell_first + layout->cell_stride * j];
+                cell_of(&pattern->cons.arr[layout->cell_first + layout->cell_stride * j]);
     }
 
     return true;
@@ -636,16 +712,36 @@ error:
  * True when row `last` is the first occurrence of its shape scanning forward, so
  * each distinct shape yields exactly one group.
  */
-static bool first_of_group(
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t last,
-    bool (*same)(sexpr_t, sexpr_t)
-) {
-    sexpr_t shape = *CELL(m, rows[last], col);
+static bool cell_same_literal(cell_t a, cell_t b)
+{
+    return same_literal(cell_pattern(a), cell_pattern(b));
+}
+
+static bool cell_same_arity(cell_t a, cell_t b)
+{
+    return cell_pattern(a).cons.size == cell_pattern(b).cons.size;
+}
+
+static bool cell_same_record(cell_t a, cell_t b)
+{
+    return same_record_shape(cell_pattern(a), cell_pattern(b));
+}
+
+static bool cell_same_hashmap(cell_t a, cell_t b)
+{
+    return same_hashmap_shape(cell_pattern(a), cell_pattern(b));
+}
+
+static bool cell_same_class(cell_t a, cell_t b)
+{
+    return cell_class(a) == cell_class(b);
+}
+
+static bool first_of_group(const matrix_t* m, int64_t col, const int64_t* rows, int64_t last, bool (*same)(cell_t, cell_t))
+{
+    cell_t shape = CELL(m, rows[last], col);
     for (int64_t k = 0; k < last; k++)
-        if (same(*CELL(m, rows[k], col), shape))
+        if (same(CELL(m, rows[k], col), shape))
             return false;
 
     return true;
@@ -654,18 +750,12 @@ static bool first_of_group(
 /**
  * Gathers every row sharing the shape into picked and returns how many.
  */
-static int64_t pick_group(
-    int64_t* picked,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    sexpr_t shape,
-    bool (*same)(sexpr_t, sexpr_t)
-) {
+static int64_t pick_group(int64_t* picked, const matrix_t* m, int64_t col, const int64_t* rows,
+                          int64_t n_rows, cell_t shape, bool (*same)(cell_t, cell_t))
+{
     int64_t n = 0;
     for (int64_t k = 0; k < n_rows; k++)
-        if (same(*CELL(m, rows[k], col), shape))
+        if (same(CELL(m, rows[k], col), shape))
             picked[n++] = rows[k];
 
     return n;
@@ -675,20 +765,13 @@ static int64_t pick_group(
  * Compiles the rows of one class whose cells all share a shape, having already
  * bound one temp per decomposed position.
  */
-static bool compile_decomposed(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    decomp_t* d,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool compile_decomposed(sexpr_t* out, const matrix_t* m, int64_t col, const int64_t* rows,
+                               int64_t n_rows, decomp_t* d, int64_t line, ctx_t* ctx)
+{
     matrix_t sub = { 0 };
     sexpr_t inner = { 0 };
 
-    if (!specialise(&sub, m, col, rows, n_rows, d->names, d->n, d->cells, ctx)) {
+    if (!specialise(&sub, m, col, rows, n_rows, d->cols, d->n, d->cells, ctx)) {
         matrix_free(&sub, ctx);
         return match_oom(ctx, line);
     }
@@ -698,22 +781,16 @@ static bool compile_decomposed(
     if (!ok)
         return false;
 
-    return wrap_binds(out, d->names, d->reads, d->n, inner, line, ctx);
+    return wrap_binds(out, d->cols, d->reads, d->n, inner, line, ctx);
 }
 
 /**
  * Compiles the rows through the remaining columns after column 0 was consumed
  * without introducing new columns.
  */
-static bool compile_dropped(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool compile_dropped(sexpr_t* out, const matrix_t* m, int64_t col,
+                            const int64_t* rows, int64_t n_rows, int64_t line, ctx_t* ctx)
+{
     matrix_t sub = { 0 };
     if (!specialise(&sub, m, col, rows, n_rows, NULL, 0, NULL, ctx)) {
         matrix_free(&sub, ctx);
@@ -729,15 +806,9 @@ static bool compile_dropped(
  * One equality test per distinct literal in the group, with every row carrying
  * that literal sharing the arm.
  */
-static bool compile_literals(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool compile_literals(sexpr_t* out, const matrix_t* m, int64_t col,
+                             const int64_t* rows, int64_t n_rows, int64_t line, ctx_t* ctx)
+{
     int64_t* picked = sv_malloc(&ctx->alloc, sizeof(int64_t) * (size_t)n_rows);
     if (picked == NULL)
         return match_oom(ctx, line);
@@ -748,14 +819,14 @@ static bool compile_literals(
     bool ok = true;
 
     for (int64_t last = n_rows - 1; last >= 0 && ok; last--) {
-        if (!first_of_group(m, col, rows, last, same_literal))
+        if (!first_of_group(m, col, rows, last, cell_same_literal))
             continue;
 
-        sexpr_t lit = *CELL(m, rows[last], col);
-        int64_t n_picked = pick_group(picked, m, col, rows, n_rows, lit, same_literal);
+        sexpr_t lit = cell_pattern(CELL(m, rows[last], col));
+        int64_t n_picked = pick_group(picked, m, col, rows, n_rows, CELL(m, rows[last], col), cell_same_literal);
 
         ok = compile_dropped(&arm, m, col, picked, n_picked, line, ctx)
-            && build_op2(&test, OPERATOR_EQUAL_EQUAL, m->cols[col], lit, line, ctx)
+            && build_op2(&test, OPERATOR_EQUAL_EQUAL, m->cols[col].subject, lit, line, ctx)
             && build_if(&chain, test, arm, chain, line, ctx);
         if (ok) {
             test = (sexpr_t){ 0 };
@@ -778,16 +849,9 @@ static bool compile_literals(
 /**
  * Groups the rows by tuple arity and binds one temp per position.
  */
-static bool compile_tuples(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    sexpr_t next,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool compile_tuples(sexpr_t* out, const matrix_t* m, int64_t col, const int64_t* rows,
+                           int64_t n_rows, sexpr_t next, int64_t line, ctx_t* ctx)
+{
     int64_t* picked = sv_malloc(&ctx->alloc, sizeof(int64_t) * (size_t)n_rows);
     if (picked == NULL) {
         sexpr_free(&next, &ctx->alloc);
@@ -800,12 +864,12 @@ static bool compile_tuples(
     bool ok = true;
 
     for (int64_t last = n_rows - 1; last >= 0 && ok; last--) {
-        if (!first_of_group(m, col, rows, last, same_arity))
+        if (!first_of_group(m, col, rows, last, cell_same_arity))
             continue;
 
-        sexpr_t shape = *CELL(m, rows[last], col);
+        sexpr_t shape = cell_pattern(CELL(m, rows[last], col));
         int64_t arity = shape.cons.size - 1;
-        int64_t n_picked = pick_group(picked, m, col, rows, n_rows, shape, same_arity);
+        int64_t n_picked = pick_group(picked, m, col, rows, n_rows, CELL(m, rows[last], col), cell_same_arity);
 
         decomp_t d = { 0 };
         ok = decomp_build(&d, m, col, picked, n_picked, arity, shape, &TUPLE_LAYOUT, line, ctx);
@@ -813,7 +877,7 @@ static bool compile_tuples(
             break;
 
         ok = compile_decomposed(&arm, m, col, picked, n_picked, &d, line, ctx)
-            && build_call2(&test, "is-tuple?", m->cols[col], num_atom((double)arity, line), line, ctx)
+            && build_call2(&test, "is-tuple?", m->cols[col].subject, num_atom((double)arity, line), line, ctx)
             && build_if(&chain, test, arm, chain, line, ctx);
         decomp_free(&d, ctx);
         if (ok) {
@@ -838,17 +902,9 @@ static bool compile_tuples(
  * Groups the rows by key shape. Exact and open groups can both match one value,
  * so the groups chain through `|` rather than an else arm.
  */
-static bool compile_keyed(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    bool is_record,
-    sexpr_t next,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool compile_keyed(sexpr_t* out, const matrix_t* m, int64_t col, const int64_t* rows,
+                          int64_t n_rows, bool is_record, sexpr_t next, int64_t line, ctx_t* ctx)
+{
     int64_t* picked = sv_malloc(&ctx->alloc, sizeof(int64_t) * (size_t)n_rows);
     if (picked == NULL) {
         sexpr_free(&next, &ctx->alloc);
@@ -863,14 +919,14 @@ static bool compile_keyed(
     bool ok = true;
 
     for (int64_t last = n_rows - 1; last >= 0 && ok; last--) {
-        bool (*same)(sexpr_t, sexpr_t) = is_record ? same_record_shape : same_hashmap_shape;
+        bool (*same)(cell_t, cell_t) = is_record ? cell_same_record : cell_same_hashmap;
         if (!first_of_group(m, col, rows, last, same))
             continue;
 
-        sexpr_t shape = *CELL(m, rows[last], col);
+        sexpr_t shape = cell_pattern(CELL(m, rows[last], col));
         int64_t n_keys = is_record ? record_n_fields(shape) : (shape.cons.size - 1) / 2;
         bool open = is_record && record_is_open(shape);
-        int64_t n_picked = pick_group(picked, m, col, rows, n_rows, shape, same);
+        int64_t n_picked = pick_group(picked, m, col, rows, n_rows, CELL(m, rows[last], col), same);
 
         if (is_record)
             for (int64_t i = 1; i < n_keys && ok; i++)
@@ -893,7 +949,7 @@ static bool compile_keyed(
 
         for (int64_t i = n_keys - 1; i >= 0 && ok; i--) {
             sexpr_t key = shape.cons.arr[1 + 2 * i];
-            ok = build_call2(&has, is_record ? "has-field?" : "has-key?", m->cols[col], key, line, ctx)
+            ok = build_call2(&has, is_record ? "has-field?" : "has-key?", m->cols[col].subject, key, line, ctx)
                 && build_if(&arm, has, arm, fail_atom(line), line, ctx);
             if (ok)
                 has = (sexpr_t){ 0 };
@@ -901,10 +957,10 @@ static bool compile_keyed(
 
         if (ok) {
             if (open)
-                ok = build_call1(&test, "is-record?", m->cols[col], line, ctx);
+                ok = build_call1(&test, "is-record?", m->cols[col].subject, line, ctx);
             else
-                ok = build_call2(&test, is_record ? "is-record?" : "is-hashmap?", m->cols[col],
-                                 num_atom((double)n_keys, line), line, ctx);
+                ok = build_call2(&test, is_record ? "is-record?" : "is-hashmap?",
+                                 m->cols[col].subject, num_atom((double)n_keys, line), line, ctx);
         }
 
         ok = ok && build_if(&group, test, arm, fail_atom(line), line, ctx);
@@ -932,61 +988,91 @@ static bool compile_keyed(
 }
 
 /**
- * Lists still compare by value: the pattern is spliced in as an expression.
+ * Builds the CONS arm: two fresh columns bound to the head and the tail, with
+ * the tail column known to be a list so its class test is not repeated.
  */
-static bool compile_lists(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    int64_t line,
-    ctx_t* ctx
-) {
-    sexpr_t chain = fail_atom(line);
-    sexpr_t arm = { 0 };
-    sexpr_t test = { 0 };
-    bool ok = true;
+static bool compile_cons_rows(sexpr_t* out, const matrix_t* m, int64_t col, const int64_t* rows,
+                              int64_t n_rows, int64_t line, ctx_t* ctx)
+{
+    decomp_t d = { 0 };
+    if (!decomp_alloc(&d, 2, n_rows, line, ctx))
+        goto error;
 
-    for (int64_t k = n_rows - 1; k >= 0 && ok; k--) {
-        int64_t one = rows[k];
-        sexpr_t* cell = CELL(m, one, col);
+    if (!next_temp(&d.cols[0].subject, line, ctx)
+        || !next_temp(&d.cols[1].subject, line, ctx)
+        || !build_call1(&d.reads[0], "head", m->cols[col].subject, line, ctx)
+        || !build_call1(&d.reads[1], "tail", m->cols[col].subject, line, ctx)
+    )
+        goto error;
 
-        ok = compile_dropped(&arm, m, col, &one, 1, line, ctx)
-            && build_op2(&test, OPERATOR_EQUAL_EQUAL, m->cols[col], *cell, line, ctx);
-        if (!ok)
-            break;
+    d.cols[0].known = PAT_UNKNOWN;
+    d.cols[1].known = PAT_LIST;
 
-        *cell = nil_atom(line);
-        ok = build_if(&chain, test, arm, chain, line, ctx);
-        if (ok) {
-            test = (sexpr_t){ 0 };
-            arm = (sexpr_t){ 0 };
-        }
+    for (int64_t r = 0; r < n_rows; r++) {
+        cell_t cell = CELL(m, rows[r], col);
+        d.cells[r * 2] = cell_head(cell);
+        d.cells[r * 2 + 1] = cell_rest(cell);
     }
+
+    bool ok = compile_decomposed(out, m, col, rows, n_rows, &d, line, ctx);
+    decomp_free(&d, ctx);
+    return ok;
+
+error:
+    decomp_free(&d, ctx);
+    return false;
+}
+
+/**
+ * Splits the list rows on the NIL and CONS constructors. A list is either empty
+ * or a cons and never both, so the two arms are disjoint and chain through an
+ * else rather than through `|`.
+ */
+static bool compile_lists(sexpr_t* out, const matrix_t* m, int64_t col, const int64_t* rows,
+                          int64_t n_rows, int64_t line, ctx_t* ctx)
+{
+    int64_t* nils = sv_malloc(&ctx->alloc, sizeof(int64_t) * (size_t)n_rows);
+    int64_t* conses = sv_malloc(&ctx->alloc, sizeof(int64_t) * (size_t)n_rows);
+    if (nils == NULL || conses == NULL) {
+        sv_free(&ctx->alloc, nils);
+        sv_free(&ctx->alloc, conses);
+        return match_oom(ctx, line);
+    }
+
+    int64_t n_nils = 0;
+    int64_t n_conses = 0;
+    for (int64_t k = 0; k < n_rows; k++) {
+        if (cell_is_nil(CELL(m, rows[k], col)))
+            nils[n_nils++] = rows[k];
+        else
+            conses[n_conses++] = rows[k];
+    }
+
+    sexpr_t nil_arm = fail_atom(line);
+    sexpr_t cons_arm = fail_atom(line);
+    sexpr_t test = { 0 };
+
+    bool ok = n_nils == 0 || compile_dropped(&nil_arm, m, col, nils, n_nils, line, ctx);
+    if (ok && n_conses > 0)
+        ok = compile_cons_rows(&cons_arm, m, col, conses, n_conses, line, ctx);
+    if (ok)
+        ok = build_call1(&test, "is-cons?", m->cols[col].subject, line, ctx)
+            && build_if(out, test, cons_arm, nil_arm, line, ctx);
 
     if (!ok) {
         sexpr_free(&test, &ctx->alloc);
-        sexpr_free(&arm, &ctx->alloc);
-        sexpr_free(&chain, &ctx->alloc);
-        return false;
+        sexpr_free(&cons_arm, &ctx->alloc);
+        sexpr_free(&nil_arm, &ctx->alloc);
     }
 
-    *out = chain;
-    return true;
+    sv_free(&ctx->alloc, nils);
+    sv_free(&ctx->alloc, conses);
+    return ok;
 }
 
-static bool compile_class(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    pattern_class class,
-    sexpr_t next,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool compile_class(sexpr_t* out, const matrix_t* m, int64_t col, const int64_t* rows,
+                          int64_t n_rows, pattern_class class, sexpr_t next, int64_t line, ctx_t* ctx)
+{
     if (class == PAT_TUPLE)
         return compile_tuples(out, m, col, rows, n_rows, next, line, ctx);
     if (class == PAT_RECORD || class == PAT_HASHMAP)
@@ -1000,8 +1086,14 @@ static bool compile_class(
             ? compile_lists(&arm, m, col, rows, n_rows, line, ctx)
             : compile_literals(&arm, m, col, rows, n_rows, line, ctx);
 
+    if (ok && m->cols[col].known == class) {
+        sexpr_free(&next, &ctx->alloc);
+        *out = arm;
+        return true;
+    }
+
     if (ok)
-        ok = build_call1(&test, class_predicate(class), m->cols[col], line, ctx);
+        ok = build_call1(&test, class_predicate(class), m->cols[col].subject, line, ctx);
     if (ok && build_if(out, test, arm, next, line, ctx))
         return true;
 
@@ -1011,14 +1103,9 @@ static bool compile_class(
     return false;
 }
 
-static bool compile_ctor_group(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t col,
-    int64_t n_group,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool compile_ctor_group(sexpr_t* out, const matrix_t* m, int64_t col,
+                               int64_t n_group, int64_t line, ctx_t* ctx)
+{
     int64_t* picked = sv_malloc(&ctx->alloc, sizeof(int64_t) * (size_t)n_group);
     int64_t* rows = sv_malloc(&ctx->alloc, sizeof(int64_t) * (size_t)n_group);
     if (picked == NULL || rows == NULL) {
@@ -1034,12 +1121,12 @@ static bool compile_ctor_group(
     bool ok = true;
 
     for (int64_t last = n_group - 1; last >= 0 && ok; last--) {
-        if (!first_of_group(m, col, rows, last, same_class))
+        if (!first_of_group(m, col, rows, last, cell_same_class))
             continue;
 
-        sexpr_t shape = *CELL(m, rows[last], col);
-        pattern_class class = pattern_class_of(shape);
-        int64_t n_picked = pick_group(picked, m, col, rows, n_group, shape, same_class);
+        cell_t shape = CELL(m, rows[last], col);
+        pattern_class class = cell_class(shape);
+        int64_t n_picked = pick_group(picked, m, col, rows, n_group, shape, cell_same_class);
 
         sexpr_t acc = chain;
         chain = (sexpr_t){ 0 };
@@ -1057,14 +1144,9 @@ static bool compile_ctor_group(
     return true;
 }
 
-static bool compile_var_group(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t col,
-    int64_t n_group,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool compile_var_group(sexpr_t* out, const matrix_t* m, int64_t col,
+                              int64_t n_group, int64_t line, ctx_t* ctx)
+{
     int64_t* picked = sv_malloc(&ctx->alloc, sizeof(int64_t) * (size_t)n_group);
     if (picked == NULL)
         return match_oom(ctx, line);
@@ -1074,14 +1156,14 @@ static bool compile_var_group(
 
     bool ok = true;
     for (int64_t i = 0; i < n_group && ok; i++) {
-        sexpr_t var = *CELL(m, i, col);
+        sexpr_t var = cell_pattern(CELL(m, i, col));
         if (is_wildcard(var))
             continue;
 
         sexpr_t body = *m->bodies[i];
         *m->bodies[i] = nil_atom(line);
         sexpr_t wrapped;
-        ok = lower_bind(&wrapped, var, m->cols[col], body, line, ctx);
+        ok = lower_bind(&wrapped, var, m->cols[col].subject, body, line, ctx);
         if (ok)
             *m->bodies[i] = wrapped;
     }
@@ -1093,12 +1175,8 @@ static bool compile_var_group(
     return ok;
 }
 
-static bool compile_matrix(
-    sexpr_t* out,
-    const matrix_t* m,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool compile_matrix(sexpr_t* out, const matrix_t* m, int64_t line, ctx_t* ctx)
+{
     if (m->n_rows == 0) {
         *out = fail_atom(line);
         return true;
@@ -1113,9 +1191,9 @@ static bool compile_matrix(
     sexpr_t rest = { 0 };
 
     int64_t col = best_column(m);
-    bool var_run = is_var_cell(*CELL(m, 0, col));
+    bool var_run = is_var_cell(CELL(m, 0, col));
     int64_t n_group = 1;
-    while (n_group < m->n_rows && is_var_cell(*CELL(m, n_group, col)) == var_run)
+    while (n_group < m->n_rows && is_var_cell(CELL(m, n_group, col)) == var_run)
         n_group++;
 
     bool ok = var_run
@@ -1160,10 +1238,10 @@ static sexpr_t match_lower(sexpr_t s, ctx_t* ctx)
         return discard(&s, ctx);
     }
 
-    m.cols[0] = subject;
+    m.cols[0] = (col_t){ .subject = subject, .known = PAT_UNKNOWN };
     for (int64_t i = 0; i < n_rows; i++) {
         sexpr_t* slots = match.arr[CLAUSES_START + i].cons.arr;
-        m.cells[i] = &slots[1];
+        m.cells[i] = cell_of(&slots[1]);
         m.bodies[i] = &slots[2];
     }
 

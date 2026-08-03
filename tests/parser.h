@@ -204,6 +204,7 @@ static inline void sv_test_parser_match(sv_testing_t* t)
    sv_test_parse_error(t, "match x | 1 = 2", PARSER_ERROR_EOF);
    sv_test_parse_error(t, "match x | 1 2 end", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | = 2 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | [..xs] = 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | [.., t] = 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | [..t, 1] = 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | %{k: 1} = 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
