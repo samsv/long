@@ -5,6 +5,7 @@
 #include "src/std/allocator_std.h"
 #include "src/scanner.h"
 #include "src/parser.h"
+#include "src/pattern_match.h"
 
 static const char* sample =
     "x = {x: 1, y: 2}\n"
@@ -42,8 +43,8 @@ int main(void)
         "match (a, b)\n"
         "| (false, y) = y\n"
         "| [x, y, ..xs] = f(x, xs)\n"
-        "| 0 = true\n"
         "| 1 = true\n"
+        "| 0 = true\n"
         "| \"hello\" = true\n"
         "| {x: a, y: b} = true\n"
         "| {x: a, y: b, ..} = true\n"
@@ -53,8 +54,23 @@ int main(void)
 
     scanner_t s = scanner_init(sv_str_init(match_code));
     sexpr_t sexpr = parser_expr(&s, &ctx);
+    if (ctx.err.error_code != 0) {
+        sv_log_error(&ctx.logger, "%.*s", (int)ctx.err.msg.size, ctx.err.msg.chars);
+        sv_str_deinit(&ctx.err.msg, &ctx.alloc);
+        return 1;
+    }
+
+    sexpr = match_compile(sexpr, &ctx);
+    if (sexpr.tag == S_ATOM && sexpr.atom.kind == TOKEN_ERROR) {
+        sv_log_error(&ctx.logger, "%.*s", (int)ctx.err.msg.size, ctx.err.msg.chars);
+        sv_str_deinit(&ctx.err.msg, &ctx.alloc);
+        return 1;
+    }
+
     sv_str_t str = sexpr_format(sexpr, &sv_gpa);
     printf("\n\nmatch expr: %.*s\n", (int)str.size, str.chars);
+    sv_str_deinit(&str, &ctx.alloc);
+    sexpr_free(&sexpr, &ctx.alloc);
 
     return 0;
 }

@@ -16,16 +16,12 @@ bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx);
 
 static bool compiler_error(ctx_t* ctx, compiler_error_kind kind, const char* msg)
 {
-    ctx->err.error_code = (int)kind;
-    ctx->err.msg = sv_str_copy(sv_str_init(msg), &ctx->alloc);
-    return false;
+    return error_set(&ctx->err, (int)kind, msg, &ctx->alloc);
 }
 
 static bool compiler_oom(ctx_t* ctx, int64_t line)
 {
-    char msg[64];
-    snprintf(msg, sizeof(msg), "Out of memory at line %" PRId64, line);
-    return compiler_error(ctx, C_ERR_OOM, msg);
+    return error_set_oom(&ctx->err, (int)C_ERR_OOM, line, &ctx->alloc);
 }
 
 static bool compiler_error_name(ctx_t* ctx, compiler_error_kind kind, int64_t line, const char* what, sv_str_t id)
@@ -554,7 +550,7 @@ static bool compile_fn_vm(
     if (cls != NULL) {
         fc.upvalues.offset = upvalue_offset;
         for (int64_t i = 0; i < cls->cons.size; i++) {
-            sv_str_t cls_name;
+            sv_str_t cls_name = { 0 };
             FN_TRY(expect_id(cls->cons.arr[i], ctx, &cls_name));
             FN_TRY(locals_add(&fc.upvalues, cls_name, ctx, line));
         }
@@ -562,7 +558,7 @@ static bool compile_fn_vm(
 
     FN_TRY(init_scope(&fc, ctx, line));
     for (int64_t i = 0; i < params->cons.size; i++) {
-        sv_str_t p;
+        sv_str_t p = { 0 };
         FN_TRY(expect_id(params->cons.arr[i], ctx, &p));
         FN_TRY(locals_add(fc.locals, p, ctx, line));
     }
@@ -843,7 +839,7 @@ vm_t compile(const char* source_code, ctx_t* ctx)
         }
 
         sexpr_t sexpr = parser_expr(&s, ctx);
-        if (sexpr.tag == S_ATOM && sexpr.atom.kind == TOKEN_ERROR)
+        if (is_error_sexpr(sexpr))
             ERR_RETURN;
 
         bool ok = compile_sexpr(&compiler, sexpr, ctx);

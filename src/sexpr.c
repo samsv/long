@@ -1,5 +1,20 @@
 #include "sexpr.h"
 
+sexpr_t atom_sexpr(token_t t)
+{
+    return (sexpr_t){ .tag = S_ATOM, .atom = t };
+}
+
+sexpr_t cons_sexpr(sv_vec_t(sexpr_t) list)
+{
+    return (sexpr_t){ .tag = S_CONS, .cons = list };
+}
+
+bool is_error_sexpr(sexpr_t e)
+{
+    return e.tag == S_ATOM && e.atom.kind == TOKEN_ERROR;
+}
+
 void sexpr_free(sexpr_t* sexpr, const sv_allocator_t* a)
 {
     switch (sexpr->tag) {

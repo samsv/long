@@ -80,31 +80,14 @@ static void token_text(token_t token, char* buf, size_t size, ctx_t* ctx)
 
 static token_t parser_error_at(ctx_t* ctx, parser_error_kind kind, int64_t line, const char* msg)
 {
-    ctx->err.error_code = (int)kind;
-    ctx->err.msg = sv_str_copy(sv_str_init(msg), &ctx->alloc);
+    error_set(&ctx->err, (int)kind, msg, &ctx->alloc);
     return (token_t){ .kind = TOKEN_ERROR, .line = line };
 }
 
 static token_t oom_error(ctx_t* ctx, int64_t line)
 {
-    char msg[64];
-    snprintf(msg, sizeof(msg), "Out of memory at line %" PRId64, line);
-    return parser_error_at(ctx, PARSER_ERROR_OOM, line, msg);
-}
-
-static bool is_error_sexpr(sexpr_t e)
-{
-    return e.tag == S_ATOM && e.atom.kind == TOKEN_ERROR;
-}
-
-static sexpr_t atom_sexpr(token_t t)
-{
-    return (sexpr_t){ .tag = S_ATOM, .atom = t };
-}
-
-static sexpr_t cons_sexpr(sv_vec_t(sexpr_t) list)
-{
-    return (sexpr_t){ .tag = S_CONS, .cons = list };
+    error_set_oom(&ctx->err, (int)PARSER_ERROR_OOM, line, &ctx->alloc);
+    return (token_t){ .kind = TOKEN_ERROR, .line = line };
 }
 
 static bool push_sexpr(sv_vec_t(sexpr_t)* list, sexpr_t e, ctx_t* ctx)
@@ -876,26 +859,50 @@ static sexpr_t parse_match(scanner_t* s, ctx_t* ctx, token_t match_token)
     }
 
     token_t pipe;
+    sexpr_t tuple_atom = atom_sexpr((token_t){ .kind = TOKEN_SP_FUNCTION, .line = match_token.line, .fn = FN_TUPLE });
     while (parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &pipe)) {
-        sexpr_t pattern = parse_pattern(s, ctx);
-        if (is_error_sexpr(pattern))
-            return free_list_error(&list, ctx, pattern);
-        if (!push_sexpr(&list, pattern, ctx)) {
-            sexpr_free(&pattern, &ctx->alloc);
+        sv_vec_t(sexpr_t) pattern_body_vec = sv_vec_init_capacity(sexpr_t, 3, &ctx->alloc);
+        if (pattern_body_vec.arr == NULL)
             return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, match_token.line)));
+        pattern_body_vec.arr[pattern_body_vec.size++] = tuple_atom;
+
+        sexpr_t err;
+        sexpr_t pattern = parse_pattern(s, ctx);
+        if (is_error_sexpr(pattern)) {
+            err = pattern;
+            goto error;
         }
+
+        pattern_body_vec.arr[pattern_body_vec.size++] = pattern;
 
         token_t equal = parser_expect(s, ctx, op_pattern(OPERATOR_EQUAL));
-        if (equal.kind == TOKEN_ERROR)
-            return free_list_error(&list, ctx, atom_sexpr(equal));
+        if (equal.kind == TOKEN_ERROR) {
+            err = atom_sexpr(equal);
+            goto error;
+        }
 
         sexpr_t body = parse_expr(s, ctx, 0);
-        if (is_error_sexpr(body))
-            return free_list_error(&list, ctx, body);
-        if (!push_sexpr(&list, body, ctx)) {
-            sexpr_free(&body, &ctx->alloc);
-            return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, match_token.line)));
+        if (is_error_sexpr(body)) {
+            err = body;
+            goto error;
         }
+
+        pattern_body_vec.arr[pattern_body_vec.size++] = body;
+
+        sexpr_t patter_body = { .tag = S_CONS, .cons = pattern_body_vec };
+        if (!push_sexpr(&list, patter_body, ctx)) {
+            err = atom_sexpr(oom_error(ctx, match_token.line));
+            goto error;
+        }
+
+        continue;
+
+error:
+        {
+            sexpr_t clause = { .tag = S_CONS, .cons = pattern_body_vec };
+            sexpr_free(&clause, &ctx->alloc);
+        }
+        return free_list_error(&list, ctx, err);
     }
 
     token_t end = parser_expect_close(s, ctx, match_token, kw_pattern(KEYWORD_END));

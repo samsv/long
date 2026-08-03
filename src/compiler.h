@@ -29,7 +29,7 @@ vm_t compile(const char* source_code, ctx_t*);
 bool add_native_fn(compiler_t*, native_fn_t, ctx_t*);
 
 typedef enum {
-    C_ERR_OOM,
+    C_ERR_OOM = 1,
     C_ERR_UNDEFINED_VARIABLE,
     C_ERR_REDEFINED,
     C_ERR_UNEXPECTED_SEXPR,

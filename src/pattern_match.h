@@ -1,25 +1,17 @@
 #ifndef LONG_PATTERN_MATCH_H
 #define LONG_PATTERN_MATCH_H
 
+#include "ctx.h"
 #include "sexpr.h"
-#include "std/option.h"
 
 typedef sv_vec_t(sexpr_t) cons_t;
 
-typedef struct {
-    sexpr_t* variables;
-    int32_t var_len;
-
-    sexpr_t* patterns;
-    sexpr_t* expr;
-    int32_t pattern_size;
-
-    sexpr_t default_expr;
-} match_t;
-
-sv_opt_def(match_t);
-
-sv_opt_t(match_t) match_init(sexpr_t);
-sexpr_t match_compile(match_t);
+/**
+ * Lowers a `(match scrutinee (tuple pattern body)...)` cons into a `do` block
+ * that binds the scrutinee and dispatches on pattern type. Takes ownership of
+ * the input: on success the input spine is freed, on failure the whole input is
+ * freed and an error atom is returned with ctx->err set.
+ */
+sexpr_t match_compile(sexpr_t, ctx_t*);
 
 #endif
