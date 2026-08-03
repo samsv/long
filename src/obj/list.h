@@ -92,6 +92,11 @@ list_t ll_tail(list_t, const sv_allocator_t*);
  */
 int64_t ll_count(list_t);
 
+/**
+ * True when the list has no elements. Unlike ll_count this is O(1).
+ */
+bool ll_is_empty(list_t);
+
 typedef struct {
     list_t root;
     list_t node;

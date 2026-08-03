@@ -168,10 +168,25 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
 #define UNSUPPORTED_2(v1, v2, err_msg) OP_ERR_2(VM_ERR_OP_UNSUPPORTED_ARGS, v1, v2, err_msg)
 
+#define IS_KIND(test) {                                                                                       \
+    value_t v = sv_vec_pop(vm->stack);                                                                        \
+    value_t res = { .kind = VALUE_BOOL, .boolean = (test) };                                                  \
+    value_free(&v, a);                                                                                        \
+    TRY_PUSH_STACK(res);                                                                                      \
+    break; }
+
+#define IS_SIZED(is, as, field) {                                                                             \
+    uint8_t want = vm->chunk.bytecode.arr[vm->ip++];                                                          \
+    value_t v = sv_vec_pop(vm->stack);                                                                        \
+    value_t res = { .kind = VALUE_BOOL, .boolean = is(v) && as(v).field == want };                            \
+    value_free(&v, a);                                                                                        \
+    TRY_PUSH_STACK(res);                                                                                      \
+    break; }
+
 #define NUM_BIN_OP(op, res_kind, res_field) {                                                                 \
     value_t v2 = sv_vec_pop(vm->stack);                                                                       \
     value_t v1 = sv_vec_pop(vm->stack);                                                                       \
-    if (v1.kind != VALUE_NUMBER || v2.kind != VALUE_NUMBER)                                                   \
+    if (!IS_NUMBER(v1) || !IS_NUMBER(v2))                                                   \
         UNSUPPORTED_2(v1, v2, "Unsupported args for " #op)                                                    \
     value_t res = {.kind = res_kind, .res_field = v1.number op v2.number};                                    \
     TRY_PUSH_STACK(res);                                                                                      \
@@ -219,7 +234,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         case OP_POP_LOCAL: arr_remove_n(&vm->locals, vm->chunk.bytecode.arr[vm->ip++], a); break;
         case OP_NEGATE: {
             value_t v = sv_vec_pop(vm->stack);
-            if (v.kind != VALUE_NUMBER)
+            if (!IS_NUMBER(v))
                 UNSUPPORTED_1(v, "Unsupported args for negate")
             value_t res = {.kind = VALUE_NUMBER, .number = -v.number};
             TRY_PUSH_STACK(res);
@@ -241,7 +256,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         case OP_ADD: {
             value_t v2 = sv_vec_pop(vm->stack);
             value_t v1 = sv_vec_pop(vm->stack);
-            if (v1.kind == VALUE_NUMBER && v2.kind == VALUE_NUMBER) {
+            if (IS_NUMBER(v1) && IS_NUMBER(v2)) {
                 value_t res = {.kind = VALUE_NUMBER, .number = v1.number + v2.number};
                 TRY_PUSH_STACK(res);
                 break;
@@ -282,7 +297,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             if (IS_MAP(container)) {
                 res = map_get(AS_MAP(container), key);
             } else {
-                if (key.kind != VALUE_NUMBER || key.number != (double)(int64_t)key.number)
+                if (!IS_NUMBER(key) || key.number != (double)(int64_t)key.number)
                     UNSUPPORTED_2(container, key, "Index is not an integer")
                 res = IS_LIST(container)
                     ? ll_get(AS_LIST(container), (int64_t)key.number)
@@ -492,6 +507,61 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             break;
 #undef ERR_WRONG_ARITY
         }
+        case OP_IS_STR: IS_KIND(IS_STR(v))
+        case OP_IS_NUMBER: IS_KIND(IS_NUMBER(v))
+        case OP_IS_BOOL: IS_KIND(IS_BOOL(v))
+        case OP_IS_NIL: IS_KIND(IS_NIL(v))
+        case OP_IS_LIST: IS_KIND(IS_LIST(v))
+        case OP_IS_CONS: IS_KIND(IS_CONS(v))
+        case OP_IS_RECORD_ANY: IS_KIND(IS_RECORD(v))
+        case OP_IS_TUPLE: IS_SIZED(IS_TUPLE, AS_TUPLE, size)
+        case OP_IS_RECORD: IS_SIZED(IS_RECORD, AS_RECORD, size)
+        case OP_IS_HASHMAP: {
+            value_t v = sv_vec_pop(vm->stack);
+            value_t want = sv_vec_pop(vm->stack);
+            value_t res = { .kind = VALUE_BOOL,
+                            .boolean = IS_MAP(v) && (double)map_count(AS_MAP(v)) == want.number };
+            value_free(&v, a);
+            value_free(&want, a);
+            TRY_PUSH_STACK(res);
+            break;
+        }
+        case OP_HAS_FIELD: {
+            value_t v = sv_vec_pop(vm->stack);
+            uint8_t id = vm->chunk.bytecode.arr[vm->ip++];
+            value_t res = { .kind = VALUE_BOOL,
+                            .boolean = IS_RECORD(v) && record_get(AS_RECORD(v), id).is_some };
+            value_free(&v, a);
+            TRY_PUSH_STACK(res);
+            break;
+        }
+        case OP_HAS_KEY: {
+            value_t key = sv_vec_pop(vm->stack);
+            value_t v = sv_vec_pop(vm->stack);
+            value_t res = { .kind = VALUE_BOOL,
+                            .boolean = IS_MAP(v) && map_get(AS_MAP(v), key).is_some };
+            value_free(&key, a);
+            value_free(&v, a);
+            TRY_PUSH_STACK(res);
+            break;
+        }
+        case OP_LIST_UNCONS: {
+            value_t v = sv_vec_pop(vm->stack);
+            if (!IS_CONS(v))
+                UNSUPPORTED_1(v, "Cannot take the head of an empty list")
+
+            list_t rest = ll_tail(AS_LIST(v), a);
+            TRY_OR(rest.cell != NULL, value_free(&v, a), "OOM when taking a list tail")
+            value_t tail = value_wrap_list(rest, a);
+            TRY_OR(tail.obj.cell != NULL, ll_deinit(&rest, a); value_free(&v, a),
+                   "OOM when taking a list tail")
+
+            value_t first = value_borrow(ll_head(AS_LIST(v)).value);
+            value_free(&v, a);
+            TRY_PUSH_OWNED(tail);
+            TRY_PUSH_OWNED(first);
+            break;
+        }
         case OP_RETURN:
             return sv_opt_none_t(error_t);
         default: {
@@ -517,6 +587,8 @@ error:
 #undef GET
 #undef MATH_OP
 #undef CMP_OP
+#undef IS_KIND
+#undef IS_SIZED
 #undef NUM_BIN_OP
 #undef OP_ERR_2
 #undef UNSUPPORTED_2

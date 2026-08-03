@@ -80,7 +80,7 @@ Translates as
 ```
 We can also define guards using lambda calculus. Consider the function
 ```ml
-fun first_neg_or_last(lst) =
+fun first_neg_or_last(lst)
 | [x, ..xs] when x < 0 = x
 | [x, ..[]] = x
 | [x, ..xs] = first_neg_or_last(xs)
@@ -133,7 +133,7 @@ each variable and the second is the expression associated with the pattern list.
 ## Pattern Matching Rules
 Let's consider a function `f`, in the form
 ```
-fun fn(f, lst1, lst2) =
+fun fn(f, lst1, lst2)
 | (f, [], ys) = A(f, ys)
 | (f, [x, ..xs], []) = B(f, x, xs)
 | (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
@@ -254,7 +254,7 @@ We are still missing one rule, however.
 ### The Mixture Rule
 Consider the following case:
 ```
-fun fn(f, lst1, lst2) =
+fun fn(f, lst1, lst2)
 | (f, [], ys) = A(f, ys)
 | (f, xs, []) = B(f, xs)
 | (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
@@ -480,7 +480,7 @@ new internal forms this compilation introduces: the compiler does not know them 
 
 Let's convert the whole `fn` example from the column reordering section:
 ```
-fun fn(f, lst1, lst2) =
+fun fn(f, lst1, lst2)
 | (f, [], ys) = A(f, ys)
 | (f, xs, []) = B(f, xs)
 | (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)

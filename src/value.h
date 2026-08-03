@@ -10,6 +10,7 @@
 #include "std/allocator.h"
 #include "obj/native_fns.h"
 #include "obj/closure.h"
+#include "obj/list.h"
 #include "error.h"
 
 typedef enum {
@@ -28,9 +29,13 @@ typedef struct value_t {
     };
 } value_t;
 
+#define IS_NUMBER(v) ((v).kind == VALUE_NUMBER)
+#define IS_NIL(v) ((v).kind == VALUE_NIL)
+#define IS_BOOL(v) ((v).kind == VALUE_BOOL)
 #define IS_STR(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_STR)
 #define IS_ERR(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_ERR)
 #define IS_LIST(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_LIST)
+#define IS_CONS(v) (IS_LIST(v) && !ll_is_empty(AS_LIST(v)))
 #define IS_NATIVE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_NATIVE_FN)
 #define IS_CLOSURE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE)
 #define IS_CLOSURE_MEMBER(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_CLOSURE_MEMBER)
@@ -70,6 +75,7 @@ sv_str_t value_to_str(value_t, const vm_ctx_t*);
  * allocation failure.
  */
 value_t value_init_list(const value_t*, int64_t, const sv_allocator_t*);
+value_t value_wrap_list(list_t, const sv_allocator_t*);
 /**
  * Creates an iterator value borrowing the given list value. The value must
  * hold an iterable object. obj.cell is NULL on allocation failure.

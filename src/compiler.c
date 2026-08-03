@@ -7,6 +7,7 @@
 #include "sexpr.h"
 #include "parser.h"
 #include "std_native.h"
+#include "pattern_match.h"
 
 compiler_t compiler_init(void);
 void compiler_free(compiler_t* c, const sv_allocator_t* a);
@@ -175,6 +176,7 @@ compiler_t compiler_init(void)
         .locals = NULL,
         .members = { .depth = 0 },
         .record_fields = NULL,
+        .fail_targets = NULL,
         .builder = { .vm = vm_init(sv_str_init("")) },
     };
 }
@@ -192,8 +194,13 @@ void compiler_free(compiler_t* c, const sv_allocator_t* a)
     }
 }
 
+static bool compile_fail(compiler_t*, int64_t, ctx_t*);
+
 static bool compile_id(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
 {
+    if (sv_str_comp(id, sv_str_init("$fail")))
+        return compile_fail(c, line, ctx);
+
     sv_opt_t(int64_t) idx = locals_get(c->locals, id, ctx);
     if (idx.is_some)
         return emit2(c, ctx, OP_GET_LOCAL, (uint8_t)idx.value, line);
@@ -698,6 +705,190 @@ static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, 
 #undef G_TRY
 }
 
+static int64_t live_locals(const compiler_t* c)
+{
+    return c->locals == NULL ? 0 : c->locals->offset + names_count(c->locals->name_indexes);
+}
+
+/**
+ * `(| A B)`: evaluate A, and if control inside it reaches `$fail`, evaluate B
+ * instead. Each arm gets its own scope so A cannot add a local to the scope the
+ * fail target was measured against.
+ */
+static bool compile_fatbar(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 2)
+        return compiler_malformed(ctx, "alternative", line);
+
+    fail_target_t target = {
+        .jumps = sv_vec_init(int64_t),
+        .locals = live_locals(c),
+        .next = c->fail_targets,
+    };
+    c->fail_targets = &target;
+
+    bool ok = init_scope(c, ctx, line)
+        && compile_sexpr(c, args[0], ctx)
+        && deinit_scope(c, ctx);
+
+    int64_t over = 0;
+    ok = ok && jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &over, line);
+
+    c->fail_targets = target.next;
+    for (int64_t i = 0; ok && i < target.jumps.size; i++)
+        ok = patch_jump(c, ctx, target.jumps.arr[i], line);
+    sv_vec_deinit(&target.jumps, &ctx->alloc);
+
+    return ok
+        && init_scope(c, ctx, line)
+        && compile_sexpr(c, args[1], ctx)
+        && deinit_scope(c, ctx)
+        && patch_jump(c, ctx, over, line);
+}
+
+/**
+ * `$fail`: unwind the locals bound since the enclosing alternative, then jump to
+ * its second arm.
+ */
+static bool compile_fail(compiler_t* c, int64_t line, ctx_t* ctx)
+{
+    fail_target_t* target = c->fail_targets;
+    if (target == NULL)
+        return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR, "No alternative to fail to");
+
+    for (int64_t left = live_locals(c) - target->locals; left > 0; left -= UINT8_MAX) {
+        uint8_t count = left > UINT8_MAX ? UINT8_MAX : (uint8_t)left;
+        TRY(emit2(c, ctx, OP_POP_LOCAL, count, line));
+    }
+
+    int64_t j = 0;
+    TRY(jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &j, line));
+
+    int success;
+    sv_vec_push(&target->jumps, j, &success, &ctx->alloc);
+    return success != 0 ? true : compiler_oom(ctx, line);
+}
+
+typedef struct {
+    const char* name;
+    vm_instructions op;
+} type_test_t;
+
+static const type_test_t TYPE_TESTS[] = {
+    { "is-str?", OP_IS_STR },
+    { "is-number?", OP_IS_NUMBER },
+    { "is-bool?", OP_IS_BOOL },
+    { "is-nil?", OP_IS_NIL },
+    { "is-list?", OP_IS_LIST },
+    { "is-cons?", OP_IS_CONS },
+};
+
+static bool is_form(sv_str_t name, const char* form)
+{
+    return sv_str_comp(name, sv_str_init(form));
+}
+
+/**
+ * `(is-tuple? c k)` and `(is-record? c k)` put the size in the operand, and
+ * `(is-record? c)` matches a record of any size.
+ */
+static bool compile_sized_test(compiler_t* c, sv_str_t name, const sexpr_t* args, int64_t n,
+                               int64_t line, ctx_t* ctx)
+{
+    bool tuple = is_form(name, "is-tuple?");
+    if (n == 1 && !tuple) {
+        TRY(compile_sexpr(c, args[0], ctx));
+        return emit(c, ctx, OP_IS_RECORD_ANY, line);
+    }
+    if (n != 2 || args[1].tag != S_ATOM || args[1].atom.literal.kind != LITERAL_NUMBER)
+        return compiler_malformed(ctx, tuple ? "is-tuple?" : "is-record?", line);
+
+    TRY(compile_sexpr(c, args[0], ctx));
+    return emit2(c, ctx, tuple ? OP_IS_TUPLE : OP_IS_RECORD,
+                 (uint8_t)args[1].atom.literal.number, line);
+}
+
+/**
+ * `(has-field? c name)` interns the field the way a field access does, so the id
+ * lands in the operand.
+ */
+static bool compile_has_field(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 2)
+        return compiler_malformed(ctx, "has-field?", line);
+
+    sv_str_t name;
+    TRY(expect_id(args[1], ctx, &name));
+    uint32_t id = 0;
+    TRY(record_field_id(c, name, line, ctx, &id));
+
+    TRY(compile_sexpr(c, args[0], ctx));
+    return emit2(c, ctx, OP_HAS_FIELD, (uint8_t)id, line);
+}
+
+/**
+ * `(list-uncons subject head tail body)` binds both parts from one opcode. The
+ * binds are raw so neither value is left on the stack.
+ */
+static bool compile_uncons(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 4)
+        return compiler_malformed(ctx, "list-uncons", line);
+
+    sv_str_t head;
+    sv_str_t tail;
+    TRY(expect_id(args[1], ctx, &head));
+    TRY(expect_id(args[2], ctx, &tail));
+
+    TRY(init_scope(c, ctx, line));
+    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(emit(c, ctx, OP_LIST_UNCONS, line));
+
+    TRY(emit(c, ctx, OP_SET_LOCAL, line));
+    TRY(locals_add(c->locals, head, ctx, line));
+    TRY(emit(c, ctx, OP_SET_LOCAL, line));
+    TRY(locals_add(c->locals, tail, ctx, line));
+
+    TRY(compile_sexpr(c, args[3], ctx));
+    return deinit_scope(c, ctx);
+}
+
+/**
+ * Compiles a form the match lowering emits, setting handled when the name is
+ * one. These names hold characters the scanner rejects, so user code can never
+ * reach them.
+ */
+static bool compile_internal(compiler_t* c, sv_str_t name, const sexpr_t* args, int64_t n,
+                             int64_t line, ctx_t* ctx, bool* handled)
+{
+    *handled = true;
+    for (int64_t i = 0; i < (int64_t)(sizeof(TYPE_TESTS) / sizeof(TYPE_TESTS[0])); i++) {
+        if (!is_form(name, TYPE_TESTS[i].name))
+            continue;
+        if (n != 1)
+            return compiler_malformed(ctx, TYPE_TESTS[i].name, line);
+        TRY(compile_sexpr(c, args[0], ctx));
+        return emit(c, ctx, TYPE_TESTS[i].op, line);
+    }
+
+    if (is_form(name, "is-tuple?") || is_form(name, "is-record?"))
+        return compile_sized_test(c, name, args, n, line, ctx);
+    if (is_form(name, "has-field?"))
+        return compile_has_field(c, args, n, line, ctx);
+    if (is_form(name, "is-hashmap?") || is_form(name, "has-key?")) {
+        if (n != 2)
+            return compiler_malformed(ctx, "keyed test", line);
+        TRY(compile_sexpr(c, args[is_form(name, "has-key?") ? 0 : 1], ctx));
+        TRY(compile_sexpr(c, args[is_form(name, "has-key?") ? 1 : 0], ctx));
+        return emit(c, ctx, is_form(name, "has-key?") ? OP_HAS_KEY : OP_IS_HASHMAP, line);
+    }
+    if (is_form(name, "list-uncons"))
+        return compile_uncons(c, args, n, line, ctx);
+
+    *handled = false;
+    return true;
+}
+
 static bool compile_call(compiler_t* c, sv_str_t fn_name, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
     for (int64_t i = 0; i < n; i++)
@@ -762,7 +953,8 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
             case FN_CLASS:
             case FN_MAP:
             case FN_MAPF:
-            case FN_MATCH:
+            case FN_MATCH: return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR,
+                                                 "Unlowered match expression");
             case FN_REDUCE:
             case FN_WHILE:
             case FN_IMPORT: {
@@ -778,8 +970,15 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
         return compile_and_or(c, a.keyword == KEYWORD_AND, cons + 1, n - 1, a.line, ctx);
     if (a.kind == TOKEN_KEYWORD && a.keyword == KEYWORD_NOT)
         return compile_not(c, cons + 1, n - 1, a.line, ctx);
-    if (a.kind == TOKEN_LITERAL && a.literal.kind == LITERAL_IDENTIFIER)
+    if (a.kind == TOKEN_PIPE)
+        return compile_fatbar(c, cons + 1, n - 1, a.line, ctx);
+    if (a.kind == TOKEN_LITERAL && a.literal.kind == LITERAL_IDENTIFIER) {
+        bool handled = false;
+        TRY(compile_internal(c, a.literal.literal, cons + 1, n - 1, a.line, ctx, &handled));
+        if (handled)
+            return true;
         return compile_call(c, a.literal.literal, cons + 1, n - 1, a.line, ctx);
+    }
 
     char msg[96];
     snprintf(msg, sizeof(msg), "Value is not callable at line %" PRId64, a.line);
@@ -839,6 +1038,10 @@ vm_t compile(const char* source_code, ctx_t* ctx)
         }
 
         sexpr_t sexpr = parser_expr(&s, ctx);
+        if (is_error_sexpr(sexpr))
+            ERR_RETURN;
+
+        sexpr = match_lower_tree(sexpr, ctx);
         if (is_error_sexpr(sexpr))
             ERR_RETURN;
 

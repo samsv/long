@@ -89,6 +89,22 @@ typedef enum {
     OP_RECORD_GET,
     OP_NOT,
     OP_DUP,
+    OP_IS_STR,
+    OP_IS_NUMBER,
+    OP_IS_BOOL,
+    OP_IS_NIL,
+    OP_IS_LIST,
+    OP_IS_CONS,
+    /* The size is a bytecode operand because tuple_t.size and record_t.size are
+     * both uint8_t, so a pattern can never need a larger one. */
+    OP_IS_TUPLE,
+    OP_IS_RECORD,
+    OP_IS_RECORD_ANY,
+    /* A hashmap has no such cap, so this one takes its size off the stack. */
+    OP_IS_HASHMAP,
+    OP_HAS_FIELD,
+    OP_HAS_KEY,
+    OP_LIST_UNCONS,
     OP_RETURN,
 } vm_instructions;
 

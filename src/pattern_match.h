@@ -12,4 +12,11 @@
  */
 sexpr_t match_compile(sexpr_t, ctx_t*);
 
+/**
+ * Rewrites every `(match ...)` node in the tree, children first, so a match
+ * nested in a clause body is lowered before its parent. Same ownership contract
+ * as match_compile.
+ */
+sexpr_t match_lower_tree(sexpr_t, ctx_t*);
+
 #endif

@@ -436,7 +436,40 @@ static inline void sv_test_compiler_errors(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_err("y + 1") == C_ERR_UNDEFINED_VARIABLE);
    sv_test_run(t, sv_test_compiler_err("x = 1\nx = 2") == C_ERR_REDEFINED);
    sv_test_run(t, sv_test_compiler_err("1 |> 2") == C_ERR_UNEXPECTED_SEXPR);
-   sv_test_run(t, sv_test_compiler_err("match 1 | 1 = 2 end") == C_ERR_NOT_IMPLEMENTED);
+}
+
+static inline void sv_test_compiler_match(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_num("match 1 | 1 = 2 end", 2));
+   sv_test_run(t, sv_test_compiler_num("match 2 | 1 = 2 | 2 = 3 end", 3));
+   sv_test_run(t, sv_test_compiler_kind("match 9 | 1 = 2 end", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_num("match 9 | 1 = 2 | _ = 7 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match 5 | y = y + 1 end", 6));
+   sv_test_run(t, sv_test_compiler_num("match \"a\" | 1 = 2 | \"a\" = 3 end", 3));
+   sv_test_run(t, sv_test_compiler_kind("match true | true = nil end", VALUE_NIL));
+
+   sv_test_run(t, sv_test_compiler_num("match (1, 2) | (1, b) = b end", 2));
+   sv_test_run(t, sv_test_compiler_num("match (1, 2) | (1, 3) = 8 | (1, 2) = 9 end", 9));
+   sv_test_run(t, sv_test_compiler_kind("match (1, 2, 3) | (1, b) = b end", VALUE_NIL));
+
+   sv_test_run(t, sv_test_compiler_num("match {a: 1, b: 4} | {a: 1, b: v} = v end", 4));
+   sv_test_run(t, sv_test_compiler_kind("match {a: 1} | {b: v} = v end", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_kind("match {a: 1, b: 2} | {a: 1} = 5 end", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_num("match {a: 1, b: 2} | {a: 1, ..} = 5 end", 5));
+   sv_test_run(t, sv_test_compiler_num("match %{\"k\": 3} | %{\"k\": v} = v end", 3));
+
+   sv_test_run(t, sv_test_compiler_num("match [] | [] = 1 | [a] = a end", 1));
+   sv_test_run(t, sv_test_compiler_num("match [7] | [] = 1 | [a] = a end", 7));
+   sv_test_run(t, sv_test_compiler_kind("match [7, 8] | [] = 1 | [a] = a end", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_num("match [1, 2] | [h, ..t] = h end", 1));
+   sv_test_run(t, sv_test_compiler_num("match [1, 3] | [1, 2] = 8 | [1, 3] = 9 end", 9));
+   sv_test_run(t, sv_test_compiler_num("match [1, 2, 3] | [a, ..r] = match r | [b, ..s] = b end end", 2));
+
+   /* Fail paths that unwind one and two list-uncons scopes. */
+   sv_test_run(t, sv_test_compiler_num("match [1] | [1, 2] = 8 | _ = 5 end", 5));
+   sv_test_run(t, sv_test_compiler_num("match [1, 9] | [1, 2] = 8 | [1, 3] = 9 | _ = 5 end", 5));
+   sv_test_run(t, sv_test_compiler_num("match {a: 2, b: 3} | {a: 1, b: v} = v | _ = 6 end", 6));
+   sv_test_run(t, sv_test_compiler_num("match [[1], 9] | [[1], 2] = 8 | _ = 4 end", 4));
 }
 
 static inline void sv_test_compiler(sv_testing_t* t)
@@ -453,6 +486,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_closures(t);
    sv_test_compiler_recursion(t);
    sv_test_compiler_groups(t);
+   sv_test_compiler_match(t);
    sv_test_compiler_errors(t);
    sv_test_compiler_runtime_errors(t);
 }

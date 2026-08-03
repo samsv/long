@@ -137,6 +137,11 @@ value_t value_init_list(const value_t* vs, int64_t len, const sv_allocator_t* a)
     return v;
 }
 
+value_t value_wrap_list(list_t list, const sv_allocator_t* a)
+{
+    return obj_wrap((obj_t){ .kind = OBJ_LIST, .list = list }, a);
+}
+
 value_t value_init_err(error_t err, const sv_allocator_t* a)
 {
     return obj_wrap((obj_t){ .kind = OBJ_ERR, .err = err }, a);

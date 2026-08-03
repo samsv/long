@@ -345,6 +345,11 @@ list_t ll_tail(list_t list, const sv_allocator_t* a)
         : sv_rc_borrow(node.tail);
 }
 
+bool ll_is_empty(list_t list)
+{
+    return list.cell->value.len == 0;
+}
+
 int64_t ll_count(list_t l)
 {
     return ll_count_rec(l, 0);

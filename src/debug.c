@@ -58,6 +58,19 @@ static const char* op_name(vm_instructions op)
         case OP_RECORD_GET: return "record_get";
         case OP_NOT: return "not";
         case OP_DUP: return "dup";
+        case OP_IS_STR: return "is_str";
+        case OP_IS_NUMBER: return "is_number";
+        case OP_IS_BOOL: return "is_bool";
+        case OP_IS_NIL: return "is_nil";
+        case OP_IS_LIST: return "is_list";
+        case OP_IS_CONS: return "is_cons";
+        case OP_IS_TUPLE: return "is_tuple";
+        case OP_IS_RECORD: return "is_record";
+        case OP_IS_RECORD_ANY: return "is_record_any";
+        case OP_IS_HASHMAP: return "is_hashmap";
+        case OP_HAS_FIELD: return "has_field";
+        case OP_HAS_KEY: return "has_key";
+        case OP_LIST_UNCONS: return "list_uncons";
         case OP_RETURN: return "return";
     }
     return "unknown";
@@ -105,6 +118,9 @@ void print_chunk(vm_t v)
             case OP_GET_UPVALUE:
             case OP_RECORD_GET:
             case OP_GET_MEMBER:
+            case OP_IS_TUPLE:
+            case OP_IS_RECORD:
+            case OP_HAS_FIELD:
                 printf("%" PRId64 " [ %s ] index %u\n", i, op_name(op), code[i + 1]);
                 i += 2;
                 break;
@@ -131,6 +147,16 @@ void print_chunk(vm_t v)
             case OP_INDEX:
             case OP_NOT:
             case OP_DUP:
+            case OP_IS_STR:
+            case OP_IS_NUMBER:
+            case OP_IS_BOOL:
+            case OP_IS_NIL:
+            case OP_IS_LIST:
+            case OP_IS_CONS:
+            case OP_IS_RECORD_ANY:
+            case OP_IS_HASHMAP:
+            case OP_HAS_KEY:
+            case OP_LIST_UNCONS:
             case OP_RETURN:
             default:
                 printf("%" PRId64 " [ %s ]\n", i, op_name(op));

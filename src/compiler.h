@@ -16,12 +16,19 @@ typedef struct locals_t {
     int64_t offset;
 } locals_t;
 
+typedef struct fail_target_t {
+    sv_vec_t(int64_t) jumps;
+    int64_t locals;
+    struct fail_target_t* next;
+} fail_target_t;
+
 typedef struct {
     globals_t globals;
     locals_t upvalues;
     locals_t* locals;
     transient_hashmap_t members;
     transient_hashmap_t* record_fields;
+    fail_target_t* fail_targets;
     vm_builder_t builder;
 } compiler_t;
 

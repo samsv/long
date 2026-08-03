@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 #define CLAUSES_START 2
-#define FAIL_NAME "fail"
+#define FAIL_NAME "$fail"
 #define WILDCARD_NAME "_"
 #define TEMP_DIGITS 12
 #define TEMP_SIZE (TEMP_DIGITS + 2)
@@ -988,39 +988,56 @@ static bool compile_keyed(sexpr_t* out, const matrix_t* m, int64_t col, const in
 }
 
 /**
- * Builds the CONS arm: two fresh columns bound to the head and the tail, with
- * the tail column known to be a list so its class test is not repeated.
+ * Builds the CONS arm: one `list-uncons` form binding the head and the tail,
+ * with the tail column known to be a list so its class test is not repeated.
  */
 static bool compile_cons_rows(sexpr_t* out, const matrix_t* m, int64_t col, const int64_t* rows,
                               int64_t n_rows, int64_t line, ctx_t* ctx)
 {
-    decomp_t d = { 0 };
-    if (!decomp_alloc(&d, 2, n_rows, line, ctx))
+    matrix_t sub = { 0 };
+    sexpr_t inner = { 0 };
+    col_t cols[2] = { 0 };
+    cell_t* cells = alloc_cells(2 * n_rows, &ctx->alloc);
+    if (!alloc_ok(cells, 2 * n_rows))
         goto error;
 
-    if (!next_temp(&d.cols[0].subject, line, ctx)
-        || !next_temp(&d.cols[1].subject, line, ctx)
-        || !build_call1(&d.reads[0], "head", m->cols[col].subject, line, ctx)
-        || !build_call1(&d.reads[1], "tail", m->cols[col].subject, line, ctx)
-    )
+    if (!next_temp(&cols[0].subject, line, ctx) || !next_temp(&cols[1].subject, line, ctx))
         goto error;
 
-    d.cols[0].known = PAT_UNKNOWN;
-    d.cols[1].known = PAT_LIST;
+    cols[0].known = PAT_UNKNOWN;
+    cols[1].known = PAT_LIST;
 
     for (int64_t r = 0; r < n_rows; r++) {
         cell_t cell = CELL(m, rows[r], col);
-        d.cells[r * 2] = cell_head(cell);
-        d.cells[r * 2 + 1] = cell_rest(cell);
+        cells[r * 2] = cell_head(cell);
+        cells[r * 2 + 1] = cell_rest(cell);
     }
 
-    bool ok = compile_decomposed(out, m, col, rows, n_rows, &d, line, ctx);
-    decomp_free(&d, ctx);
-    return ok;
+    if (!specialise(&sub, m, col, rows, n_rows, cols, 2, cells, ctx))
+        goto error;
+
+    bool ok = compile_matrix(&inner, &sub, line, ctx);
+    matrix_free(&sub, ctx);
+    if (!ok)
+        goto error;
+
+    sexpr_t items[] = {
+        id_atom("list-uncons", line), m->cols[col].subject,
+        cols[0].subject, cols[1].subject, inner,
+    };
+    if (!build_form(out, items, 5, line, ctx)) {
+        sexpr_free(&inner, &ctx->alloc);
+        sv_free(&ctx->alloc, cells);
+        return false;
+    }
+
+    sv_free(&ctx->alloc, cells);
+    return true;
 
 error:
-    decomp_free(&d, ctx);
-    return false;
+    matrix_free(&sub, ctx);
+    sv_free(&ctx->alloc, cells);
+    return match_oom(ctx, line);
 }
 
 /**
@@ -1271,5 +1288,51 @@ sexpr_t match_compile(sexpr_t s, ctx_t* ctx)
         return discard(&s, ctx);
 
     temps_used = 0;
+    return match_lower(s, ctx);
+}
+
+/**
+ * Rewrites every `(match ...)` node in the tree, children first, so a match
+ * nested in a clause body is lowered before its parent. Takes ownership: on
+ * failure the whole tree is freed and an error atom is returned.
+ */
+static bool lower_children(sexpr_t s, ctx_t* ctx)
+{
+    if (s.tag != S_CONS)
+        return true;
+
+    for (int64_t i = 0; i < s.cons.size; i++) {
+        if (!lower_children(s.cons.arr[i], ctx))
+            return false;
+
+        sexpr_t child = s.cons.arr[i];
+        if (child.tag != S_CONS || child.cons.size == 0)
+            continue;
+
+        sexpr_t head = child.cons.arr[0];
+        if (head.tag != S_ATOM || head.atom.kind != TOKEN_SP_FUNCTION || head.atom.fn != FN_MATCH)
+            continue;
+
+        s.cons.arr[i] = match_lower(child, ctx);
+        if (is_error_sexpr(s.cons.arr[i]))
+            return false;
+    }
+    return true;
+}
+
+sexpr_t match_lower_tree(sexpr_t s, ctx_t* ctx)
+{
+    temps_used = 0;
+
+    if (!lower_children(s, ctx))
+        return discard(&s, ctx);
+
+    if (s.tag != S_CONS || s.cons.size == 0)
+        return s;
+
+    sexpr_t head = s.cons.arr[0];
+    if (head.tag != S_ATOM || head.atom.kind != TOKEN_SP_FUNCTION || head.atom.fn != FN_MATCH)
+        return s;
+
     return match_lower(s, ctx);
 }
