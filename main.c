@@ -43,6 +43,7 @@ int main(void)
         "match (a, b)\n"
         "| (false, y) = y\n"
         "| [x, y, ..xs] = f(x, xs)\n"
+        "| [x, y, ..xs] = f(x, xs)\n"
         "| 1 = true\n"
         "| 0 = true\n"
         "| \"hello\" = true\n"
