@@ -18,6 +18,7 @@ typedef struct {
 } token_pattern;
 
 static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec);
+static sexpr_t parse_pattern(scanner_t* s, ctx_t* ctx);
 
 static token_pattern kind_pattern(token_kind kind)
 {
@@ -450,12 +451,158 @@ static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
     return cons_of(ctx, items, 3, for_token.line);
 }
 
-static sexpr_t parse_fun_body(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list, token_t fun_token,
-                              const token_pattern* ends, int64_t n_ends, token_t* term)
+static token_t pattern_head(sexpr_t pattern)
 {
-    token_t id = parser_expect_id(s, ctx);
-    if (id.kind == TOKEN_ERROR)
-        return free_list_error(list, ctx, atom_sexpr(id));
+    return pattern.tag == S_ATOM ? pattern.atom : pattern.cons.arr[0].atom;
+}
+
+/**
+ * With more than one parameter the scrutinee is a tuple, so a clause must be a
+ * tuple of the same arity, or a variable binding the whole tuple.
+ */
+static bool clause_matches_params(sexpr_t pattern, int64_t n_params)
+{
+    if (n_params < 2)
+        return true;
+    if (pattern.tag == S_ATOM)
+        return pattern.atom.kind == TOKEN_LITERAL
+            && pattern.atom.literal.kind == LITERAL_IDENTIFIER;
+
+    token_t head = pattern_head(pattern);
+    return head.kind == TOKEN_SP_FUNCTION && head.fn == FN_TUPLE
+        && pattern.cons.size - 1 == n_params;
+}
+
+/**
+ * The scrutinee for a clause list: the parameter itself when there is one, a
+ * tuple of them otherwise, mirroring how `(x)` is x and `(a, b)` is a tuple.
+ * The parameter atoms are copied, which is free because an atom owns nothing.
+ */
+static sexpr_t params_scrutinee(ctx_t* ctx, sexpr_t args, int64_t line)
+{
+    for (int64_t i = 0; i < args.cons.size; i++)
+        if (args.cons.arr[i].tag != S_ATOM)
+            return unexpected_token_error(ctx, pattern_head(args.cons.arr[i]),
+                                          "Expected a parameter name");
+
+    if (args.cons.size == 0)
+        return atom_sexpr(parser_error_at(ctx, PARSER_ERROR_UNEXPECTED_TOKEN, line,
+                                          "A function with no parameters has nothing to match"));
+    if (args.cons.size == 1)
+        return args.cons.arr[0];
+
+    sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
+    token_t tuple = { .kind = TOKEN_SP_FUNCTION, .line = line, .fn = FN_TUPLE };
+    if (!push_sexpr(&list, atom_sexpr(tuple), ctx))
+        return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, line)));
+
+    for (int64_t i = 0; i < args.cons.size; i++)
+        if (!push_sexpr(&list, args.cons.arr[i], ctx))
+            return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, line)));
+
+    return cons_sexpr(list);
+}
+
+/**
+ * Reads `| pattern = expr` clauses into a `(do (match scrutinee clause...))`
+ * body. Stops at `end`, or on a `|` that begins the next group member, whose
+ * name is then reported through pending. A NULL pending means there is no group
+ * to hand a member back to.
+ */
+static sexpr_t parse_fun_clauses(scanner_t* s, ctx_t* ctx, sexpr_t args, token_t fun_token,
+                                 token_t* term, token_t* pending)
+{
+    sexpr_t scrutinee = params_scrutinee(ctx, args, fun_token.line);
+    if (is_error_sexpr(scrutinee))
+        return scrutinee;
+
+    sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
+    token_t match_atom = { .kind = TOKEN_SP_FUNCTION, .line = fun_token.line, .fn = FN_MATCH };
+    if (!push_sexpr(&list, atom_sexpr(match_atom), ctx) || !push_sexpr(&list, scrutinee, ctx))
+        return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, fun_token.line)));
+
+    for (;;) {
+        token_t id = scanner_peek(s, ctx);
+        if (id.kind == TOKEN_ERROR)
+            return free_list_error(&list, ctx, atom_sexpr(scanner_next(s, ctx)));
+
+        sexpr_t pattern;
+        if (id.kind == TOKEN_LITERAL && id.literal.kind == LITERAL_IDENTIFIER) {
+            scanner_next(s, ctx);
+            token_t after = scanner_peek(s, ctx);
+            bool header = token_is(after, op_pattern(OPERATOR_LEFT_PAREN))
+                || token_is(after, op_pattern(OPERATOR_LEFT_BRACKET));
+            if (header && pending != NULL) {
+                *pending = id;
+                *term = (token_t){ .kind = TOKEN_PIPE, .line = id.line };
+                break;
+            }
+            pattern = atom_sexpr(id);
+        } else {
+            pattern = parse_pattern(s, ctx);
+            if (is_error_sexpr(pattern))
+                return free_list_error(&list, ctx, pattern);
+        }
+
+        if (!clause_matches_params(pattern, args.cons.size)) {
+            int64_t line = pattern_head(pattern).line;
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "Clause must be a %" PRId64 " element tuple or a variable at line %" PRId64,
+                     args.cons.size, line);
+            sexpr_free(&pattern, &ctx->alloc);
+            return free_list_error(&list, ctx,
+                atom_sexpr(parser_error_at(ctx, PARSER_ERROR_UNEXPECTED_TOKEN, line, msg)));
+        }
+
+        token_t equal = parser_expect(s, ctx, op_pattern(OPERATOR_EQUAL));
+        if (equal.kind == TOKEN_ERROR) {
+            sexpr_free(&pattern, &ctx->alloc);
+            return free_list_error(&list, ctx, atom_sexpr(equal));
+        }
+
+        token_pattern ends[] = { kind_pattern(TOKEN_PIPE), kw_pattern(KEYWORD_END) };
+        token_t inner = { .kind = TOKEN_EOF };
+        sexpr_t body = parse_block(s, ctx, ends, 2, fun_token.line, &inner);
+        if (is_error_sexpr(body)) {
+            sexpr_free(&pattern, &ctx->alloc);
+            return free_list_error(&list, ctx, body);
+        }
+
+        token_t tuple = { .kind = TOKEN_SP_FUNCTION, .line = fun_token.line, .fn = FN_TUPLE };
+        sexpr_t items[] = { atom_sexpr(tuple), pattern, body };
+        sexpr_t clause = cons_of(ctx, items, 3, fun_token.line);
+        if (is_error_sexpr(clause))
+            return free_list_error(&list, ctx, clause);
+        if (!push_sexpr(&list, clause, ctx)) {
+            sexpr_free(&clause, &ctx->alloc);
+            return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, fun_token.line)));
+        }
+
+        if (inner.kind != TOKEN_PIPE) {
+            *term = inner;
+            break;
+        }
+    }
+
+    token_t do_token = { .kind = TOKEN_KEYWORD, .line = fun_token.line, .keyword = KEYWORD_DO };
+    sexpr_t do_items[] = { atom_sexpr(do_token), cons_sexpr(list) };
+    return cons_of(ctx, do_items, 2, fun_token.line);
+}
+
+static sexpr_t parse_fun_body(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list, token_t fun_token,
+                              const token_pattern* ends, int64_t n_ends, token_t* term,
+                              token_t* pending)
+{
+    token_t id;
+    if (pending != NULL && pending->kind == TOKEN_LITERAL) {
+        id = *pending;
+        *pending = (token_t){ .kind = TOKEN_EOF };
+    } else {
+        id = parser_expect_id(s, ctx);
+        if (id.kind == TOKEN_ERROR)
+            return free_list_error(list, ctx, atom_sexpr(id));
+    }
     if (!push_sexpr(list, atom_sexpr(id), ctx))
         return free_list_error(list, ctx, atom_sexpr(oom_error(ctx, fun_token.line)));
 
@@ -484,11 +631,16 @@ static sexpr_t parse_fun_body(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list,
         return free_list_error(list, ctx, atom_sexpr(oom_error(ctx, fun_token.line)));
     }
 
-    token_t equal = parser_expect(s, ctx, op_pattern(OPERATOR_EQUAL));
-    if (equal.kind == TOKEN_ERROR)
-        return free_list_error(list, ctx, atom_sexpr(equal));
-
-    sexpr_t body = parse_block(s, ctx, ends, n_ends, fun_token.line, term);
+    sexpr_t body;
+    token_t pipe;
+    if (parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &pipe)) {
+        body = parse_fun_clauses(s, ctx, args, fun_token, term, pending);
+    } else {
+        token_t equal = parser_expect(s, ctx, op_pattern(OPERATOR_EQUAL));
+        if (equal.kind == TOKEN_ERROR)
+            return free_list_error(list, ctx, atom_sexpr(equal));
+        body = parse_block(s, ctx, ends, n_ends, fun_token.line, term);
+    }
     if (is_error_sexpr(body))
         return free_list_error(list, ctx, body);
     if (!push_sexpr(list, body, ctx)) {
@@ -509,14 +661,16 @@ static sexpr_t parse_fun(scanner_t* s, ctx_t* ctx, token_t fun_token)
     if (!parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &pipe_token)) {
         token_pattern ends[] = { kw_pattern(KEYWORD_END) };
         token_t term;
-        return parse_fun_body(s, ctx, &list, fun_token, ends, 1, &term);
+        return parse_fun_body(s, ctx, &list, fun_token, ends, 1, &term, NULL);
     }
 
     token_t end_token = pipe_token;
+    token_t pending = { .kind = TOKEN_EOF };
     while (end_token.kind == TOKEN_PIPE) {
         sv_vec_t(sexpr_t) body_list = sv_vec_init(sexpr_t);
         token_pattern ends[] = { kw_pattern(KEYWORD_END), kind_pattern(TOKEN_PIPE) };
-        sexpr_t body = parse_fun_body(s, ctx, &body_list, end_token, ends, 2, &end_token);
+        sexpr_t body = parse_fun_body(s, ctx, &body_list, end_token, ends, 2, &end_token,
+                                      &pending);
         if (is_error_sexpr(body))
             return free_list_error(&list, ctx, body);
         if (!push_sexpr(&list, body, ctx)) {
@@ -862,9 +1016,16 @@ static sexpr_t parse_match(scanner_t* s, ctx_t* ctx, token_t match_token)
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, match_token.line)));
     }
 
-    token_t pipe;
     sexpr_t tuple_atom = atom_sexpr((token_t){ .kind = TOKEN_SP_FUNCTION, .line = match_token.line, .fn = FN_TUPLE });
-    while (parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &pipe)) {
+    token_t term;
+    if (!parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &term)) {
+        token_t closed = parser_expect_close(s, ctx, match_token, kw_pattern(KEYWORD_END));
+        if (closed.kind == TOKEN_ERROR)
+            return free_list_error(&list, ctx, atom_sexpr(closed));
+        return cons_sexpr(list);
+    }
+
+    while (term.kind == TOKEN_PIPE) {
         sv_vec_t(sexpr_t) pattern_body_vec = sv_vec_init_capacity(sexpr_t, 3, &ctx->alloc);
         if (pattern_body_vec.arr == NULL)
             return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, match_token.line)));
@@ -885,7 +1046,8 @@ static sexpr_t parse_match(scanner_t* s, ctx_t* ctx, token_t match_token)
             goto error;
         }
 
-        sexpr_t body = parse_expr(s, ctx, 0);
+        token_pattern ends[] = { kind_pattern(TOKEN_PIPE), kw_pattern(KEYWORD_END) };
+        sexpr_t body = parse_block(s, ctx, ends, 2, match_token.line, &term);
         if (is_error_sexpr(body)) {
             err = body;
             goto error;
@@ -908,10 +1070,6 @@ error:
         }
         return free_list_error(&list, ctx, err);
     }
-
-    token_t end = parser_expect_close(s, ctx, match_token, kw_pattern(KEYWORD_END));
-    if (end.kind == TOKEN_ERROR)
-        return free_list_error(&list, ctx, atom_sexpr(end));
 
     return cons_sexpr(list);
 }

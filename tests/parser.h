@@ -60,7 +60,8 @@ static inline void sv_test_parser_exprs(sv_testing_t* t)
    sv_test_parse_ok(t, "(a, b,)", "(tuple a b)");
    sv_test_parse_ok(t, "(1)", "1");
    sv_test_parse_ok(t, "((1, 2))", "(tuple 1 2)");
-   sv_test_parse_ok(t, "(myfun(x, y),)", "(tuple (myfun x y))");
+   sv_test_parse_ok(t, "(myfun(x, y),)",
+                    "(tuple (myfun x y))");
    sv_test_parse_ok(t, "(1 + 2, 3)", "(tuple (+ 1 2) 3)");
    sv_test_parse_error(t, "()", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "(1, 2", PARSER_ERROR_EOF);
@@ -84,10 +85,39 @@ static inline void sv_test_parser_if(sv_testing_t* t)
 static inline void sv_test_parser_forms(sv_testing_t* t)
 {
    sv_test_parse_ok(t, "for x in xs do x end", "(for (x xs) (do x))");
-   sv_test_parse_ok(t, "fun add(x, y) = x + y end", "(fun add (x y) (do (+ x y)))");
-   sv_test_parse_ok(t, "fun f[a](x) = a + x end", "(fun f (a) (x) (do (+ a x)))");
+   sv_test_parse_ok(t, "fun add(x, y) = x + y end",
+                    "(fun add (x y) (do (+ x y)))");
+   sv_test_parse_ok(t, "fun f[a](x) = a + x end",
+                    "(fun f (a) (x) (do (+ a x)))");
    sv_test_parse_ok(t, "fun | even(n) = n | odd(n) = n end",
                     "(fun (even (n) (do n)) (odd (n) (do n)))");
+
+   /* Clauses after the parameter list desugar to a match on the parameters. */
+   sv_test_parse_ok(t, "fun f(x) | 0 = true | _ = 1 end",
+                    "(fun f (x) (do (match x (tuple 0 (do true)) (tuple _ (do 1)))))");
+   sv_test_parse_ok(t, "fun fn(a, b) | (1, y) = y | (x, 2) = x end",
+                    "(fun fn (a b) (do (match (tuple a b) (tuple (tuple 1 y) (do y))"
+                    " (tuple (tuple x 2) (do x)))))");
+   sv_test_parse_ok(t, "fun | f(x) | 0 = 1 | g(y) | 0 = 2 end",
+                    "(fun (f (x) (do (match x (tuple 0 (do 1)))))"
+                    " (g (y) (do (match y (tuple 0 (do 2))))))");
+   sv_test_parse_ok(t, "fun | f(x) = 1 | g(y) | 0 = 2 end",
+                    "(fun (f (x) (do 1)) (g (y) (do (match y (tuple 0 (do 2))))))");
+   sv_test_parse_ok(t, "fun f[a](x) | 0 = a end",
+                    "(fun f (a) (x) (do (match x (tuple 0 (do a)))))");
+
+   /* A variable binds the whole tuple; a tuple pattern is fine against one
+    * parameter because that parameter may hold a tuple. */
+   sv_test_parse_ok(t, "fun f(a, b) | x = x end",
+                    "(fun f (a b) (do (match (tuple a b) (tuple x (do x)))))");
+   sv_test_parse_ok(t, "fun f(x) | (1, 2) = y end",
+                    "(fun f (x) (do (match x (tuple (tuple 1 2) (do y)))))");
+
+   /* Clause bodies are blocks. */
+   sv_test_parse_ok(t, "fun f(x) | 0 = y = 3; y + 1 end",
+                    "(fun f (x) (do (match x (tuple 0 (do (= y 3) (+ y 1))))))");
+   sv_test_parse_ok(t, "match x | 1 = y = 3; y + 1 end",
+                    "(match x (tuple 1 (do (= y 3) (+ y 1))))");
    sv_test_parse_ok(t, "[1, 2, 3]", "(list 1 2 3)");
    sv_test_parse_ok(t, "[]", "(list)");
    sv_test_parse_ok(t, "list(1, 2)", "(list 1 2)");
@@ -178,28 +208,40 @@ static inline void sv_test_parser_maps(sv_testing_t* t)
 
 static inline void sv_test_parser_match(sv_testing_t* t)
 {
-   sv_test_parse_ok(t, "match x | 1 = 2 end", "(match x (tuple 1 2))");
-   sv_test_parse_ok(t, "match x end", "(match x)");
+   sv_test_parse_ok(t, "match x | 1 = 2 end",
+                    "(match x (tuple 1 (do 2)))");
+   sv_test_parse_ok(t, "match x end",
+                    "(match x)");
    sv_test_parse_ok(t,
       "match (a, b)\n"
       "| (false, y) = y\n"
       "| (true, true) = false\n"
       "| (true, false) = true\n"
       "end",
-      "(match (tuple a b) (tuple (tuple false y) y) (tuple (tuple true true) false)"
-      " (tuple (tuple true false) true))");
-   sv_test_parse_ok(t, "match x | [h, ..t] = h end", "(match x (tuple (list h (.. t)) h))");
+                    "(match (tuple a b) (tuple (tuple false y) (do y)) "
+                    "(tuple (tuple true true) (do false)) (tuple (tuple true "
+                    "false) (do true)))");
+   sv_test_parse_ok(t, "match x | [h, ..t] = h end",
+                    "(match x (tuple (list h (.. t)) (do h)))");
    sv_test_parse_ok(t, "match x | [] = 0 | [a, b] = a end",
-                    "(match x (tuple (list) 0) (tuple (list a b) a))");
-   sv_test_parse_ok(t, "match x | {x: 1, y: p} = p end", "(match x (tuple (record x 1 y p) p))");
-   sv_test_parse_ok(t, "match x | {x: 1, ..} = 1 end", "(match x (tuple (record x 1 ..) 1))");
-   sv_test_parse_ok(t, "match x | {..} = 1 end", "(match x (tuple (record ..) 1))");
-   sv_test_parse_ok(t, "match x | %{\"k\": v} = v end", "(match x (tuple (hashmap \"k\" v) v))");
+                    "(match x (tuple (list) (do 0)) (tuple (list a b) "
+                    "(do a)))");
+   sv_test_parse_ok(t, "match x | {x: 1, y: p} = p end",
+                    "(match x (tuple (record x 1 y p) (do p)))");
+   sv_test_parse_ok(t, "match x | {x: 1, ..} = 1 end",
+                    "(match x (tuple (record x 1 ..) (do 1)))");
+   sv_test_parse_ok(t, "match x | {..} = 1 end",
+                    "(match x (tuple (record ..) (do 1)))");
+   sv_test_parse_ok(t, "match x | %{\"k\": v} = v end",
+                    "(match x (tuple (hashmap \"k\" v) (do v)))");
    sv_test_parse_ok(t, "match x | (1, [2, ..r]) = r end",
-                    "(match x (tuple (tuple 1 (list 2 (.. r))) r))");
-   sv_test_parse_ok(t, "match x | (1) = 2 end", "(match x (tuple 1 2))");
-   sv_test_parse_ok(t, "match x | (\"a\",) = 1 end", "(match x (tuple (tuple \"a\") 1))");
-   sv_test_parse_ok(t, "match f(1) | y = y end", "(match (f 1) (tuple y y))");
+                    "(match x (tuple (tuple 1 (list 2 (.. r))) (do r)))");
+   sv_test_parse_ok(t, "match x | (1) = 2 end",
+                    "(match x (tuple 1 (do 2)))");
+   sv_test_parse_ok(t, "match x | (\"a\",) = 1 end",
+                    "(match x (tuple (tuple \"a\") (do 1)))");
+   sv_test_parse_ok(t, "match f(1) | y = y end",
+                    "(match (f 1) (tuple y (do y)))");
 
    sv_test_parse_error(t, "match x | 1 = 2", PARSER_ERROR_EOF);
    sv_test_parse_error(t, "match x | 1 2 end", PARSER_ERROR_UNEXPECTED_TOKEN);
@@ -222,6 +264,12 @@ static inline void sv_test_parser_errors(sv_testing_t* t)
    sv_test_parse_error(t, "1 2", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "for x xs do x end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "fun 1(x) = x end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun f(x) | end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun f() | 0 = 1 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun f(a, b) | 1 = 2 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun f(a, b) | (1, 2, 3) = x end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun f(x + 1) | 0 = 1 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun f(x) | 0 = 1", (int)PARSER_ERROR_EOF);
    sv_test_parse_error(t, "world(1, 2", (int)PARSER_ERROR_EOF);
    sv_test_parse_error(t, "x[0", (int)PARSER_ERROR_EOF);
    sv_test_parse_error(t, "class", (int)PARSER_ERROR_NOT_IMPLEMENTED);

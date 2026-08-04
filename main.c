@@ -3,18 +3,15 @@
 #include "src/debug.h"
 #include "src/std/allocator_std.h"
 static const char* sample =
-    "a = false; b = true\n"
-        "res = match {x: 1, y: 2}\n"
-        "| (false, y) = y\n"
-        "| [x, ..xs] = x\n"
-        "| [x, y, ..xs] = x + y\n"
-        "| 1 = 1\n"
-        "| 0 = 0\n"
-        "| \"hello\" = \"world\"\n"
-        "| {x: a, y: b} = a + b\n"
-        "| {x: a, y: b, ..} = a + b\n"
-        "| _ = true\n"
-        "end";
+    "fun \n"
+    "| is_even(x)\n"
+        "| 0 = true\n"
+        "| _ = is_odd(x - 1)\n"
+    "| is_odd(x)\n"
+        "| 0 = false\n"
+        "| _ = is_even(x - 1)\n"
+    "end\n"
+    "is_even(2)";
 
 int main(void)
 {

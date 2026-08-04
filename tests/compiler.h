@@ -472,6 +472,55 @@ static inline void sv_test_compiler_match(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("match [[1], 9] | [[1], 2] = 8 | _ = 4 end", 4));
 }
 
+static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 = 10 | _ = 20 end f(0)", 10));
+   sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 = 10 | _ = 20 end f(3)", 20));
+   sv_test_run(t, sv_test_compiler_kind("fun f(x) | 0 = 10 end f(3)", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_num("fun f(x) | y = y + 1 end f(4)", 5));
+
+   /* Clause bodies are blocks. */
+   sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 = y = 3; y + 1 end f(0)", 4));
+   sv_test_run(t, sv_test_compiler_num("match 0 | 0 = y = 3; y + 1 end", 4));
+
+   sv_test_run(t, sv_test_compiler_num(
+      "fun swap(a, b) | (1, y) = y | (x, 2) = x end swap(1, 9)", 9));
+   sv_test_run(t, sv_test_compiler_num(
+      "fun swap(a, b) | (1, y) = y | (x, 2) = x end swap(7, 2)", 7));
+   sv_test_run(t, sv_test_compiler_num("fun pair(a, b) | t = 5 end pair(1, 2)", 5));
+
+   sv_test_run(t, sv_test_compiler_num(
+      "fun len(l)\n"
+      "| [] = 0\n"
+      "| [_, ..r] = 1 + len(r)\n"
+      "end\n"
+      "len([4, 5, 6])", 3));
+
+   /* The doc's three clause example, with all three arms reachable. */
+   sv_test_run(t, sv_test_compiler_num(
+      "fun fn(f, l1, l2)\n"
+      "| (f, [], ys) = 1\n"
+      "| (f, xs, []) = 2\n"
+      "| (f, [x, ..xs], [y, ..ys]) = 3\n"
+      "end\n"
+      "fn(0, [], [1]) + fn(0, [1], []) * 10 + fn(0, [1], [2]) * 100", 321));
+
+   bool ok = false;
+   value_t v = sv_test_compiler_eval(
+      "fun\n"
+      "| is_even(x)\n"
+      "| 0 = true\n"
+      "| _ = is_odd(x - 1)\n"
+      "| is_odd(x)\n"
+      "| 0 = false\n"
+      "| _ = is_even(x - 1)\n"
+      "end\n"
+      "is_even(10)", &ok);
+   sv_test_run(t, ok);
+   sv_test_run(t, v.kind == VALUE_BOOL && v.boolean);
+   value_free(&v, &sv_gpa);
+}
+
 static inline void sv_test_compiler(sv_testing_t* t)
 {
    sv_test_compiler_basics(t);
@@ -487,6 +536,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_recursion(t);
    sv_test_compiler_groups(t);
    sv_test_compiler_match(t);
+   sv_test_compiler_fun_clauses(t);
    sv_test_compiler_errors(t);
    sv_test_compiler_runtime_errors(t);
 }

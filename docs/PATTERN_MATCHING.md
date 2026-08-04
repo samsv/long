@@ -324,7 +324,7 @@ Map patterns follow the same schema.
 We may reorder the columns of a tuple pattern match without changing the final result. Reordering the columns may lead to a smaller decision tree. Let's take
 the example
 ```
-fun fn(f, lst1, lst2) =
+fun fn(f, lst1, lst2)
 | (f, [], ys) = A(f, ys)
 | (f, xs, []) = B(f, xs)
 | (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
