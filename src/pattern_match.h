@@ -19,4 +19,14 @@ sexpr_t match_compile(sexpr_t, ctx_t*);
  */
 sexpr_t match_lower_tree(sexpr_t, ctx_t*);
 
+/**
+ * Shape predicates over pattern conses, shared with the destructuring compiler.
+ * `..` in a list is a `(.. tail)` cons in the last position; in a record it is a
+ * bare `..` atom there.
+ */
+bool list_has_tail(sexpr_t);
+int64_t list_n_fixed(sexpr_t);
+bool record_is_open(sexpr_t);
+int64_t record_n_fields(sexpr_t);
+
 #endif

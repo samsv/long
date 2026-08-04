@@ -193,6 +193,17 @@ static inline void sv_test_match_lists(sv_testing_t* t)
    sv_test_match_ok(t, "match x | [] do 0 | [a, ..r] do a end",
       "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons " T1
       " " T2 " " T3 " (do (= r " T3 ") (do (= a " T2 ") (do a)))) (do 0)) $fail) nil))");
+   /* A pattern tail: `..[]` is the exact length case and needs no extra test
+    * beyond the remainder being empty. */
+   sv_test_match_ok(t, "match x | [a, ..[]] do a end",
+      "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons " T1
+      " " T2 " " T3 " (if (is-cons? " T3 ") $fail (do (= a " T2
+      ") (do a)))) $fail) $fail) nil))");
+   sv_test_match_ok(t, "match x | [a, ..[b]] do b end",
+      "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons " T1
+      " " T2 " " T3 " (if (is-cons? " T3 ") (list-uncons " T3 " " T4 " " T5
+      " (if (is-cons? " T5 ") $fail (do (= a " T2 ") (do (= b " T4
+      ") (do b))))) $fail)) $fail) $fail) nil))");
 }
 
 static inline void sv_test_match_guards(sv_testing_t* t)

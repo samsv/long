@@ -129,18 +129,20 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
     sv_vec_push(&vm->stack, v, &success, a);                                                                  \
     TRY_OR(success, value_free(&v, a), "OOM when appending to vector")
 
-#define UNSUPPORTED_1(v, err_msg) {                                                                           \
+#define OP_ERR_1(code, v, err_msg) {                                                                          \
     vm_op_err* op_err_payload = sv_malloc(a, sizeof(vm_op_err));                                              \
     if (op_err_payload != NULL)                                                                               \
         *op_err_payload = (vm_op_err){                                                                        \
             .vm_err = { .line = vm->chunk.lines.arr[vm->ip-1] },                                              \
             .ops = { v },                                                                                     \
             .ops_len = 1 };                                                                                   \
-    err = (error_t) { .error_code = VM_ERR_OP_UNSUPPORTED_ARGS,                                               \
+    err = (error_t) { .error_code = code,                                                                     \
                       .payload = op_err_payload,                                                              \
                       .msg = sv_str_init(err_msg) };                                                          \
     value_free(&v, a);                                                                                        \
     goto error; }
+
+#define UNSUPPORTED_1(v, err_msg) OP_ERR_1(VM_ERR_OP_UNSUPPORTED_ARGS, v, err_msg)
 
 #define SET(arr) {                                                                                            \
     value_t v = sv_vec_pop(vm->stack);                                                                        \
@@ -280,6 +282,13 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             value_t res = {.kind = VALUE_BOOL, .boolean = !value_is_truthy(v)};
             value_free(&v, a);
             TRY_PUSH_STACK(res);
+            break;
+        }
+        case OP_SWAP: {
+            value_t top = sv_vec_pop(vm->stack);
+            value_t under = sv_vec_pop(vm->stack);
+            TRY_PUSH_OWNED(top);
+            TRY_PUSH_OWNED(under);
             break;
         }
         case OP_DUP: {
@@ -561,6 +570,16 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             TRY_PUSH_OWNED(tail);
             TRY_PUSH_OWNED(first);
             break;
+        }
+        case OP_ASSERT_MATCH: {
+            value_t test = sv_vec_pop(vm->stack);
+            bool passed = IS_BOOL(test) && test.boolean;
+            value_free(&test, a);
+            if (passed)
+                break;
+
+            value_t subject = value_borrow(sv_vec_last(vm->stack));
+            OP_ERR_1(VM_ERR_MATCH_FAILED, subject, "Value does not match the pattern")
         }
         case OP_RETURN:
             return sv_opt_none_t(error_t);

@@ -195,6 +195,8 @@ void compiler_free(compiler_t* c, const sv_allocator_t* a)
 }
 
 static bool compile_fail(compiler_t*, int64_t, ctx_t*);
+static bool record_field_id(compiler_t*, sv_str_t, int64_t, ctx_t*, uint32_t*);
+static bool reject_pattern_only(ctx_t*, int64_t);
 
 static bool compile_id(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
 {
@@ -261,10 +263,219 @@ static bool deinit_scope(compiler_t* c, ctx_t* ctx)
     return emit2(c, ctx, OP_POP_LOCAL, n, 0);
 }
 
+static bool is_pattern_wildcard(sexpr_t e)
+{
+    return e.tag == S_ATOM && e.atom.kind == TOKEN_LITERAL
+        && e.atom.literal.kind == LITERAL_IDENTIFIER
+        && sv_str_comp(e.atom.literal.literal, sv_str_init("_"));
+}
+
+/**
+ * Emits a test already on the stack top and raises when it is false. The subject
+ * sits directly beneath, so the error can name the offending value.
+ */
+static bool emit_assert(compiler_t* c, int64_t line, ctx_t* ctx)
+{
+    return emit(c, ctx, OP_ASSERT_MATCH, line);
+}
+
+static bool bind_pattern(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
+                         int64_t line, ctx_t* ctx);
+
+static bool bind_var(compiler_t* c, sv_str_t name, sv_vec_t(sv_str_t)* seen,
+                     int64_t line, ctx_t* ctx)
+{
+    for (int64_t i = 0; i < seen->size; i++) {
+        if (!sv_str_comp(seen->arr[i], name))
+            continue;
+
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(compile_id(c, name, line, ctx));
+        TRY(emit(c, ctx, OP_EQUALS, line));
+        return emit_assert(c, line, ctx);
+    }
+
+    int success = 0;
+    sv_vec_push(seen, name, &success, &ctx->alloc);
+    if (success == 0)
+        return compiler_oom(ctx, line);
+
+    return add_var(c, name, line, ctx);
+}
+
+/**
+ * Compiles one sub pattern against the value on the stack top, leaving that value
+ * in place: `read` pushes the part, the recursion consumes and restores it, and
+ * the pop returns to the parent's subject.
+ */
+static bool bind_part(compiler_t* c, sexpr_t sub, sv_vec_t(sv_str_t)* seen,
+                      int64_t line, ctx_t* ctx)
+{
+    TRY(bind_pattern(c, sub, seen, line, ctx));
+    return emit(c, ctx, OP_POP, line);
+}
+
+static bool bind_tuple(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
+                       int64_t line, ctx_t* ctx)
+{
+    int64_t arity = pattern.cons.size - 1;
+    TRY(emit(c, ctx, OP_DUP, line));
+    TRY(emit2(c, ctx, OP_IS_TUPLE, (uint8_t)arity, line));
+    TRY(emit_assert(c, line, ctx));
+
+    for (int64_t i = 0; i < arity; i++) {
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(add_const(c, ctx, (value_t){ .kind = VALUE_NUMBER, .number = (double)i }, line));
+        TRY(emit(c, ctx, OP_INDEX, line));
+        TRY(bind_part(c, pattern.cons.arr[1 + i], seen, line, ctx));
+    }
+    return true;
+}
+
+static bool bind_record(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
+                        int64_t line, ctx_t* ctx)
+{
+    int64_t n = record_n_fields(pattern);
+    TRY(emit(c, ctx, OP_DUP, line));
+    if (record_is_open(pattern))
+        TRY(emit(c, ctx, OP_IS_RECORD_ANY, line));
+    else
+        TRY(emit2(c, ctx, OP_IS_RECORD, (uint8_t)n, line));
+    TRY(emit_assert(c, line, ctx));
+
+    for (int64_t i = 0; i < n; i++) {
+        sv_str_t field;
+        TRY(expect_id(pattern.cons.arr[1 + 2 * i], ctx, &field));
+        uint32_t id = 0;
+        TRY(record_field_id(c, field, line, ctx, &id));
+
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(emit2(c, ctx, OP_HAS_FIELD, (uint8_t)id, line));
+        TRY(emit_assert(c, line, ctx));
+
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(emit2(c, ctx, OP_RECORD_GET, (uint8_t)id, line));
+        TRY(bind_part(c, pattern.cons.arr[2 + 2 * i], seen, line, ctx));
+    }
+    return true;
+}
+
+static bool bind_hashmap(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
+                         int64_t line, ctx_t* ctx)
+{
+    int64_t n = (pattern.cons.size - 1) / 2;
+    TRY(emit(c, ctx, OP_DUP, line));
+    TRY(add_const(c, ctx, (value_t){ .kind = VALUE_NUMBER, .number = (double)n }, line));
+    TRY(emit(c, ctx, OP_SWAP, line));
+    TRY(emit(c, ctx, OP_IS_HASHMAP, line));
+    TRY(emit_assert(c, line, ctx));
+
+    for (int64_t i = 0; i < n; i++) {
+        sexpr_t key = pattern.cons.arr[1 + 2 * i];
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(compile_sexpr(c, key, ctx));
+        TRY(emit(c, ctx, OP_HAS_KEY, line));
+        TRY(emit_assert(c, line, ctx));
+
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(compile_sexpr(c, key, ctx));
+        TRY(emit(c, ctx, OP_INDEX, line));
+        TRY(bind_part(c, pattern.cons.arr[2 + 2 * i], seen, line, ctx));
+    }
+    return true;
+}
+
+/**
+ * Each element unconses the current remainder, so the tails stack up and are
+ * popped together at the end. Without a `..` the remainder must be empty, which
+ * is what pins the length.
+ */
+static bool bind_list(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
+                      int64_t line, ctx_t* ctx)
+{
+    int64_t fixed = list_n_fixed(pattern);
+    TRY(emit(c, ctx, OP_DUP, line));
+    TRY(emit(c, ctx, OP_IS_LIST, line));
+    TRY(emit_assert(c, line, ctx));
+
+    for (int64_t i = 0; i < fixed; i++) {
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(emit(c, ctx, OP_IS_CONS, line));
+        TRY(emit_assert(c, line, ctx));
+
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(emit(c, ctx, OP_LIST_UNCONS, line));
+        TRY(bind_part(c, pattern.cons.arr[1 + i], seen, line, ctx));
+    }
+
+    if (list_has_tail(pattern)) {
+        TRY(bind_pattern(c, pattern.cons.arr[pattern.cons.size - 1].cons.arr[1],
+                         seen, line, ctx));
+    } else {
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(emit(c, ctx, OP_IS_CONS, line));
+        TRY(emit(c, ctx, OP_NOT, line));
+        TRY(emit_assert(c, line, ctx));
+    }
+
+    for (int64_t i = 0; i < fixed; i++)
+        TRY(emit(c, ctx, OP_POP, line));
+
+    return true;
+}
+
+static bool bind_pattern(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
+                         int64_t line, ctx_t* ctx)
+{
+    if (pattern.tag == S_ATOM) {
+        if (is_pattern_wildcard(pattern))
+            return true;
+        if (pattern.atom.kind == TOKEN_LITERAL
+            && pattern.atom.literal.kind == LITERAL_IDENTIFIER)
+            return bind_var(c, pattern.atom.literal.literal, seen, line, ctx);
+
+        TRY(emit(c, ctx, OP_DUP, line));
+        TRY(compile_sexpr(c, pattern, ctx));
+        TRY(emit(c, ctx, OP_EQUALS, line));
+        return emit_assert(c, line, ctx);
+    }
+
+    token_t head = pattern.cons.arr[0].atom;
+    if (head.kind != TOKEN_SP_FUNCTION)
+        return compiler_malformed(ctx, "destructuring pattern", line);
+
+    if (head.fn == FN_LIST)
+        return bind_list(c, pattern, seen, line, ctx);
+    if (head.fn == FN_RECORD)
+        return bind_record(c, pattern, seen, line, ctx);
+    if (head.fn == FN_HASHMAP)
+        return bind_hashmap(c, pattern, seen, line, ctx);
+    if (head.fn == FN_TUPLE)
+        return bind_tuple(c, pattern, seen, line, ctx);
+
+    return compiler_malformed(ctx, "destructuring pattern", line);
+}
+
+static bool compile_destructure(compiler_t* c, sexpr_t pattern, int64_t line, ctx_t* ctx)
+{
+    sv_vec_t(sv_str_t) seen = sv_vec_init(sv_str_t);
+    bool ok = bind_pattern(c, pattern, &seen, line, ctx);
+    sv_vec_deinit(&seen, &ctx->alloc);
+    return ok;
+}
+
 static bool compile_equal(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
     if (n != 2)
         return compiler_malformed(ctx, "assignment", line);
+
+    if (args[0].tag == S_CONS || is_pattern_wildcard(args[0])
+        || args[0].atom.kind != TOKEN_LITERAL
+        || args[0].atom.literal.kind != LITERAL_IDENTIFIER) {
+        TRY(compile_sexpr(c, args[1], ctx));
+        return compile_destructure(c, args[0], line, ctx);
+    }
+
     sv_str_t id;
     TRY(expect_id(args[0], ctx, &id));
     TRY(compile_sexpr(c, args[1], ctx));
@@ -317,6 +528,8 @@ static bool compile_tuple(compiler_t* c, const sexpr_t* args, int64_t n, int64_t
 
 static bool compile_record(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
+    if (n > 0 && args[n - 1].tag == S_ATOM && args[n - 1].atom.kind == TOKEN_DOT_DOT)
+        return reject_pattern_only(ctx, args[n - 1].atom.line);
     if (n % 2 != 0 || n / 2 > UINT8_MAX)
         return compiler_malformed(ctx, "record", line);
 
@@ -471,10 +684,23 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     return deinit_scope(c, ctx);
 }
 
+static bool reject_pattern_only(ctx_t* ctx, int64_t line)
+{
+    char msg[96];
+    snprintf(msg, sizeof(msg),
+             "'..' is only valid in a pattern or on the left of '=' at line %" PRId64, line);
+    return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR, msg);
+}
+
 static bool compile_list(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
-    for (int64_t i = 0; i < n; i++)
+    for (int64_t i = 0; i < n; i++) {
+        if (args[i].tag == S_CONS && args[i].cons.size > 0
+            && args[i].cons.arr[0].tag == S_ATOM
+            && args[i].cons.arr[0].atom.kind == TOKEN_DOT_DOT)
+            return reject_pattern_only(ctx, line);
         TRY(compile_sexpr(c, args[i], ctx));
+    }
     return emit2(c, ctx, OP_LIST, (uint8_t)n, line);
 }
 

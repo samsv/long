@@ -234,14 +234,70 @@ static precedence infix_prec(operator_kind op)
     return (precedence){ .left = 0, .right = 0, .has_right = false };
 }
 
+/**
+ * Reads the `..tail` element of a list, having consumed the `..`. Returns the
+ * error atom on failure and a nil atom on success; the tail is pushed onto list.
+ */
+/**
+ * The tail of a list is itself a list, so only a variable or a list pattern can
+ * ever match there. Anything else is rejected rather than left as a dead branch.
+ */
+static bool is_list_tail(sexpr_t e)
+{
+    if (e.tag == S_ATOM)
+        return e.atom.kind == TOKEN_LITERAL && e.atom.literal.kind == LITERAL_IDENTIFIER;
+
+    return e.cons.size > 0 && e.cons.arr[0].tag == S_ATOM
+        && e.cons.arr[0].atom.kind == TOKEN_SP_FUNCTION
+        && e.cons.arr[0].atom.fn == FN_LIST;
+}
+
+static sexpr_t parse_list_tail(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list,
+                               token_t dots, int64_t line, bool as_pattern)
+{
+    if (list->size == 1)
+        return unexpected_token_error(ctx, dots, "List tail must follow an element");
+
+    sexpr_t tail = as_pattern ? parse_pattern(s, ctx) : parse_expr(s, ctx, 5);
+    if (is_error_sexpr(tail))
+        return tail;
+    if (!is_list_tail(tail)) {
+        sexpr_free(&tail, &ctx->alloc);
+        return unexpected_token_error(ctx, dots, "List tail must be a variable or a list after");
+    }
+
+    sexpr_t items[] = { atom_sexpr(dots), tail };
+    sexpr_t tail_cons = cons_of(ctx, items, 2, dots.line);
+    if (is_error_sexpr(tail_cons))
+        return tail_cons;
+    if (!push_sexpr(list, tail_cons, ctx)) {
+        sexpr_free(&tail_cons, &ctx->alloc);
+        return atom_sexpr(oom_error(ctx, line));
+    }
+
+    token_t comma;
+    if (parser_check(s, ctx, kind_pattern(TOKEN_COMMA), &comma))
+        return unexpected_token_error(ctx, comma, "List tail must be the last element");
+
+    return (sexpr_t){ .tag = S_ATOM, .atom = { .kind = TOKEN_EOF, .line = line } };
+}
+
 static sexpr_t parse_container(sv_vec_t(sexpr_t)* list, scanner_t* s, ctx_t* ctx,
-                               token_t open_token, token_pattern close)
+                               token_t open_token, token_pattern close, bool allow_tail)
 {
     token_t closer;
     if (parser_check(s, ctx, close, &closer))
         return cons_sexpr(*list);
 
     for (;;) {
+        token_t dots;
+        if (allow_tail && parser_check(s, ctx, kind_pattern(TOKEN_DOT_DOT), &dots)) {
+            sexpr_t err = parse_list_tail(s, ctx, list, dots, open_token.line, false);
+            if (is_error_sexpr(err))
+                return free_list_error(list, ctx, err);
+            break;
+        }
+
         sexpr_t e = parse_expr(s, ctx, 5);
         if (is_error_sexpr(e))
             return free_list_error(list, ctx, e);
@@ -270,7 +326,7 @@ static sexpr_t parse_parens(scanner_t* s, ctx_t* ctx, token_t left_paren, sexpr_
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, left_paren.line)));
     }
 
-    return parse_container(&list, s, ctx, left_paren, kind_pattern(TOKEN_RIGHT_PAREN));
+    return parse_container(&list, s, ctx, left_paren, kind_pattern(TOKEN_RIGHT_PAREN), false);
 }
 
 static sexpr_t parse_list(scanner_t* s, ctx_t* ctx, token_t open, token_pattern close)
@@ -280,7 +336,7 @@ static sexpr_t parse_list(scanner_t* s, ctx_t* ctx, token_t open, token_pattern 
     if (!push_sexpr(&list, atom_sexpr(list_atom), ctx))
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
 
-    return parse_container(&list, s, ctx, open, close);
+    return parse_container(&list, s, ctx, open, close, true);
 }
 
 static sexpr_t parse_hashmap(scanner_t* s, ctx_t* ctx, token_t open)
@@ -339,6 +395,13 @@ static sexpr_t parse_record(scanner_t* s, ctx_t* ctx, token_t open)
         return cons_sexpr(list);
 
     for (;;) {
+        token_t dots;
+        if (parser_check(s, ctx, kind_pattern(TOKEN_DOT_DOT), &dots)) {
+            if (!push_sexpr(&list, atom_sexpr(dots), ctx))
+                return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+            break;
+        }
+
         token_t field = parser_expect_id(s, ctx);
         if (field.kind == TOKEN_ERROR)
             return free_list_error(&list, ctx, atom_sexpr(field));
@@ -631,7 +694,8 @@ static sexpr_t parse_fun_body(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list,
     if (parser_check(s, ctx, op_pattern(OPERATOR_LEFT_BRACKET), &left_bracket)) {
         sv_vec_t(sexpr_t) captures = sv_vec_init(sexpr_t);
         sexpr_t closure_vals =
-            parse_container(&captures, s, ctx, left_bracket, kind_pattern(TOKEN_RIGHT_BRACKET));
+            parse_container(&captures, s, ctx, left_bracket,
+                            kind_pattern(TOKEN_RIGHT_BRACKET), false);
         if (is_error_sexpr(closure_vals))
             return free_list_error(list, ctx, closure_vals);
         if (!push_sexpr(list, closure_vals, ctx)) {
@@ -860,27 +924,9 @@ static sexpr_t parse_list_pattern(scanner_t* s, ctx_t* ctx, token_t open)
     for (;;) {
         token_t dots;
         if (parser_check(s, ctx, kind_pattern(TOKEN_DOT_DOT), &dots)) {
-            if (list.size == 1)
-                return free_list_error(&list, ctx,
-                    unexpected_token_error(ctx, dots, "List tail must follow an element"));
-
-            token_t tail = parser_expect_id(s, ctx);
-            if (tail.kind == TOKEN_ERROR)
-                return free_list_error(&list, ctx, atom_sexpr(tail));
-
-            sexpr_t items[] = { atom_sexpr(dots), atom_sexpr(tail) };
-            sexpr_t tail_cons = cons_of(ctx, items, 2, dots.line);
-            if (is_error_sexpr(tail_cons))
-                return free_list_error(&list, ctx, tail_cons);
-            if (!push_sexpr(&list, tail_cons, ctx)) {
-                sexpr_free(&tail_cons, &ctx->alloc);
-                return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
-            }
-
-            token_t comma;
-            if (parser_check(s, ctx, kind_pattern(TOKEN_COMMA), &comma))
-                return free_list_error(&list, ctx,
-                    unexpected_token_error(ctx, comma, "List tail must be the last element"));
+            sexpr_t err = parse_list_tail(s, ctx, &list, dots, open.line, true);
+            if (is_error_sexpr(err))
+                return free_list_error(&list, ctx, err);
             break;
         }
 

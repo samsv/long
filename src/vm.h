@@ -105,6 +105,8 @@ typedef enum {
     OP_HAS_FIELD,
     OP_HAS_KEY,
     OP_LIST_UNCONS,
+    OP_ASSERT_MATCH,
+    OP_SWAP,
     OP_RETURN,
 } vm_instructions;
 
@@ -117,6 +119,7 @@ typedef enum {
     VM_ERR_BAD_ARITY,
     VM_ERR_KEY_NOT_FOUND,
     VM_ERR_WRONG_TYPE,
+    VM_ERR_MATCH_FAILED,
 } vm_error_kinds;
 
 /**

@@ -96,7 +96,32 @@ first_neg_or_last = \v.(
 )
 ```
 
-TODO: LHS pattern matches.
+## Patterns on the left of `=`
+
+A pattern may also appear on the left of an assignment, which destructures the
+right hand side and binds the pattern's variables in the enclosing scope.
+
+```elixir
+(a, b) = f()
+[head, ..tail] = lst
+{x: a, ..} = rec
+```
+
+Unlike a `match` clause there is no next alternative to fall through to, so a
+value that does not fit raises `VM_ERR_MATCH_FAILED` at runtime rather than
+producing `nil`. That is the Erlang reading of `=` as a match operator, and it is
+the only one available to a dynamic language: deciding at compile time that a
+pattern cannot fail needs the set of shapes a value may take, which is exactly
+what a dynamic language does not provide.
+
+Because there is a single row and no fallthrough, none of the matrix machinery
+applies — no column scoring, no grouping, no `|`, no `FAIL`. The compiler walks the
+pattern once and emits, against the value on the stack, one assertion per shape
+test and one binding per variable. A repeated variable constrains as it does in a
+clause, so `(a, a) = e` requires both positions to be equal.
+
+The same syntax is a value in other positions, so `..` is rejected there: a list or
+record *expression* carrying `..` is a compile error.
 
 ## Case and Match
 Suppose a new lambda calculus function, `case`. It performs a simple pattern match on the type of a variable. I.e. suppose a pattern match for

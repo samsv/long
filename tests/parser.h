@@ -153,6 +153,14 @@ static inline void sv_test_parser_forms(sv_testing_t* t)
                     "(match x (tuple 1 (when (if g (do 1) (do 2)) (do 3))))");
    sv_test_parse_ok(t, "match x | 1 when g do y = 3; y end",
                     "(match x (tuple 1 (when g (do (= y 3) y))))");
+   /* A destructuring LHS is parsed as an ordinary expression, so `..` is now legal
+    * in list and record expressions and the compiler rejects it in value position. */
+   sv_test_parse_ok(t, "(a, b) = f()", "(= (tuple a b) (f))");
+   sv_test_parse_ok(t, "[h, ..t] = lst", "(= (list h (.. t)) lst)");
+   sv_test_parse_ok(t, "{x: a, ..} = rec", "(= (record x a ..) rec)");
+   sv_test_parse_ok(t, "[a, [b, ..r]] = l", "(= (list a (list b (.. r))) l)");
+   sv_test_parse_ok(t, "%{\"k\": v} = m", "(= (hashmap \"k\" v) m)");
+
    sv_test_parse_ok(t, "[1, 2, 3]", "(list 1 2 3)");
    sv_test_parse_ok(t, "[]", "(list)");
    sv_test_parse_ok(t, "list(1, 2)", "(list 1 2)");
@@ -258,6 +266,15 @@ static inline void sv_test_parser_match(sv_testing_t* t)
                     "false) (do true)))");
    sv_test_parse_ok(t, "match x | [h, ..t] do h end",
                     "(match x (tuple (list h (.. t)) (do h)))");
+   /* The list tail is a pattern, not just a variable: `..[]` pins an exact length
+    * and `..[b]` matches a one element remainder. */
+   sv_test_parse_ok(t, "match x | [a, ..[]] do a end",
+                    "(match x (tuple (list a (.. (list))) (do a)))");
+   sv_test_parse_ok(t, "match x | [a, ..[b]] do b end",
+                    "(match x (tuple (list a (.. (list b))) (do b)))");
+   sv_test_parse_ok(t, "match x | [a, ..[b, ..c]] do c end",
+                    "(match x (tuple (list a (.. (list b (.. c)))) (do c)))");
+   sv_test_parse_ok(t, "[a, ..[]] = l", "(= (list a (.. (list))) l)");
    sv_test_parse_ok(t, "match x | [] do 0 | [a, b] do a end",
                     "(match x (tuple (list) (do 0)) (tuple (list a b) "
                     "(do a)))");
@@ -304,6 +321,18 @@ static inline void sv_test_parser_errors(sv_testing_t* t)
    sv_test_parse_error(t, "fun f(x) = x + 2 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | 1 = 2 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "do 1", (int)PARSER_ERROR_EOF);
+
+   /* The list tail keeps its guards, and `..` stays illegal in a tuple and in a
+    * capture list, since only lists opt into it. */
+   sv_test_parse_error(t, "[..xs] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "[.., t] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "[..t, 1] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "[h, ..1] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | [a, ..1] do a end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | [a, ..\"s\"] do a end",
+                       (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "(a, ..b) = t", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun f[a, ..b](x) x", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "fun f(x) | end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "fun f() | 0 do 1 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "fun f(a, b) | 1 do 2 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);

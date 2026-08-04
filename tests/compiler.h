@@ -465,6 +465,31 @@ static inline void sv_test_compiler_match(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("match [1, 3] | [1, 2] do 8 | [1, 3] do 9 end", 9));
    sv_test_run(t, sv_test_compiler_num("match [1, 2, 3] | [a, ..r] do match r | [b, ..s] do b end end", 2));
 
+   /* A pattern in the tail position: `..[]` pins an exact length, `..[b]` a one
+    * element remainder, and they nest. */
+   sv_test_run(t, sv_test_compiler_num("match [7] | [a, ..[]] do a | _ do 9 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match [7, 8] | [a, ..[]] do a | _ do 9 end", 9));
+   sv_test_run(t, sv_test_compiler_num("match [7, 8] | [a, ..[b]] do b | _ do 9 end", 8));
+   sv_test_run(t, sv_test_compiler_num("match [7] | [a, ..[b]] do b | _ do 9 end", 9));
+   sv_test_run(t, sv_test_compiler_num(
+      "match [7, 8, 9] | [a, ..[b, ..c]] do b | _ do 0 end", 8));
+
+   /* The doc's first_neg_or_last, which needs the `..[]` tail. */
+   sv_test_run(t, sv_test_compiler_num(
+      "fun f(lst)\n"
+      "| [x, ..xs] when x < 0 do x\n"
+      "| [x, ..[]] do x\n"
+      "| [x, ..xs] do f(xs)\n"
+      "end\n"
+      "f([1, -2, 3])", -2));
+   sv_test_run(t, sv_test_compiler_num(
+      "fun f(lst)\n"
+      "| [x, ..xs] when x < 0 do x\n"
+      "| [x, ..[]] do x\n"
+      "| [x, ..xs] do f(xs)\n"
+      "end\n"
+      "f([1, 2, 3])", 3));
+
    /* Fail paths that unwind one and two list-uncons scopes. */
    sv_test_run(t, sv_test_compiler_num("match [1] | [1, 2] do 8 | _ do 5 end", 5));
    sv_test_run(t, sv_test_compiler_num("match [1, 9] | [1, 2] do 8 | [1, 3] do 9 | _ do 5 end", 5));
@@ -627,6 +652,59 @@ static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
    value_free(&v, &sv_gpa);
 }
 
+static inline void sv_test_compiler_destructure(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_num("(a, b) = (1, 2)\na + b", 3));
+   sv_test_run(t, sv_test_compiler_num("(a, [b, c]) = (1, [2, 3])\na + b + c", 6));
+   sv_test_run(t, sv_test_compiler_num("[h, ..t] = [1, 2, 3]\nh", 1));
+   sv_test_run(t, sv_test_compiler_num("[h, ..t] = [1, 2, 3]\nt[1]", 3));
+   sv_test_run(t, sv_test_compiler_num("[a, b] = [1, 2]\na + b", 3));
+   sv_test_run(t, sv_test_compiler_num("{x: a} = {x: 5}\na", 5));
+   sv_test_run(t, sv_test_compiler_num("{x: a, ..} = {x: 5, y: 6}\na", 5));
+   sv_test_run(t, sv_test_compiler_num("%{\"k\": v} = %{\"k\": 7}\nv", 7));
+
+   /* A pattern tail works on the left of `=` too. */
+   sv_test_run(t, sv_test_compiler_num("[a, ..[]] = [7]\na", 7));
+   sv_test_run(t, sv_test_compiler_num("[a, ..[b]] = [7, 8]\nb", 8));
+   sv_test_run(t, sv_test_compiler_runtime_err("[a, ..[]] = [7, 8]\na")
+               == VM_ERR_MATCH_FAILED);
+
+   /* Wildcards bind nothing, and a literal is a pure assertion. */
+   sv_test_run(t, sv_test_compiler_num("(_, b) = (1, 2)\nb", 2));
+   sv_test_run(t, sv_test_compiler_num("[h, .._] = [1, 2, 3]\nh", 1));
+   sv_test_run(t, sv_test_compiler_num("_ = 5\n42", 42));
+   sv_test_run(t, sv_test_compiler_num("1 = 1\n42", 42));
+
+   /* The assignment is still an expression, evaluating to the right hand side. */
+   sv_test_run(t, sv_test_compiler_num("y = ((a, b) = (1, 2))\nb", 2));
+
+   /* A repeat constrains, exactly as it does in a match clause. */
+   sv_test_run(t, sv_test_compiler_num("(a, a) = (1, 1)\na", 1));
+   sv_test_run(t, sv_test_compiler_num("(a, b, a) = (1, 2, 1)\nb", 2));
+
+   /* Scope: locals inside a function, globals at the top level. */
+   sv_test_run(t, sv_test_compiler_num("fun f(p) do\n(a, b) = p\na + b\nend\nf((3, 4))", 7));
+   sv_test_run(t, sv_test_compiler_num("z = do\n(a, b) = (10, 20)\na + b\nend\nz", 30));
+
+   /* Every mismatch raises rather than yielding nil. */
+   sv_test_run(t, sv_test_compiler_runtime_err("(a, b) = (1, 2, 3)\na") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("(a, b) = 5\na") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("[a, b] = [1, 2, 3]\na") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("[a, b] = [1]\na") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("{x: a} = {x: 5, y: 6}\na") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("{z: a, ..} = {x: 5}\na") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("%{\"z\": v} = %{\"k\": 7}\nv")
+               == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("1 = 2\n42") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("(a, a) = (1, 2)\na") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("(a, b, a) = (1, 2, 3)\nb")
+               == VM_ERR_MATCH_FAILED);
+
+   /* `..` is pattern and LHS syntax only. */
+   sv_test_run(t, sv_test_compiler_err("y = 1\nx = [1, ..y]\nx") == C_ERR_UNEXPECTED_SEXPR);
+   sv_test_run(t, sv_test_compiler_err("x = {a: 1, ..}\nx") == C_ERR_UNEXPECTED_SEXPR);
+}
+
 static inline void sv_test_compiler(sv_testing_t* t)
 {
    sv_test_compiler_basics(t);
@@ -643,6 +721,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_groups(t);
    sv_test_compiler_match(t);
    sv_test_compiler_fun_clauses(t);
+   sv_test_compiler_destructure(t);
    sv_test_compiler_errors(t);
    sv_test_compiler_runtime_errors(t);
 }
