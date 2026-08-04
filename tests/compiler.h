@@ -531,6 +531,53 @@ static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
    /* The guard is a plain expression, so a block body works behind one. */
    sv_test_run(t, sv_test_compiler_num("match 1 | 1 when true do y = 3; y + 1 end", 4));
 
+   /* A repeated variable constrains the positions to be equal. The non-adjacent
+    * cases are the ones that matter: an implementation comparing only neighbouring
+    * slots would pass (a, a) and fail every one of these. */
+   sv_test_run(t, sv_test_compiler_num("match (1, 1) | (a, a) do a | _ do 99 end", 1));
+   sv_test_run(t, sv_test_compiler_num("match (1, 2) | (a, a) do a | _ do 99 end", 99));
+   sv_test_run(t, sv_test_compiler_num("match (1, 2, 1) | (a, b, a) do b | _ do 99 end", 2));
+   sv_test_run(t, sv_test_compiler_num("match (1, 2, 3) | (a, b, a) do b | _ do 99 end", 99));
+   sv_test_run(t, sv_test_compiler_num("match (1, 1, 1) | (a, a, a) do a | _ do 9 end", 1));
+   sv_test_run(t, sv_test_compiler_num("match (1, 1, 2) | (a, a, a) do a | _ do 9 end", 9));
+   sv_test_run(t, sv_test_compiler_num("match (1, 2, 1) | (a, a, a) do a | _ do 9 end", 9));
+   sv_test_run(t, sv_test_compiler_num(
+      "match (1, 2, 2, 1) | (a, b, b, a) do 1 | _ do 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num(
+      "match (1, 2, 2, 3) | (a, b, b, a) do 1 | _ do 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num(
+      "match (1, 2, 3, 1) | (a, b, b, a) do 1 | _ do 0 end", 0));
+
+   /* A repeat spanning a nested container. */
+   sv_test_run(t, sv_test_compiler_num("match (1, [2, 1]) | (a, [b, a]) do b | _ do 9 end", 2));
+   sv_test_run(t, sv_test_compiler_num("match (1, [2, 3]) | (a, [b, a]) do b | _ do 9 end", 9));
+
+   sv_test_run(t, sv_test_compiler_num("match [1, 1, 5] | [x, x, ..xs] do x | _ do 9 end", 1));
+   sv_test_run(t, sv_test_compiler_num("match [1, 2, 5] | [x, x, ..xs] do x | _ do 9 end", 9));
+
+   /* A tail variable repeating a head variable compares against the tail list,
+    * so it holds only when the head equals that list. */
+   sv_test_run(t, sv_test_compiler_num("match [[]] | [x, ..x] do 7 | _ do 9 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match [[], []] | [x, ..x] do 7 | _ do 9 end", 9));
+
+   sv_test_run(t, sv_test_compiler_num("match {a: 1, b: 1} | {a: v, b: v} do v | _ do 9 end", 1));
+   sv_test_run(t, sv_test_compiler_num("match {a: 1, b: 2} | {a: v, b: v} do v | _ do 9 end", 9));
+
+   /* Duplicate field *names* are not variables, so they constrain nothing. */
+   sv_test_run(t, sv_test_compiler_num("match {a: 1, b: 1} | {a: 1, b: 1} do 5 | _ do 9 end", 5));
+
+   /* `==` is structural here, so a repeat compares deeply. */
+   sv_test_run(t, sv_test_compiler_num("match ([1], [1]) | (a, a) do 1 | _ do 2 end", 1));
+
+   /* Wildcards are exempt: `_` never constrains. */
+   sv_test_run(t, sv_test_compiler_num("match (1, 2) | (_, _) do 7 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match (1, 2, 3) | (_, a, _) do a end", 2));
+
+   /* A repeat composes with a guard, and either can fail independently. */
+   sv_test_run(t, sv_test_compiler_num("match (2, 2) | (a, a) when a > 1 do 5 | _ do 9 end", 5));
+   sv_test_run(t, sv_test_compiler_num("match (1, 1) | (a, a) when a > 1 do 5 | _ do 9 end", 9));
+   sv_test_run(t, sv_test_compiler_num("match (2, 3) | (a, a) when a > 1 do 5 | _ do 9 end", 9));
+
    /* A guard fails to the nearest default: an inner match's guard lands on the
     * inner default, so the outer clause still succeeds with its value. */
    sv_test_run(t, sv_test_compiler_kind(

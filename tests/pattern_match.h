@@ -15,6 +15,7 @@
 #define T5 "$000000000005"
 #define T6 "$000000000006"
 #define T7 "$000000000007"
+#define T8 "$000000000008"
 
 static inline void sv_test_match_ok(sv_testing_t* t, const char* src, const char* expected)
 {
@@ -243,11 +244,83 @@ static inline void sv_test_match_guards(sv_testing_t* t)
       " 1) (if g (do (= y 3) y) $fail) $fail) $fail) nil))");
 }
 
+static inline void sv_test_match_repeats(sv_testing_t* t)
+{
+   /* The base case: the repeat becomes a fresh temp plus one equality. */
+   sv_test_match_ok(t, "match x | (a, a) do a end",
+      "(do (= " T1 " x) (| (if (is-tuple? " T1 " 2) (do (= " T3 " ([ " T1 " 0)) (do (= "
+      T4 " ([ " T1 " 1)) (do (= " T2 " " T4 ") (do (= a " T3 ") (if (== a " T2
+      ") (do a) $fail))))) $fail) nil))");
+
+   /* A non-adjacent repeat. `b` sits between the two occurrences and
+    * gains no constraint of its own. */
+   sv_test_match_ok(t, "match x | (a, b, a) do b end",
+      "(do (= " T1 " x) (| (if (is-tuple? " T1 " 3) (do (= " T3 " ([ " T1 " 0)) (do (= "
+      T4 " ([ " T1 " 1)) (do (= " T5 " ([ " T1 " 2)) (do (= " T2 " " T5 ") (do (= b " T4
+      ") (do (= a " T3 ") (if (== a " T2 ") (do b) $fail))))))) $fail) nil))");
+
+   /* Three occurrences give two constraints, both against the first, so
+    * `a == e2 and a == e3` implies `e2 == e3`. */
+   sv_test_match_ok(t, "match x | (a, a, a) do a end",
+      "(do (= " T1 " x) (| (if (is-tuple? " T1 " 3) (do (= " T4 " ([ " T1 " 0)) (do (= "
+      T5 " ([ " T1 " 1)) (do (= " T6 " ([ " T1 " 2)) (do (= " T3 " " T6 ") (do (= " T2
+      " " T5 ") (do (= a " T4 ") (if (and (== a " T2 ") (== a " T3
+      ")) (do a) $fail))))))) $fail) nil))");
+
+   /* Two independent repeats, interleaved. */
+   sv_test_match_ok(t, "match x | (a, b, b, a) do 1 end",
+      "(do (= " T1 " x) (| (if (is-tuple? " T1 " 4) (do (= " T4 " ([ " T1 " 0)) (do (= "
+      T5 " ([ " T1 " 1)) (do (= " T6 " ([ " T1 " 2)) (do (= " T7 " ([ " T1 " 3)) (do (= "
+      T3 " " T7 ") (do (= " T2 " " T6 ") (do (= b " T5 ") (do (= a " T4
+      ") (if (and (== b " T2 ") (== a " T3 ")) (do 1) $fail))))))))) $fail) nil))");
+
+   /* A repeat that crosses a container boundary. */
+   sv_test_match_ok(t, "match x | (a, [b, a]) do b end",
+      "(do (= " T1 " x) (| (if (is-tuple? " T1 " 2) (do (= " T3 " ([ " T1 " 0)) (do (= "
+      T4 " ([ " T1 " 1)) (if (is-list? " T4 ") (if (is-cons? " T4 ") (list-uncons " T4
+      " " T5 " " T6 " (if (is-cons? " T6 ") (list-uncons " T6 " " T7 " " T8
+      " (if (is-cons? " T8 ") $fail (do (= a " T3 ") (do (= b " T5 ") (do (= " T2 " " T7
+      ") (if (== a " T2 ") (do b) $fail)))))) $fail)) $fail) $fail))) $fail) nil))");
+
+   /* Fixed list elements, with the tail left unconstrained. */
+   sv_test_match_ok(t, "match x | [p, p, ..ps] do p end",
+      "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons " T1
+      " " T3 " " T4 " (if (is-cons? " T4 ") (list-uncons " T4 " " T5 " " T6 " (do (= p "
+      T3 ") (do (= ps " T6 ") (do (= " T2 " " T5 ") (if (== p " T2
+      ") (do p) $fail))))) $fail)) $fail) $fail) nil))");
+
+   /* Record values are variables; the field names are not. */
+   sv_test_match_ok(t, "match x | {a: v, b: v} do v end",
+      "(do (= " T1 " x) (| (if (is-record? " T1 " 2) (if (has-field? " T1
+      " a) (if (has-field? " T1 " b) (do (= " T3 " (. " T1 " a)) (do (= " T4 " (. " T1
+      " b)) (do (= " T2 " " T4 ") (do (= v " T3 ") (if (== v " T2
+      ") (do v) $fail))))) $fail) $fail) $fail) nil))");
+
+   /* A repeat merges into an existing guard, equality first so the cheap
+    * test short circuits before the user's expression. */
+   sv_test_match_ok(t, "match x | (a, a) when a > 1 do 5 end",
+      "(do (= " T1 " x) (| (if (is-tuple? " T1 " 2) (do (= " T3 " ([ " T1 " 0)) (do (= "
+      T4 " ([ " T1 " 1)) (do (= " T2 " " T4 ") (do (= a " T3 ") (if (and (== a " T2
+      ") (> a 1)) (do 5) $fail))))) $fail) nil))");
+
+   /* Wildcards are exempt, so these lower with no guard at all and consume
+    * no temp. */
+   sv_test_match_ok(t, "match x | (_, _) do 7 end",
+      "(do (= " T1 " x) (| (if (is-tuple? " T1 " 2) (do (= " T2 " ([ " T1 " 0)) (do (= "
+      T3 " ([ " T1 " 1)) (do 7))) $fail) nil))");
+
+   sv_test_match_ok(t, "match x | (_, a, _) do a end",
+      "(do (= " T1 " x) (| (if (is-tuple? " T1 " 3) (do (= " T2 " ([ " T1 " 0)) (do (= "
+      T3 " ([ " T1 " 1)) (do (= " T4 " ([ " T1 " 2)) (do (= a " T3
+      ") (do a))))) $fail) nil))");
+}
+
 static inline void sv_test_match_oom(sv_testing_t* t)
 {
    const char* src =
       "match x | 1 do 2 | \"a\" do 3 | (4, 5) do 6 | {k: 7, j: 8} do 9"
-      " | [1, ..zs] do zs | (a, 1) do a | b when b > 0 do b | y do y end";
+      " | [1, ..zs] do zs | (a, 1) do a | b when b > 0 do b"
+      " | (c, d, d, c) do c | y do y end";
    int64_t errored = 0;
    int64_t completed = 0;
 
@@ -286,6 +359,7 @@ static inline void sv_test_pattern_match(sv_testing_t* t)
    sv_test_match_records(t);
    sv_test_match_lists(t);
    sv_test_match_guards(t);
+   sv_test_match_repeats(t);
    sv_test_match_oom(t);
 }
 

@@ -120,6 +120,16 @@ static sexpr_t pipe_atom(int64_t line)
     return atom_sexpr((token_t){ .kind = TOKEN_PIPE, .line = line });
 }
 
+static sexpr_t and_atom(int64_t line)
+{
+    return atom_sexpr((token_t){ .kind = TOKEN_KEYWORD, .line = line, .keyword = KEYWORD_AND });
+}
+
+static sexpr_t when_atom(int64_t line)
+{
+    return atom_sexpr((token_t){ .kind = TOKEN_KEYWORD, .line = line, .keyword = KEYWORD_WHEN });
+}
+
 static sexpr_t fail_atom(int64_t line)
 {
     return id_atom(FAIL_NAME, line);
@@ -1269,6 +1279,123 @@ static bool is_guard(sexpr_t body)
         && body.cons.arr[0].atom.keyword == KEYWORD_WHEN;
 }
 
+static bool link_repeat(sexpr_t* slot, sexpr_t* eq, int64_t line, ctx_t* ctx)
+{
+    sexpr_t dup = { 0 };
+    sexpr_t test = { 0 };
+    if (!next_temp(&dup, line, ctx)
+        || !build_op2(&test, OPERATOR_EQUAL_EQUAL,
+                      id_atom_str(slot->atom.literal.literal, line), dup, line, ctx))
+        return false;
+
+    *slot = dup;
+    if (eq->tag != S_CONS) {
+        *eq = test;
+        return true;
+    }
+
+    sexpr_t joined = { 0 };
+    sexpr_t items[] = { and_atom(line), *eq, test };
+    if (!cons_build(&joined, items, 3, &ctx->alloc)) {
+        sexpr_free(&test, &ctx->alloc);
+        return match_oom(ctx, line);
+    }
+
+    *eq = joined;
+    return true;
+}
+
+static bool linearise(sexpr_t* slot, sv_vec_t(sv_str_t)* seen, sexpr_t* eq,
+                      int64_t line, ctx_t* ctx)
+{
+    sexpr_t p = *slot;
+    if (p.tag == S_ATOM) {
+        if (p.atom.kind != TOKEN_LITERAL || p.atom.literal.kind != LITERAL_IDENTIFIER
+            || is_wildcard(p))
+            return true;
+
+        for (int64_t i = 0; i < seen->size; i++)
+            if (sv_str_comp(seen->arr[i], p.atom.literal.literal))
+                return link_repeat(slot, eq, line, ctx);
+
+        int success = 0;
+        sv_vec_push(seen, p.atom.literal.literal, &success, &ctx->alloc);
+        return success != 0 ? true : match_oom(ctx, line);
+    }
+
+    token_t head = p.cons.arr[0].atom;
+    if (head.kind != TOKEN_SP_FUNCTION)
+        return true;
+
+    if (head.fn == FN_RECORD || head.fn == FN_HASHMAP) {
+        int64_t n = head.fn == FN_RECORD ? record_n_fields(p) : (p.cons.size - 1) / 2;
+        for (int64_t i = 0; i < n; i++)
+            if (!linearise(&p.cons.arr[2 + 2 * i], seen, eq, line, ctx))
+                return false;
+
+        return true;
+    }
+
+    if (head.fn == FN_LIST) {
+        for (int64_t i = 0; i < list_n_fixed(p); i++)
+            if (!linearise(&p.cons.arr[1 + i], seen, eq, line, ctx))
+                return false;
+
+        if (list_has_tail(p))
+            return linearise(&p.cons.arr[p.cons.size - 1].cons.arr[1], seen, eq, line, ctx);
+
+        return true;
+    }
+
+    for (int64_t i = 1; i < p.cons.size; i++)
+        if (!linearise(&p.cons.arr[i], seen, eq, line, ctx))
+            return false;
+
+    return true;
+}
+
+static bool lower_repeats(sexpr_t* pattern, row_t* row, int64_t line, ctx_t* ctx)
+{
+    sv_vec_t(sv_str_t) seen = sv_vec_init(sv_str_t);
+    sexpr_t eq = { 0 };
+
+    bool ok = linearise(pattern, &seen, &eq, line, ctx);
+    sv_vec_deinit(&seen, &ctx->alloc);
+    if (!ok) {
+        sexpr_free(&eq, &ctx->alloc);
+        return false;
+    }
+    if (eq.tag != S_CONS)
+        return true;
+
+    sexpr_t marker = *row->slot;
+    if (is_guard(marker)) {
+        sexpr_t joined = { 0 };
+        sexpr_t items[] = { and_atom(line), eq, marker.cons.arr[1] };
+        if (!cons_build(&joined, items, 3, &ctx->alloc)) {
+            sexpr_free(&eq, &ctx->alloc);
+            return match_oom(ctx, line);
+        }
+
+        marker.cons.arr[1] = joined;
+        return true;
+    }
+
+    sexpr_t body = *row->slot;
+    *row->slot = nil_atom(line);
+
+    sexpr_t wrapped = { 0 };
+    sexpr_t items[] = { when_atom(line), eq, body };
+    if (!cons_build(&wrapped, items, 3, &ctx->alloc)) {
+        *row->slot = body;
+        sexpr_free(&eq, &ctx->alloc);
+        return match_oom(ctx, line);
+    }
+
+    *row->slot = wrapped;
+    return true;
+}
+
 static bool lower_guard(row_t* row, int64_t line, ctx_t* ctx)
 {
     sexpr_t marker = *row->slot;
@@ -1321,7 +1448,8 @@ static sexpr_t match_lower(sexpr_t s, ctx_t* ctx)
         sexpr_t* slots = match.arr[CLAUSES_START + i].cons.arr;
         m.cells[i] = cell_of(&slots[1]);
         m.bodies[i] = (row_t){ .slot = &slots[2] };
-        ok = lower_guard(&m.bodies[i], line, ctx);
+        ok = lower_repeats(&slots[1], &m.bodies[i], line, ctx)
+            && lower_guard(&m.bodies[i], line, ctx);
     }
     if (!ok) {
         matrix_free(&m, ctx);
