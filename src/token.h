@@ -72,6 +72,7 @@ typedef enum {
     KEYWORD_OR,
     KEYWORD_NOT,
     KEYWORD_SELF,
+    KEYWORD_WHEN,
 } keyword_kind;
 
 typedef enum {

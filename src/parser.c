@@ -451,6 +451,37 @@ static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
     return cons_of(ctx, items, 3, for_token.line);
 }
 
+static sexpr_t parse_clause_body(scanner_t* s, ctx_t* ctx, int64_t line, token_t* term)
+{
+    token_t when;
+    sexpr_t guard = { 0 };
+    bool guarded = parser_check(s, ctx, kw_pattern(KEYWORD_WHEN), &when);
+    if (guarded) {
+        guard = parse_expr(s, ctx, 0);
+        if (is_error_sexpr(guard))
+            return guard;
+    }
+
+    token_t sep_token = parser_expect(s, ctx, kw_pattern(KEYWORD_DO));
+    if (sep_token.kind == TOKEN_ERROR) {
+        sexpr_free(&guard, &ctx->alloc);
+        return atom_sexpr(sep_token);
+    }
+
+    token_pattern ends[] = { kind_pattern(TOKEN_PIPE), kw_pattern(KEYWORD_END) };
+    sexpr_t body = parse_block(s, ctx, ends, 2, line, term);
+    if (is_error_sexpr(body)) {
+        sexpr_free(&guard, &ctx->alloc);
+        return body;
+    }
+
+    if (!guarded)
+        return body;
+
+    sexpr_t items[] = { atom_sexpr(when), guard, body };
+    return cons_of(ctx, items, 3, when.line);
+}
+
 static token_t pattern_head(sexpr_t pattern)
 {
     return pattern.tag == S_ATOM ? pattern.atom : pattern.cons.arr[0].atom;
@@ -555,15 +586,8 @@ static sexpr_t parse_fun_clauses(scanner_t* s, ctx_t* ctx, sexpr_t args, token_t
                 atom_sexpr(parser_error_at(ctx, PARSER_ERROR_UNEXPECTED_TOKEN, line, msg)));
         }
 
-        token_t equal = parser_expect(s, ctx, op_pattern(OPERATOR_EQUAL));
-        if (equal.kind == TOKEN_ERROR) {
-            sexpr_free(&pattern, &ctx->alloc);
-            return free_list_error(&list, ctx, atom_sexpr(equal));
-        }
-
-        token_pattern ends[] = { kind_pattern(TOKEN_PIPE), kw_pattern(KEYWORD_END) };
         token_t inner = { .kind = TOKEN_EOF };
-        sexpr_t body = parse_block(s, ctx, ends, 2, fun_token.line, &inner);
+        sexpr_t body = parse_clause_body(s, ctx, fun_token.line, &inner);
         if (is_error_sexpr(body)) {
             sexpr_free(&pattern, &ctx->alloc);
             return free_list_error(&list, ctx, body);
@@ -585,14 +609,11 @@ static sexpr_t parse_fun_clauses(scanner_t* s, ctx_t* ctx, sexpr_t args, token_t
         }
     }
 
-    token_t do_token = { .kind = TOKEN_KEYWORD, .line = fun_token.line, .keyword = KEYWORD_DO };
-    sexpr_t do_items[] = { atom_sexpr(do_token), cons_sexpr(list) };
-    return cons_of(ctx, do_items, 2, fun_token.line);
+    return cons_sexpr(list);
 }
 
 static sexpr_t parse_fun_body(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list, token_t fun_token,
-                              const token_pattern* ends, int64_t n_ends, token_t* term,
-                              token_t* pending)
+                              token_t* term, token_t* pending)
 {
     token_t id;
     if (pending != NULL && pending->kind == TOKEN_LITERAL) {
@@ -636,10 +657,15 @@ static sexpr_t parse_fun_body(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list,
     if (parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &pipe)) {
         body = parse_fun_clauses(s, ctx, args, fun_token, term, pending);
     } else {
-        token_t equal = parser_expect(s, ctx, op_pattern(OPERATOR_EQUAL));
-        if (equal.kind == TOKEN_ERROR)
-            return free_list_error(list, ctx, atom_sexpr(equal));
-        body = parse_block(s, ctx, ends, n_ends, fun_token.line, term);
+        body = parse_expr(s, ctx, 0);
+        if (is_error_sexpr(body))
+            return free_list_error(list, ctx, body);
+        if (pending != NULL && !parser_check(s, ctx, kind_pattern(TOKEN_PIPE), term)) {
+            token_t closed = parser_expect_close(s, ctx, fun_token, kw_pattern(KEYWORD_END));
+            if (closed.kind == TOKEN_ERROR)
+                return free_list_error(list, ctx, atom_sexpr(closed));
+            *term = closed;
+        }
     }
     if (is_error_sexpr(body))
         return free_list_error(list, ctx, body);
@@ -659,18 +685,15 @@ static sexpr_t parse_fun(scanner_t* s, ctx_t* ctx, token_t fun_token)
 
     token_t pipe_token;
     if (!parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &pipe_token)) {
-        token_pattern ends[] = { kw_pattern(KEYWORD_END) };
-        token_t term;
-        return parse_fun_body(s, ctx, &list, fun_token, ends, 1, &term, NULL);
+        token_t term = { .kind = TOKEN_EOF };
+        return parse_fun_body(s, ctx, &list, fun_token, &term, NULL);
     }
 
     token_t end_token = pipe_token;
     token_t pending = { .kind = TOKEN_EOF };
     while (end_token.kind == TOKEN_PIPE) {
         sv_vec_t(sexpr_t) body_list = sv_vec_init(sexpr_t);
-        token_pattern ends[] = { kw_pattern(KEYWORD_END), kind_pattern(TOKEN_PIPE) };
-        sexpr_t body = parse_fun_body(s, ctx, &body_list, end_token, ends, 2, &end_token,
-                                      &pending);
+        sexpr_t body = parse_fun_body(s, ctx, &body_list, end_token, &end_token, &pending);
         if (is_error_sexpr(body))
             return free_list_error(&list, ctx, body);
         if (!push_sexpr(&list, body, ctx)) {
@@ -1040,14 +1063,7 @@ static sexpr_t parse_match(scanner_t* s, ctx_t* ctx, token_t match_token)
 
         pattern_body_vec.arr[pattern_body_vec.size++] = pattern;
 
-        token_t equal = parser_expect(s, ctx, op_pattern(OPERATOR_EQUAL));
-        if (equal.kind == TOKEN_ERROR) {
-            err = atom_sexpr(equal);
-            goto error;
-        }
-
-        token_pattern ends[] = { kind_pattern(TOKEN_PIPE), kw_pattern(KEYWORD_END) };
-        sexpr_t body = parse_block(s, ctx, ends, 2, match_token.line, &term);
+        sexpr_t body = parse_clause_body(s, ctx, match_token.line, &term);
         if (is_error_sexpr(body)) {
             err = body;
             goto error;
@@ -1213,6 +1229,12 @@ static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
         snprintf(msg, sizeof(msg), "Expected expression, got end of input at line %" PRId64,
                  token.line);
         return atom_sexpr(parser_error_at(ctx, PARSER_ERROR_EOF, token.line, msg));
+    }
+
+    if (token.kind == TOKEN_KEYWORD && token.keyword == KEYWORD_DO) {
+        token_pattern ends[] = { kw_pattern(KEYWORD_END) };
+        token_t term;
+        return parse_block(s, ctx, ends, 1, token.line, &term);
     }
 
     if (token.kind == TOKEN_SP_FUNCTION) {

@@ -62,6 +62,7 @@ const char* keyword_text(keyword_kind keyword)
         case KEYWORD_OR: return "or";
         case KEYWORD_NOT: return "not";
         case KEYWORD_SELF: return "self";
+        case KEYWORD_WHEN: return "when";
     }
     return "";
 }

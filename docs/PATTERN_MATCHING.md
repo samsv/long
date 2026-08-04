@@ -7,9 +7,9 @@ This document details the algorithms and implementation from the book. Basic kno
 Consider the match expression
 ```elixir
 match x
-| p1 = e1
-| p2 = e2
-| p3 = e3
+| p1 do e1
+| p2 do e2
+| p3 do e3
 ...
 end
 ```
@@ -43,9 +43,9 @@ The `nil` on the last alternative makes a match with no matching pattern evaluat
 For multiple arguments, i.e.
 ```elixir
 match (x, y)
-| (p11, p12) = e1
-| (p21, p22) = e2
-| (p31, p32) = e3
+| (p11, p12) do e1
+| (p21, p22) do e2
+| (p31, p32) do e3
 ...
 end
 ```
@@ -64,9 +64,9 @@ Example: `xor`
 ```ml
 xor =
     match (a, b)
-    | (false, y) = y
-    | (true, true) = false
-    | (true, false) = true
+    | (false, y) do y
+    | (true, true) do false
+    | (true, false) do true
     end
 ```
 Translates as
@@ -81,9 +81,9 @@ Translates as
 We can also define guards using lambda calculus. Consider the function
 ```ml
 fun first_neg_or_last(lst)
-| [x, ..xs] when x < 0 = x
-| [x, ..[]] = x
-| [x, ..xs] = first_neg_or_last(xs)
+| [x, ..xs] when x < 0 do x
+| [x, ..[]] do x
+| [x, ..xs] do first_neg_or_last(xs)
 end
 ```
 We can translate it to
@@ -134,9 +134,9 @@ each variable and the second is the expression associated with the pattern list.
 Let's consider a function `f`, in the form
 ```
 fun fn(f, lst1, lst2)
-| (f, [], ys) = A(f, ys)
-| (f, [x, ..xs], []) = B(f, x, xs)
-| (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
+| (f, [], ys) do A(f, ys)
+| (f, [x, ..xs], []) do B(f, x, xs)
+| (f, [x, ..xs], [y, ..ys]) do C(f, x, xs, y, ys)
 end
 ```
 where `A`, `B` and `C` are defined elsewhere. We may translate it into lambda calculus
@@ -255,9 +255,9 @@ We are still missing one rule, however.
 Consider the following case:
 ```
 fun fn(f, lst1, lst2)
-| (f, [], ys) = A(f, ys)
-| (f, xs, []) = B(f, xs)
-| (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
+| (f, [], ys) do A(f, ys)
+| (f, xs, []) do B(f, xs)
+| (f, [x, ..xs], [y, ..ys]) do C(f, x, xs, y, ys)
 end
 ```
 Converting it into a match expression yields
@@ -283,10 +283,10 @@ try to compile the match expression.
 Suppose the following match expression
 ```elixir
 match x
-| {x: 5, y: a} = ...
-| {y: 0, z: 0} = ...
-| {z: 0} = ...
-| {w: 1} = ...
+| {x: 5, y: a} do ...
+| {y: 0, z: 0} do ...
+| {z: 0} do ...
+| {w: 1} do ...
 end
 ```
 We may transform it into the following matrix
@@ -300,10 +300,10 @@ We may transform it into the following matrix
 Now, we match as if the expression was
 ```elixir
 match (x, y, z, w)
-| (5, a, _, _) = ...
-| (_, 0, 0, _) = ...
-| (_, _, 0, _) = ...
-| (_, _, _, 1) = ...
+| (5, a, _, _) do ...
+| (_, 0, 0, _) do ...
+| (_, _, 0, _) do ...
+| (_, _, _, 1) do ...
 end
 ```
 Unlike a real tuple, though, the columns are fallible lookups fetched lazily: a cell only performs its lookup when tested,
@@ -325,9 +325,9 @@ We may reorder the columns of a tuple pattern match without changing the final r
 the example
 ```
 fun fn(f, lst1, lst2)
-| (f, [], ys) = A(f, ys)
-| (f, xs, []) = B(f, xs)
-| (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
+| (f, [], ys) do A(f, ys)
+| (f, xs, []) do B(f, xs)
+| (f, [x, ..xs], [y, ..ys]) do C(f, x, xs, y, ys)
 end
 ```
 and transform it into our lambda calculus representation, using the variable rule to optimize out the `f` pattern.
@@ -481,9 +481,9 @@ new internal forms this compilation introduces: the compiler does not know them 
 Let's convert the whole `fn` example from the column reordering section:
 ```
 fun fn(f, lst1, lst2)
-| (f, [], ys) = A(f, ys)
-| (f, xs, []) = B(f, xs)
-| (f, [x, ..xs], [y, ..ys]) = C(f, x, xs, y, ys)
+| (f, [], ys) do A(f, ys)
+| (f, xs, []) do B(f, xs)
+| (f, [x, ..xs], [y, ..ys]) do C(f, x, xs, y, ys)
 end
 ```
 After the variable rule removes `f`, the match becomes the s expression

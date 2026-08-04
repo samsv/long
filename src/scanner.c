@@ -232,7 +232,7 @@ static token_t scan_literal(scanner_t* s, int64_t initial_i)
     s->i = last_i;
     sv_str_t str = sv_str_slice(s->source, initial_i, last_i);
 
-    for (int k = KEYWORD_AND; k <= KEYWORD_SELF; k++) {
+    for (int k = KEYWORD_AND; k <= KEYWORD_WHEN; k++) {
         if (sv_str_comp(str, sv_str_init(keyword_text((keyword_kind)k))))
             return (token_t){ .kind = TOKEN_KEYWORD, .line = s->line, .keyword = (keyword_kind)k };
     }

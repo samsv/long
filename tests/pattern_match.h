@@ -57,18 +57,18 @@ static inline void sv_test_match_literals(sv_testing_t* t)
 {
    sv_test_match_ok(t, "match x end",
       "(do (= " T1 " x) nil)");
-   sv_test_match_ok(t, "match x | 1 = 2 end",
+   sv_test_match_ok(t, "match x | 1 do 2 end",
       "(do (= " T1 " x) (| (if (is-number? " T1 ") (if (== " T1
       " 1) (do 2) $fail) $fail) nil))");
-   sv_test_match_ok(t, "match x | 1 = 2 | 0 = 3 end",
+   sv_test_match_ok(t, "match x | 1 do 2 | 0 do 3 end",
       "(do (= " T1 " x) (| (if (is-number? " T1 ") (if (== " T1 " 1) (do 2) (if (== " T1
       " 0) (do 3) $fail)) $fail) nil))");
-   sv_test_match_ok(t, "match x | nil = 1 end",
+   sv_test_match_ok(t, "match x | nil do 1 end",
       "(do (= " T1 " x) (| (if (is-nil? " T1 ") (do 1) $fail) nil))");
-   sv_test_match_ok(t, "match x | true = 1 | false = 2 end",
+   sv_test_match_ok(t, "match x | true do 1 | false do 2 end",
       "(do (= " T1 " x) (| (if (is-bool? " T1 ") (if (== " T1 " true) (do 1) (if (== "
       T1 " false) (do 2) $fail)) $fail) nil))");
-   sv_test_match_ok(t, "match x | 1 = 2 | \"a\" = 3 end",
+   sv_test_match_ok(t, "match x | 1 do 2 | \"a\" do 3 end",
       "(do (= " T1 " x) (| (if (is-number? " T1 ") (if (== " T1
       " 1) (do 2) $fail) (if (is-str? " T1 ") (if (== " T1
       " \"a\") (do 3) $fail) $fail)) nil))");
@@ -76,34 +76,34 @@ static inline void sv_test_match_literals(sv_testing_t* t)
 
 static inline void sv_test_match_defaults(sv_testing_t* t)
 {
-   sv_test_match_ok(t, "match x | _ = 1 end",
+   sv_test_match_ok(t, "match x | _ do 1 end",
       "(do (= " T1 " x) (| (do 1) nil))");
-   sv_test_match_ok(t, "match x | y = y end",
+   sv_test_match_ok(t, "match x | y do y end",
       "(do (= " T1 " x) (| (do (= y " T1 ") (do y)) nil))");
-   sv_test_match_ok(t, "match x | 1 = 2 | _ = 3 end",
+   sv_test_match_ok(t, "match x | 1 do 2 | _ do 3 end",
       "(do (= " T1 " x) (| (| (if (is-number? " T1 ") (if (== " T1
       " 1) (do 2) $fail) $fail) (do 3)) nil))");
 }
 
 static inline void sv_test_match_tuples(sv_testing_t* t)
 {
-   sv_test_match_ok(t, "match x | (1,) = 3 end",
+   sv_test_match_ok(t, "match x | (1,) do 3 end",
       "(do (= " T1 " x) (| (if (is-tuple? " T1 " 1) (do (= " T2 " ([ " T1
       " 0)) (if (is-number? " T2 ") (if (== " T2
       " 1) (do 3) $fail) $fail)) $fail) nil))");
-   sv_test_match_ok(t, "match x | (1, 2) = 3 end",
+   sv_test_match_ok(t, "match x | (1, 2) do 3 end",
       "(do (= " T1 " x) (| (if (is-tuple? " T1 " 2) (do (= " T2 " ([ " T1 " 0)) (do (= "
       T3 " ([ " T1 " 1)) (if (is-number? " T2 ") (if (== " T2 " 1) (if (is-number? " T3
       ") (if (== " T3 " 2) (do 3) $fail) $fail) $fail) $fail))) $fail) nil))");
 
    /* Rows sharing a prefix must both stay reachable. */
-   sv_test_match_ok(t, "match x | (1, 2) = a | (1, 3) = b end",
+   sv_test_match_ok(t, "match x | (1, 2) do a | (1, 3) do b end",
       "(do (= " T1 " x) (| (if (is-tuple? " T1 " 2) (do (= " T2 " ([ " T1 " 0)) (do (= "
       T3 " ([ " T1 " 1)) (if (is-number? " T2 ") (if (== " T2 " 1) (if (is-number? " T3
       ") (if (== " T3 " 2) (do a) (if (== " T3
       " 3) (do b) $fail)) $fail) $fail) $fail))) $fail) nil))");
 
-   sv_test_match_ok(t, "match x | ((1, 2), 3) = z end",
+   sv_test_match_ok(t, "match x | ((1, 2), 3) do z end",
       "(do (= " T1 " x) (| (if (is-tuple? " T1 " 2) (do (= " T2 " ([ " T1 " 0)) (do (= "
       T3 " ([ " T1 " 1)) (if (is-tuple? " T2 " 2) (do (= " T4 " ([ " T2 " 0)) (do (= "
       T5 " ([ " T2 " 1)) (if (is-number? " T4 ") (if (== " T4 " 1) (if (is-number? " T5
@@ -115,7 +115,7 @@ static inline void sv_test_match_scoring(sv_testing_t* t)
 {
    /* Column 0 scores 0 (a variable in row 0) and column 1 scores 2, so the
     * second position is tested first. */
-   sv_test_match_ok(t, "match x | (a, 1) = p | (b, 2) = q end",
+   sv_test_match_ok(t, "match x | (a, 1) do p | (b, 2) do q end",
       "(do (= " T1 " x) (| (if (is-tuple? " T1 " 2) (do (= " T2 " ([ " T1 " 0)) (do (= "
       T3 " ([ " T1 " 1)) (if (is-number? " T3 ") (if (== " T3 " 1) (do (= a " T2
       ") (do p)) (if (== " T3 " 2) (do (= b " T2
@@ -124,57 +124,57 @@ static inline void sv_test_match_scoring(sv_testing_t* t)
 
 static inline void sv_test_match_records(sv_testing_t* t)
 {
-   sv_test_match_ok(t, "match x | {a: 1} = 2 end",
+   sv_test_match_ok(t, "match x | {a: 1} do 2 end",
       "(do (= " T1 " x) (| (if (is-record? " T1 " 1) (if (has-field? " T1 " a) (do (= "
       T2 " (. " T1 " a)) (if (is-number? " T2 ") (if (== " T2
       " 1) (do 2) $fail) $fail)) $fail) $fail) nil))");
 
-   sv_test_match_ok(t, "match x | {a: 1, ..} = 3 end",
+   sv_test_match_ok(t, "match x | {a: 1, ..} do 3 end",
       "(do (= " T1 " x) (| (if (is-record? " T1 ") (if (has-field? " T1 " a) (do (= " T2
       " (. " T1 " a)) (if (is-number? " T2 ") (if (== " T2
       " 1) (do 3) $fail) $fail)) $fail) $fail) nil))");
 
    /* Exact and open groups overlap, so they chain through `|`. */
-   sv_test_match_ok(t, "match x | {a: 1} = 2 | {a: 1, ..} = 3 end",
+   sv_test_match_ok(t, "match x | {a: 1} do 2 | {a: 1, ..} do 3 end",
       "(do (= " T1 " x) (| (| (if (is-record? " T1 " 1) (if (has-field? " T1
       " a) (do (= " T3 " (. " T1 " a)) (if (is-number? " T3 ") (if (== " T3
       " 1) (do 2) $fail) $fail)) $fail) $fail) (if (is-record? " T1 ") (if (has-field? "
       T1 " a) (do (= " T2 " (. " T1 " a)) (if (is-number? " T2 ") (if (== " T2
       " 1) (do 3) $fail) $fail)) $fail) $fail)) nil))");
 
-   sv_test_match_ok(t, "match x | {a: 1, b: v} = v end",
+   sv_test_match_ok(t, "match x | {a: 1, b: v} do v end",
       "(do (= " T1 " x) (| (if (is-record? " T1 " 2) (if (has-field? " T1
       " a) (if (has-field? " T1 " b) (do (= " T2 " (. " T1 " a)) (do (= " T3 " (. " T1
       " b)) (if (is-number? " T2 ") (if (== " T2 " 1) (do (= v " T3
       ") (do v)) $fail) $fail))) $fail) $fail) $fail) nil))");
 
-   sv_test_match_ok(t, "match x | %{\"k\": 1} = 2 end",
+   sv_test_match_ok(t, "match x | %{\"k\": 1} do 2 end",
       "(do (= " T1 " x) (| (if (is-hashmap? " T1 " 1) (if (has-key? " T1
       " \"k\") (do (= " T2 " ([ " T1 " \"k\")) (if (is-number? " T2 ") (if (== " T2
       " 1) (do 2) $fail) $fail)) $fail) $fail) nil))");
 
-   sv_test_match_err(t, "match x | {a: 1, a: 2} = 1 end", C_ERR_REDEFINED);
+   sv_test_match_err(t, "match x | {a: 1, a: 2} do 1 end", C_ERR_REDEFINED);
 }
 
 static inline void sv_test_match_lists(sv_testing_t* t)
 {
    /* The empty list is the else arm: NIL and CONS are disjoint. */
-   sv_test_match_ok(t, "match x | [] = 0 end",
+   sv_test_match_ok(t, "match x | [] do 0 end",
       "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1
       ") $fail (do 0)) $fail) nil))");
 
    /* One `list-uncons` binds both parts, and no `is-list?` is emitted for a tail
     * column, which is known to be a list already. */
-   sv_test_match_ok(t, "match x | [a] = a end",
+   sv_test_match_ok(t, "match x | [a] do a end",
       "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons " T1
       " " T2 " " T3 " (if (is-cons? " T3 ") $fail (do (= a " T2
       ") (do a)))) $fail) $fail) nil))");
 
-   sv_test_match_ok(t, "match x | [h, ..t] = h end",
+   sv_test_match_ok(t, "match x | [h, ..t] do h end",
       "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons " T1
       " " T2 " " T3 " (do (= t " T3 ") (do (= h " T2 ") (do h)))) $fail) $fail) nil))");
 
-   sv_test_match_ok(t, "match x | [1, 2] = 3 end",
+   sv_test_match_ok(t, "match x | [1, 2] do 3 end",
       "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons " T1
       " " T2 " " T3 " (if (is-number? " T2 ") (if (== " T2 " 1) (if (is-cons? " T3
       ") (list-uncons " T3 " " T4 " " T5 " (if (is-number? " T4 ") (if (== " T4
@@ -182,23 +182,72 @@ static inline void sv_test_match_lists(sv_testing_t* t)
       ") $fail (do 3)) $fail) $fail)) $fail) $fail) $fail)) $fail) $fail) nil))");
 
    /* Rows sharing a prefix share the head test and the uncons, then branch. */
-   sv_test_match_ok(t, "match x | [1, 2] = a | [1, 3] = b end",
+   sv_test_match_ok(t, "match x | [1, 2] do a | [1, 3] do b end",
       "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons " T1
       " " T2 " " T3 " (if (is-number? " T2 ") (if (== " T2 " 1) (if (is-cons? " T3
       ") (list-uncons " T3 " " T4 " " T5 " (if (is-number? " T4 ") (if (== " T4
       " 2) (if (is-cons? " T5 ") $fail (do a)) (if (== " T4 " 3) (if (is-cons? " T5
       ") $fail (do b)) $fail)) $fail)) $fail) $fail) $fail)) $fail) $fail) nil))");
 
-   sv_test_match_ok(t, "match x | [] = 0 | [a, ..r] = a end",
+   sv_test_match_ok(t, "match x | [] do 0 | [a, ..r] do a end",
       "(do (= " T1 " x) (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons " T1
       " " T2 " " T3 " (do (= r " T3 ") (do (= a " T2 ") (do a)))) (do 0)) $fail) nil))");
+}
+
+static inline void sv_test_match_guards(sv_testing_t* t)
+{
+   /* Both rows carry the same literal, so they reach the empty rule together and
+    * a failing guard must fall through to the next row rather than to the
+    * match default. This is what the `|` chain in the empty rule buys. */
+   sv_test_match_ok(t, "match x | 1 when g do 2 | 1 do 3 end",
+      "(do (= " T1 " x) (| (if (is-number? " T1 ") (if (== " T1
+      " 1) (| (if g (do 2) $fail) (do 3)) $fail) $fail) nil))");
+
+   /* Different literals cannot both match, so the guard falls to the default. */
+   sv_test_match_ok(t, "match x | 1 when g do 2 | 2 do 3 end",
+      "(do (= " T1 " x) (| (if (is-number? " T1 ") (if (== " T1
+      " 1) (if g (do 2) $fail) (if (== " T1 " 2) (do 3) $fail)) $fail) nil))");
+
+   /* The binding wraps the guard, so a guard sees its own pattern variables. */
+   sv_test_match_ok(t, "match x | y when y > 0 do 1 | _ do 2 end",
+      "(do (= " T1 " x) (| (| (do (= y " T1 ") (if (> y 0) (do 1) $fail)) (do 2)) nil))");
+
+   /* A guarded wildcard is no longer an unconditional catch all. */
+   sv_test_match_ok(t, "match x | _ when g do 1 | _ do 2 end",
+      "(do (= " T1 " x) (| (| (if g (do 1) $fail) (do 2)) nil))");
+
+   sv_test_match_ok(t, "match x | (a, b) when a > b do a | _ do 0 end",
+      "(do (= " T1 " x) (| (| (if (is-tuple? " T1 " 2) (do (= " T2 " ([ " T1
+      " 0)) (do (= " T3 " ([ " T1 " 1)) (do (= b " T3 ") (do (= a " T2
+      ") (if (> a b) (do a) $fail))))) $fail) (do 0)) nil))");
+
+   /* The guard sits inside the uncons, whose head and tail are locals that
+    * compile_fail has to pop on the way out. */
+   sv_test_match_ok(t, "match x | [h, ..t] when h < 0 do h | _ do 0 end",
+      "(do (= " T1 " x) (| (| (if (is-list? " T1 ") (if (is-cons? " T1 ") (list-uncons "
+      T1 " " T2 " " T3 " (do (= t " T3 ") (do (= h " T2
+      ") (if (< h 0) (do h) $fail)))) $fail) $fail) (do 0)) nil))");
+
+   sv_test_match_ok(t, "match x | {a: v} when v do 1 | _ do 2 end",
+      "(do (= " T1 " x) (| (| (if (is-record? " T1 " 1) (if (has-field? " T1
+      " a) (do (= " T2 " (. " T1 " a)) (do (= v " T2
+      ") (if v (do 1) $fail))) $fail) $fail) (do 2)) nil))");
+
+   /* A guard binds tighter than the clause's `=`, so it swallows `and`. */
+   sv_test_match_ok(t, "match x | n when n > 0 and n < 10 do 1 end",
+      "(do (= " T1 " x) (| (do (= n " T1
+      ") (if (and (> n 0) (< n 10)) (do 1) $fail)) nil))");
+
+   sv_test_match_ok(t, "match x | 1 when g do y = 3; y end",
+      "(do (= " T1 " x) (| (if (is-number? " T1 ") (if (== " T1
+      " 1) (if g (do (= y 3) y) $fail) $fail) $fail) nil))");
 }
 
 static inline void sv_test_match_oom(sv_testing_t* t)
 {
    const char* src =
-      "match x | 1 = 2 | \"a\" = 3 | (4, 5) = 6 | {k: 7, j: 8} = 9"
-      " | [1, ..zs] = zs | (a, 1) = a | y = y end";
+      "match x | 1 do 2 | \"a\" do 3 | (4, 5) do 6 | {k: 7, j: 8} do 9"
+      " | [1, ..zs] do zs | (a, 1) do a | b when b > 0 do b | y do y end";
    int64_t errored = 0;
    int64_t completed = 0;
 
@@ -236,6 +285,7 @@ static inline void sv_test_pattern_match(sv_testing_t* t)
    sv_test_match_scoring(t);
    sv_test_match_records(t);
    sv_test_match_lists(t);
+   sv_test_match_guards(t);
    sv_test_match_oom(t);
 }
 

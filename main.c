@@ -5,11 +5,13 @@
 static const char* sample =
     "fun \n"
     "| is_even(x)\n"
-        "| 0 = true\n"
-        "| _ = is_odd(x - 1)\n"
+        "| 0 do true\n"
+        "| _ do is_odd(x - 1)\n"
     "| is_odd(x)\n"
-        "| 0 = false\n"
-        "| _ = is_even(x - 1)\n"
+        "| 0 do false\n"
+        "| _ do \n"
+            "new_x = x - 1\n"
+            "is_even(new_x)\n"
     "end\n"
     "is_even(2)";
 

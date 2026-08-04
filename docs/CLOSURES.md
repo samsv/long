@@ -26,10 +26,8 @@ typedef struct {      \
 An `upvalue` is a value captured from outside of the function scope. The concept of `upvalue` is taken from the [lua language](https://www.lua.org/pil/27.3.3.html).
 This means that closures may capture values from parent scopes during compilation. Suppose the function
 ```
-fun f(x) =
-    fun g(y) =
-        x + y
-    end
+fun f(x) do
+    fun g(y) x + y
 
     g
 end
@@ -64,11 +62,9 @@ There is, however also the issue of identifying that `x` must be captured. We co
 from the enclosing function. Another way to make dealing with the problem of closures easier is to explicitly declare which values are closed over, such as
 `C++`'s lambdas. I.e
 ```
-fun f(x) =
-    fun g[x](y) =
-        fun h[x,y]() =
-            x + y
-        end
+fun f(x) do
+    fun g[x](y) do
+        fun h[x,y]() x + y
 
         h
     end
@@ -79,28 +75,26 @@ end
 Now we know which values must be defined before the function starts the compilation process and abort earlier. This also makes it explicit which values we
 are closing over. There is, however, one remaining issue with mutual recursive functions. Suppose the following
 ```
-fun is_even[is_odd](x) =
+fun is_even[is_odd](x)
     if x == 0 do true
     else is_odd(x - 1)
     end
-end
 
-fun is_odd[is_even](x) =
+fun is_odd[is_even](x)
     if x == 0 do false
     else is_even(x - 1)
     end
-end
 ```
 
 This will fail to compile, as `is_odd` is not defined when `is_even` is compiled. As the functions are mutually recursive, nothing can be done with the current
 approach. We may then define the following syntax for mutually recursive functions
 ```
 fun
-| is_even(x) =
+| is_even(x)
     if x == 0 do true
     else is_odd(x - 1)
     end
-| is_odd(x) =
+| is_odd(x)
     if x == 0 do false
     else is_even(x - 1)
     end
@@ -135,9 +129,7 @@ nothing back, and rebuilt members are released when the call returns.
 
 A flat function
 ```
-fun f(x) =
-    1
-end
+fun f(x) 1
 ```
 Would compile to a plain `closure_t` via `load_closure`; groups only exist for `fun | ... end` blocks.
 

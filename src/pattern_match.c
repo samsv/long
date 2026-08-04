@@ -54,9 +54,14 @@ typedef struct {
 } col_t;
 
 typedef struct {
+    sexpr_t* slot;
+    bool guarded;
+} row_t;
+
+typedef struct {
     col_t* cols;
     cell_t* cells;
-    sexpr_t** bodies;
+    row_t* bodies;
     int64_t n_cols;
     int64_t n_rows;
 } matrix_t;
@@ -374,9 +379,9 @@ static sexpr_t* alloc_sexprs(int64_t n, const sv_allocator_t* a)
     return n == 0 ? NULL : sv_malloc(a, sizeof(sexpr_t) * (size_t)n);
 }
 
-static sexpr_t** alloc_slots(int64_t n, const sv_allocator_t* a)
+static row_t* alloc_rows(int64_t n, const sv_allocator_t* a)
 {
-    return n == 0 ? NULL : sv_malloc(a, sizeof(sexpr_t*) * (size_t)n);
+    return n == 0 ? NULL : sv_malloc(a, sizeof(row_t) * (size_t)n);
 }
 
 static cell_t* alloc_cells(int64_t n, const sv_allocator_t* a)
@@ -399,7 +404,7 @@ static bool matrix_alloc(matrix_t* m, int64_t n_cols, int64_t n_rows, ctx_t* ctx
     *m = (matrix_t){ .n_cols = n_cols, .n_rows = n_rows };
     m->cols = alloc_cols(n_cols, &ctx->alloc);
     m->cells = alloc_cells(n_cols * n_rows, &ctx->alloc);
-    m->bodies = alloc_slots(n_rows, &ctx->alloc);
+    m->bodies = alloc_rows(n_rows, &ctx->alloc);
 
     return alloc_ok(m->cols, n_cols)
         && alloc_ok(m->cells, n_cols * n_rows)
@@ -427,6 +432,13 @@ static void matrix_free(matrix_t* m, ctx_t* ctx)
     sv_free(&ctx->alloc, m->cells);
     sv_free(&ctx->alloc, m->bodies);
     *m = (matrix_t){ 0 };
+}
+
+static sexpr_t take_body(const matrix_t* m, int64_t i, int64_t line)
+{
+    sexpr_t body = *m->bodies[i].slot;
+    *m->bodies[i].slot = nil_atom(line);
+    return body;
 }
 
 /**
@@ -1177,12 +1189,11 @@ static bool compile_var_group(sexpr_t* out, const matrix_t* m, int64_t col,
         if (is_wildcard(var))
             continue;
 
-        sexpr_t body = *m->bodies[i];
-        *m->bodies[i] = nil_atom(line);
+        sexpr_t body = take_body(m, i, line);
         sexpr_t wrapped;
         ok = lower_bind(&wrapped, var, m->cols[col].subject, body, line, ctx);
         if (ok)
-            *m->bodies[i] = wrapped;
+            *m->bodies[i].slot = wrapped;
     }
 
     if (ok)
@@ -1192,17 +1203,34 @@ static bool compile_var_group(sexpr_t* out, const matrix_t* m, int64_t col,
     return ok;
 }
 
+static bool compile_bodies(sexpr_t* out, const matrix_t* m, int64_t line, ctx_t* ctx)
+{
+    int64_t last = 0;
+    while (last + 1 < m->n_rows && m->bodies[last].guarded)
+        last++;
+
+    sexpr_t chain = take_body(m, last, line);
+    for (int64_t i = last - 1; i >= 0; i--) {
+        sexpr_t body = take_body(m, i, line);
+        if (!build_alt(&chain, body, chain, line, ctx)) {
+            sexpr_free(&body, &ctx->alloc);
+            sexpr_free(&chain, &ctx->alloc);
+            return false;
+        }
+    }
+
+    *out = chain;
+    return true;
+}
+
 static bool compile_matrix(sexpr_t* out, const matrix_t* m, int64_t line, ctx_t* ctx)
 {
     if (m->n_rows == 0) {
         *out = fail_atom(line);
         return true;
     }
-    if (m->n_cols == 0) {
-        *out = *m->bodies[0];
-        *m->bodies[0] = nil_atom(line);
-        return true;
-    }
+    if (m->n_cols == 0)
+        return compile_bodies(out, m, line, ctx);
 
     sexpr_t group = { 0 };
     sexpr_t rest = { 0 };
@@ -1234,6 +1262,38 @@ error:
     return false;
 }
 
+static bool is_guard(sexpr_t body)
+{
+    return body.tag == S_CONS && body.cons.arr[0].tag == S_ATOM
+        && body.cons.arr[0].atom.kind == TOKEN_KEYWORD
+        && body.cons.arr[0].atom.keyword == KEYWORD_WHEN;
+}
+
+static bool lower_guard(row_t* row, int64_t line, ctx_t* ctx)
+{
+    sexpr_t marker = *row->slot;
+    if (!is_guard(marker))
+        return true;
+
+    sexpr_t guard = marker.cons.arr[1];
+    sexpr_t body = marker.cons.arr[2];
+    marker.cons.arr[1] = nil_atom(line);
+    marker.cons.arr[2] = nil_atom(line);
+
+    sexpr_t lowered = { 0 };
+    sexpr_t items[] = { fn_atom(FN_IF, line), guard, body, fail_atom(line) };
+    if (!cons_build(&lowered, items, 4, &ctx->alloc)) {
+        marker.cons.arr[1] = guard;
+        marker.cons.arr[2] = body;
+        return match_oom(ctx, line);
+    }
+
+    sexpr_free(&marker, &ctx->alloc);
+    *row->slot = lowered;
+    row->guarded = true;
+    return true;
+}
+
 static sexpr_t match_lower(sexpr_t s, ctx_t* ctx)
 {
     cons_t match = s.cons;
@@ -1256,13 +1316,19 @@ static sexpr_t match_lower(sexpr_t s, ctx_t* ctx)
     }
 
     m.cols[0] = (col_t){ .subject = subject, .known = PAT_UNKNOWN };
-    for (int64_t i = 0; i < n_rows; i++) {
+    bool ok = true;
+    for (int64_t i = 0; i < n_rows && ok; i++) {
         sexpr_t* slots = match.arr[CLAUSES_START + i].cons.arr;
         m.cells[i] = cell_of(&slots[1]);
-        m.bodies[i] = &slots[2];
+        m.bodies[i] = (row_t){ .slot = &slots[2] };
+        ok = lower_guard(&m.bodies[i], line, ctx);
+    }
+    if (!ok) {
+        matrix_free(&m, ctx);
+        return discard(&s, ctx);
     }
 
-    bool ok = compile_matrix(&chain, &m, line, ctx);
+    ok = compile_matrix(&chain, &m, line, ctx);
     matrix_free(&m, ctx);
     if (!ok)
         return discard(&s, ctx);
