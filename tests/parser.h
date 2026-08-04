@@ -85,6 +85,21 @@ static inline void sv_test_parser_if(sv_testing_t* t)
 static inline void sv_test_parser_forms(sv_testing_t* t)
 {
    sv_test_parse_ok(t, "for x in xs do x end", "(for (x xs) (do x))");
+
+   /* A `for` variable and a function parameter are binding positions, so both take
+    * a pattern; a record field may also be punned. */
+   sv_test_parse_ok(t, "for (a, b) in ps do a end",
+                    "(for ((tuple a b) ps) (do a))");
+   sv_test_parse_ok(t, "for {x: a, ..} in rs do a end",
+                    "(for ((record x a ..) rs) (do a))");
+   sv_test_parse_ok(t, "fun f((a, b)) a + b", "(fun f ((tuple a b)) (+ a b))");
+   sv_test_parse_ok(t, "fun f((a, b), c) c", "(fun f ((tuple a b) c) c)");
+   sv_test_parse_ok(t, "match p | {x, y} do x end",
+                    "(match p (tuple (record x x y y) (do x)))");
+   sv_test_parse_ok(t, "p = {x, y}", "(= p (record x x y y))");
+   sv_test_parse_ok(t, "{x, y} = p", "(= (record x x y y) p)");
+   sv_test_parse_ok(t, "match p | {x, y: 2} do x end",
+                    "(match p (tuple (record x x y 2) (do x)))");
    sv_test_parse_ok(t, "fun add(x, y) x + y",
                     "(fun add (x y) (+ x y))");
    sv_test_parse_ok(t, "fun f[a](x) a + x",
@@ -343,6 +358,11 @@ static inline void sv_test_parser_errors(sv_testing_t* t)
                        (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "(a, ..b) = t", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "fun f[a, ..b](x) x", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+
+   /* Clauses already match the parameters, so destructuring them first is not
+    * allowed; a field with neither a colon nor a comma is still unclosed. */
+   sv_test_parse_error(t, "fun f((a, b)) | x do x end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "p = {x y}", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "fun f(x) | end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "fun f() | 0 do 1 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "fun f(a, b) | 1 do 2 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);

@@ -415,11 +415,10 @@ static sexpr_t parse_record(scanner_t* s, ctx_t* ctx, token_t open)
         if (!push_sexpr(&list, atom_sexpr(field), ctx))
             return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
 
-        token_t colon = parser_expect(s, ctx, kind_pattern(TOKEN_COLON));
-        if (colon.kind == TOKEN_ERROR)
-            return free_list_error(&list, ctx, atom_sexpr(colon));
-
-        sexpr_t value = parse_expr(s, ctx, 5);
+        token_t colon;
+        sexpr_t value = atom_sexpr(field);
+        if (parser_check(s, ctx, kind_pattern(TOKEN_COLON), &colon))
+            value = parse_expr(s, ctx, 5);
         if (is_error_sexpr(value))
             return free_list_error(&list, ctx, value);
         if (!push_sexpr(&list, value, ctx)) {
@@ -486,19 +485,23 @@ static sexpr_t parse_block(scanner_t* s, ctx_t* ctx, const token_pattern* ends,
 
 static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
 {
-    token_t id = parser_expect_id(s, ctx);
-    if (id.kind == TOKEN_ERROR)
-        return atom_sexpr(id);
+    sexpr_t binding = parse_pattern(s, ctx);
+    if (is_error_sexpr(binding))
+        return binding;
 
     token_t in_token = parser_expect(s, ctx, kw_pattern(KEYWORD_IN));
-    if (in_token.kind == TOKEN_ERROR)
+    if (in_token.kind == TOKEN_ERROR) {
+        sexpr_free(&binding, &ctx->alloc);
         return atom_sexpr(in_token);
+    }
 
     sexpr_t iter = parse_expr(s, ctx, 0);
-    if (is_error_sexpr(iter))
+    if (is_error_sexpr(iter)) {
+        sexpr_free(&binding, &ctx->alloc);
         return iter;
+    }
 
-    sexpr_t cond_items[] = { atom_sexpr(id), iter };
+    sexpr_t cond_items[] = { binding, iter };
     sexpr_t loop_cond = cons_of(ctx, cond_items, 2, for_token.line);
     if (is_error_sexpr(loop_cond))
         return loop_cond;
@@ -982,11 +985,10 @@ static sexpr_t parse_record_pattern(scanner_t* s, ctx_t* ctx, token_t open)
         if (!push_sexpr(&list, atom_sexpr(field), ctx))
             return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
 
-        token_t colon = parser_expect(s, ctx, kind_pattern(TOKEN_COLON));
-        if (colon.kind == TOKEN_ERROR)
-            return free_list_error(&list, ctx, atom_sexpr(colon));
-
-        sexpr_t value = parse_pattern(s, ctx);
+        token_t colon;
+        sexpr_t value = atom_sexpr(field);
+        if (parser_check(s, ctx, kind_pattern(TOKEN_COLON), &colon))
+            value = parse_pattern(s, ctx);
         if (is_error_sexpr(value))
             return free_list_error(&list, ctx, value);
         if (!push_sexpr(&list, value, ctx)) {

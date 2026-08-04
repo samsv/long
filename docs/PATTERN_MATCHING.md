@@ -127,6 +127,21 @@ clause, so `(a, a) = e` requires both positions to be equal.
 The same syntax is a value in other positions, so `..` is rejected there: a list or
 record *expression* carrying `..` is a compile error.
 
+The other two binding positions take a pattern the same way, reusing the same walk:
+
+```elixir
+for (a, b) in pairs do a * b end
+fun dist((x1, y1), (x2, y2)) ...
+```
+
+A `for` item that does not fit raises, and so does an argument that does not fit its
+parameter. A destructured parameter cannot be combined with the clause form, since
+clauses already match against the parameters.
+
+Finally, a record field may be punned: `{x}` means `{x: x}`, both when building a
+record and when matching one, so `p = {x, y}` and `match p | {x, y} do ... end` line
+up.
+
 ## Case and Match
 Suppose a new lambda calculus function, `case`. It performs a simple pattern match on the type of a variable. I.e. suppose a pattern match for
 a list variable. Case would then be

@@ -687,7 +687,11 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     TRY(emit(c, ctx, OP_ITER_NEXT, line));
 
     sv_str_t id;
-    TRY(expect_id(binding[0], ctx, &id));
+    bool destructure = binding[0].tag == S_CONS;
+    if (destructure)
+        id = sv_str_init(" for_item ");
+    else
+        TRY(expect_id(binding[0], ctx, &id));
     TRY(emit(c, ctx, OP_SET_LOCAL, line));
     TRY(locals_add(c->locals, id, ctx, line));
     sv_opt_t(int64_t) id_slot = locals_get(c->locals, id, ctx);
@@ -697,7 +701,19 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     TRY(jump_emit(ctx, vmb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
     TRY(emit(c, ctx, OP_POP, line));
 
+    /* The pattern's names get their own scope: the exit path jumps here having
+     * pushed only the item, so the loop's own pop must keep counting just that. */
+    if (destructure) {
+        TRY(init_scope(c, ctx, line));
+        TRY(emit2(c, ctx, OP_GET_LOCAL, (uint8_t)id_slot.value, line));
+        TRY(compile_destructure(c, binding[0], line, ctx));
+        TRY(emit(c, ctx, OP_POP, line));
+    }
+
     TRY(compile_sexpr(c, args[1], ctx));
+
+    if (destructure)
+        TRY(deinit_scope(c, ctx));
 
     uint8_t inner = (uint8_t)names_count(c->locals->name_indexes);
     TRY(emit2(c, ctx, OP_POP_LOCAL, inner, 0));
@@ -782,6 +798,17 @@ static bool compile_do(compiler_t* c, const sexpr_t* args, int64_t n, int64_t li
     return deinit_scope(c, ctx);
 }
 
+/**
+ * Names the local slot a destructured parameter occupies. The spaces keep it
+ * unscannable, so it can never collide with a user name. The index is an int
+ * because arity is a uint8_t, which also lets the compiler bound the buffer.
+ */
+static sv_str_t param_slot(char* buf, size_t n, int i)
+{
+    snprintf(buf, n, " arg%d ", i);
+    return sv_str_init(buf);
+}
+
 static bool compile_fn_vm(
     compiler_t* c,
     const sexpr_t* cls,
@@ -820,10 +847,24 @@ static bool compile_fn_vm(
     FN_TRY(init_scope(&fc, ctx, line));
     for (int64_t i = 0; i < params->cons.size; i++) {
         sv_str_t p = { 0 };
-        FN_TRY(expect_id(params->cons.arr[i], ctx, &p));
+        char slot[24];
+        if (params->cons.arr[i].tag == S_CONS)
+            p = param_slot(slot, sizeof(slot), (int)i);
+        else
+            FN_TRY(expect_id(params->cons.arr[i], ctx, &p));
         FN_TRY(locals_add(fc.locals, p, ctx, line));
     }
     FN_TRY(locals_add(fc.locals, name, ctx, line));
+
+    for (int64_t i = 0; i < params->cons.size; i++) {
+        if (params->cons.arr[i].tag != S_CONS)
+            continue;
+
+        char slot[24];
+        FN_TRY(compile_id(&fc, param_slot(slot, sizeof(slot), (int)i), line, ctx));
+        FN_TRY(compile_destructure(&fc, params->cons.arr[i], line, ctx));
+        FN_TRY(emit(&fc, ctx, OP_POP, line));
+    }
 
     FN_TRY(compile_sexpr(&fc, body, ctx));
     FN_TRY(vmb_add_byte(&fc.builder, OP_RETURN, 0, &ctx->alloc));

@@ -13,27 +13,18 @@ static void swap_items(char* a, char* b, size_t size)
     }
 }
 
-static void insertion_sort(
-    char* items,
-    size_t nmemb,
-    size_t size,
-    int (*compar)(const void*, const void*)
-) {
+static void insertion_sort(char* items, size_t nmemb, size_t size,
+                           int (*compar)(const void*, const void*))
+{
     for (size_t i = 1; i < nmemb; i++) {
         for (size_t j = i; j > 0 && compar(items + (j - 1) * size, items + j * size) > 0; j--)
             swap_items(items + (j - 1) * size, items + j * size, size);
     }
 }
 
-static void merge(
-    char* dst,
-    const char* a,
-    size_t na,
-    const char* b,
-    size_t nb,
-    size_t size,
-    int (*compar)(const void*, const void*)
-) {
+static void merge(char* dst, const char* a, size_t na, const char* b, size_t nb, size_t size,
+                  int (*compar)(const void*, const void*))
+{
     while (na > 0 && nb > 0) {
         if (compar(a, b) <= 0) {
             memcpy(dst, a, size);

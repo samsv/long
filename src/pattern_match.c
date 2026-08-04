@@ -28,12 +28,6 @@ typedef enum {
 } pattern_class;
 
 /**
- * A rows by columns pattern matrix. Columns hold the subject each cell is
- * tested against, always an already bound temp identifier. Cells and bodies are
- * pointers into the input tree: moving one out means reading it and writing
- * `nil` back through the pointer, so the input spine never double frees.
- */
-/**
  * A pattern to test. Normally the slot holding it in the input tree. A list
  * decomposition also produces the unconsumed remainder of a list pattern, which
  * has no slot of its own, so it is the list pattern plus a count of elements
@@ -58,6 +52,12 @@ typedef struct {
     bool guarded;
 } row_t;
 
+/**
+ * A rows by columns pattern matrix. Columns hold the subject each cell is
+ * tested against, always an already bound temp identifier. Cells and bodies are
+ * pointers into the input tree: moving one out means reading it and writing
+ * `nil` back through the pointer, so the input spine never double frees.
+ */
 typedef struct {
     col_t* cols;
     cell_t* cells;
@@ -489,14 +489,9 @@ static int64_t best_column(const matrix_t* m)
     return best;
 }
 
-static bool lower_bind(
-    sexpr_t* out,
-    sexpr_t name,
-    sexpr_t value,
-    sexpr_t body,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool lower_bind(sexpr_t* out, sexpr_t name, sexpr_t value, sexpr_t body, int64_t line,
+                       ctx_t* ctx)
+{
     sexpr_t bind = { 0 };
 
     sexpr_t bind_items[] = { op_atom(OPERATOR_EQUAL, line), name, value };
@@ -521,15 +516,9 @@ error:
  * Wraps body in the bindings of a decomposition, i.e.
  * `(do (= $2 <read 0>) (= $3 <read 1>) body)`.
  */
-static bool wrap_binds(
-    sexpr_t* out,
-    const col_t* cols,
-    sexpr_t* reads,
-    int64_t n,
-    sexpr_t body,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool wrap_binds(sexpr_t* out, const col_t* cols, sexpr_t* reads, int64_t n,
+                       sexpr_t body, int64_t line, ctx_t* ctx)
+{
     for (int64_t i = n - 1; i >= 0; i--) {
         sexpr_t read = reads[i];
         reads[i] = (sexpr_t){ 0 };
@@ -557,14 +546,9 @@ static bool build_form(sexpr_t* out, const sexpr_t* items, int64_t n, int64_t li
     return match_oom(ctx, line);
 }
 
-static bool build_if(
-    sexpr_t* out,
-    sexpr_t test,
-    sexpr_t then,
-    sexpr_t otherwise,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool build_if(sexpr_t* out, sexpr_t test, sexpr_t then, sexpr_t otherwise, int64_t line,
+                     ctx_t* ctx)
+{
     sexpr_t items[] = { fn_atom(FN_IF, line), test, then, otherwise };
     return build_form(out, items, 4, line, ctx);
 }
@@ -600,14 +584,9 @@ static bool build_call2(sexpr_t* out, const char* fn, sexpr_t a1, sexpr_t a2, in
     return build_form(out, items, 3, line, ctx);
 }
 
-static bool build_op2(
-    sexpr_t* out,
-    operator_kind op,
-    sexpr_t lhs,
-    sexpr_t rhs,
-    int64_t line,
-    ctx_t* ctx
-) {
+static bool build_op2(sexpr_t* out, operator_kind op, sexpr_t lhs, sexpr_t rhs, int64_t line,
+                      ctx_t* ctx)
+{
     sexpr_t items[] = { op_atom(op, line), lhs, rhs };
     return build_form(out, items, 3, line, ctx);
 }
@@ -616,17 +595,10 @@ static bool build_op2(
  * Builds the sub matrix for the rows of a group whose column 0 cells were
  * consumed, replacing that column with n_new columns read from the subject.
  */
-static bool specialise(
-    matrix_t* out,
-    const matrix_t* m,
-    int64_t col,
-    const int64_t* rows,
-    int64_t n_rows,
-    const col_t* new_cols,
-    int64_t n_new,
-    const cell_t* new_cells,
-    ctx_t* ctx
-) {
+static bool specialise(matrix_t* out, const matrix_t* m, int64_t col, const int64_t* rows,
+                       int64_t n_rows, const col_t* new_cols, int64_t n_new,
+                       const cell_t* new_cells, ctx_t* ctx)
+{
     if (!matrix_alloc(out, n_new + m->n_cols - 1, n_rows, ctx))
         return false;
 

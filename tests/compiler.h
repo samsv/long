@@ -323,6 +323,26 @@ static inline void sv_test_compiler_for(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_kind("for x in [] do x end", VALUE_OBJ));
    sv_test_run(t, sv_test_compiler_kind("for c in \"\" do c end", VALUE_OBJ));
    sv_test_run(t, sv_test_compiler_runtime_err("for x in %{} do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
+
+   /* The loop variable may be a pattern. A `for` evaluates to its last body value,
+    * so that is how these observe the binding. */
+   sv_test_run(t, sv_test_compiler_num("for (a, b) in [(1, 2), (3, 4)] do a * b end", 12));
+   sv_test_run(t, sv_test_compiler_num(
+      "for {x: a, ..} in [{x: 5, y: 1}, {x: 7, y: 2}] do a end", 7));
+   sv_test_run(t, sv_test_compiler_num("for [h, ..t] in [[1, 9], [2, 8]] do h end", 2));
+   sv_test_run(t, sv_test_compiler_num("for (a, [b, c]) in [(1, [2, 3])] do a + b + c end", 6));
+   sv_test_run(t, sv_test_compiler_num("for (_, b) in [(1, 2), (3, 4)] do b end", 4));
+   sv_test_run(t, sv_test_compiler_num("k = 10\nfor (a, b) in [(1, 2)] do a + b + k end", 13));
+   sv_test_run(t, sv_test_compiler_num(
+      "for (a, b) in [(1,1),(2,2),(3,3),(4,4),(5,5)] do a + b end", 10));
+
+   /* A repeat still constrains, and an item that does not fit raises. */
+   sv_test_run(t, sv_test_compiler_num("for (a, a) in [(1, 1)] do a end", 1));
+   sv_test_run(t, sv_test_compiler_runtime_err("for (a, a) in [(1, 2)] do a end")
+               == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("for (a, b) in [1, 2] do a end")
+               == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_err("for 1 in [1] do 1 end") == C_ERR_UNEXPECTED_SEXPR);
 }
 
 static inline void sv_test_compiler_functions(sv_testing_t* t)
@@ -702,6 +722,26 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("{x: a} = {x: 5}\na", 5));
    sv_test_run(t, sv_test_compiler_num("{x: a, ..} = {x: 5, y: 6}\na", 5));
    sv_test_run(t, sv_test_compiler_num("%{\"k\": v} = %{\"k\": 7}\nv", 7));
+
+   /* A parameter may be a pattern; arity counts the parameter, not its parts. */
+   sv_test_run(t, sv_test_compiler_num("fun f((a, b)) a + b\nf((3, 4))", 7));
+   sv_test_run(t, sv_test_compiler_num("fun f((a, b), c) a + b + c\nf((1, 2), 3)", 6));
+   sv_test_run(t, sv_test_compiler_num("fun f({x: a, ..}) a\nf({x: 9, y: 1})", 9));
+   sv_test_run(t, sv_test_compiler_num("fun f([h, ..t]) h\nf([5, 6])", 5));
+   sv_test_run(t, sv_test_compiler_num("fun f((a, a)) a\nf((2, 2))", 2));
+   sv_test_run(t, sv_test_compiler_num(
+      "fun f((a, b)) do\nif a == 0 do b else f((a - 1, b + 1)) end\nend\nf((3, 0))", 3));
+   sv_test_run(t, sv_test_compiler_runtime_err("fun f((a, a)) a\nf((1, 2))")
+               == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_err("fun f((a, b)) a + b\nf(5)")
+               == VM_ERR_MATCH_FAILED);
+
+   /* Record field shorthand: `{x}` is `{x: x}`, in construction and in patterns. */
+   sv_test_run(t, sv_test_compiler_num("x = 1\ny = 2\np = {x, y}\nmatch p | {x, y} do x + y end", 3));
+   sv_test_run(t, sv_test_compiler_num("x = 1\np = {x, y: 5}\nmatch p | {x, y} do x + y end", 6));
+   sv_test_run(t, sv_test_compiler_num("p = {x: 8, y: 1}\n{x, y} = p\nx + y", 9));
+   sv_test_run(t, sv_test_compiler_num("p = {x: 4, y: 9}\nmatch p | {x, ..} do x end", 4));
+   sv_test_run(t, sv_test_compiler_err("p = {nope}") == C_ERR_UNDEFINED_VARIABLE);
 
    sv_test_run(t, sv_test_compiler_num("%{\"a\": v, ..} = %{\"a\": 5, \"b\": 6}\nv", 5));
    sv_test_run(t, sv_test_compiler_runtime_err("%{\"a\": v} = %{\"a\": 5, \"b\": 6}\nv")
