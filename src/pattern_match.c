@@ -348,6 +348,20 @@ bool record_is_open(sexpr_t rec)
     return last.tag == S_ATOM && last.atom.kind == TOKEN_DOT_DOT;
 }
 
+bool hashmap_is_open(sexpr_t map)
+{
+    if (map.cons.size < 2)
+        return false;
+
+    sexpr_t last = map.cons.arr[map.cons.size - 1];
+    return last.tag == S_ATOM && last.atom.kind == TOKEN_DOT_DOT;
+}
+
+int64_t hashmap_n_keys(sexpr_t map)
+{
+    return (map.cons.size - 1 - (hashmap_is_open(map) ? 1 : 0)) / 2;
+}
+
 int64_t record_n_fields(sexpr_t rec)
 {
     int64_t n = rec.cons.size - 1 - (record_is_open(rec) ? 1 : 0);
@@ -374,11 +388,11 @@ static bool same_record_shape(sexpr_t a, sexpr_t b)
 
 static bool same_hashmap_shape(sexpr_t a, sexpr_t b)
 {
-    if (a.cons.size != b.cons.size)
+    if (hashmap_is_open(a) != hashmap_is_open(b) || hashmap_n_keys(a) != hashmap_n_keys(b))
         return false;
 
-    for (int64_t i = 1; i < a.cons.size; i += 2)
-        if (!same_literal(a.cons.arr[i], b.cons.arr[i]))
+    for (int64_t i = 0; i < hashmap_n_keys(a); i++)
+        if (!same_literal(a.cons.arr[1 + 2 * i], b.cons.arr[1 + 2 * i]))
             return false;
 
     return true;
@@ -946,8 +960,8 @@ static bool compile_keyed(sexpr_t* out, const matrix_t* m, int64_t col, const in
             continue;
 
         sexpr_t shape = cell_pattern(CELL(m, rows[last], col));
-        int64_t n_keys = is_record ? record_n_fields(shape) : (shape.cons.size - 1) / 2;
-        bool open = is_record && record_is_open(shape);
+        int64_t n_keys = is_record ? record_n_fields(shape) : hashmap_n_keys(shape);
+        bool open = is_record ? record_is_open(shape) : hashmap_is_open(shape);
         int64_t n_picked = pick_group(picked, m, col, rows, n_rows, CELL(m, rows[last], col), same);
 
         if (is_record)
@@ -979,7 +993,8 @@ static bool compile_keyed(sexpr_t* out, const matrix_t* m, int64_t col, const in
 
         if (ok) {
             if (open)
-                ok = build_call1(&test, "is-record?", m->cols[col].subject, line, ctx);
+                ok = build_call1(&test, is_record ? "is-record?" : "is-hashmap?",
+                                 m->cols[col].subject, line, ctx);
             else
                 ok = build_call2(&test, is_record ? "is-record?" : "is-hashmap?",
                                  m->cols[col].subject, num_atom((double)n_keys, line), line, ctx);
@@ -1328,7 +1343,7 @@ static bool linearise(sexpr_t* slot, sv_vec_t(sv_str_t)* seen, sexpr_t* eq,
         return true;
 
     if (head.fn == FN_RECORD || head.fn == FN_HASHMAP) {
-        int64_t n = head.fn == FN_RECORD ? record_n_fields(p) : (p.cons.size - 1) / 2;
+        int64_t n = head.fn == FN_RECORD ? record_n_fields(p) : hashmap_n_keys(p);
         for (int64_t i = 0; i < n; i++)
             if (!linearise(&p.cons.arr[2 + 2 * i], seen, eq, line, ctx))
                 return false;
@@ -1430,7 +1445,6 @@ static sexpr_t match_lower(sexpr_t s, ctx_t* ctx)
     matrix_t m = { 0 };
     sexpr_t subject = { 0 };
     sexpr_t chain = { 0 };
-    sexpr_t def = nil_atom(line);
     sexpr_t out = { 0 };
 
     if (!next_temp(&subject, line, ctx))
@@ -1461,8 +1475,15 @@ static sexpr_t match_lower(sexpr_t s, ctx_t* ctx)
     if (!ok)
         return discard(&s, ctx);
 
+    sexpr_t def = { 0 };
+    if (!build_call1(&def, "match-fail", subject, line, ctx)) {
+        sexpr_free(&chain, &ctx->alloc);
+        return discard(&s, ctx);
+    }
+
     if (!build_alt(&chain, chain, def, line, ctx)) {
         sexpr_free(&chain, &ctx->alloc);
+        sexpr_free(&def, &ctx->alloc);
         return discard(&s, ctx);
     }
 

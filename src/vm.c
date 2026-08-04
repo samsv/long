@@ -535,6 +535,13 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             TRY_PUSH_STACK(res);
             break;
         }
+        case OP_IS_HASHMAP_ANY: {
+            value_t v = sv_vec_pop(vm->stack);
+            value_t res = { .kind = VALUE_BOOL, .boolean = IS_MAP(v) };
+            value_free(&v, a);
+            TRY_PUSH_STACK(res);
+            break;
+        }
         case OP_HAS_FIELD: {
             value_t v = sv_vec_pop(vm->stack);
             uint8_t id = vm->chunk.bytecode.arr[vm->ip++];
@@ -580,6 +587,10 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
             value_t subject = value_borrow(sv_vec_last(vm->stack));
             OP_ERR_1(VM_ERR_MATCH_FAILED, subject, "Value does not match the pattern")
+        }
+        case OP_NO_MATCH: {
+            value_t subject = value_borrow(sv_vec_last(vm->stack));
+            OP_ERR_1(VM_ERR_NO_CLAUSE, subject, "No clause matched")
         }
         case OP_RETURN:
             return sv_opt_none_t(error_t);

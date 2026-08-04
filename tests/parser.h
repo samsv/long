@@ -275,6 +275,14 @@ static inline void sv_test_parser_match(sv_testing_t* t)
    sv_test_parse_ok(t, "match x | [a, ..[b, ..c]] do c end",
                     "(match x (tuple (list a (.. (list b (.. c)))) (do c)))");
    sv_test_parse_ok(t, "[a, ..[]] = l", "(= (list a (.. (list))) l)");
+
+   /* Open hashmap patterns, and negative number literals. */
+   sv_test_parse_ok(t, "match x | %{\"k\": v, ..} do v end",
+                    "(match x (tuple (hashmap \"k\" v ..) (do v)))");
+   sv_test_parse_ok(t, "%{\"k\": v, ..} = m", "(= (hashmap \"k\" v ..) m)");
+   sv_test_parse_ok(t, "match x | -1 do 2 end", "(match x (tuple -1 (do 2)))");
+   sv_test_parse_ok(t, "match x | (-1, a) do a end",
+                    "(match x (tuple (tuple -1 a) (do a)))");
    sv_test_parse_ok(t, "match x | [] do 0 | [a, b] do a end",
                     "(match x (tuple (list) (do 0)) (tuple (list a b) "
                     "(do a)))");
@@ -329,6 +337,8 @@ static inline void sv_test_parser_errors(sv_testing_t* t)
    sv_test_parse_error(t, "[..t, 1] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "[h, ..1] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | [a, ..1] do a end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | -x do 1 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | -\"s\" do 1 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | [a, ..\"s\"] do a end",
                        (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "(a, ..b) = t", (int)PARSER_ERROR_UNEXPECTED_TOKEN);

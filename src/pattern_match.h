@@ -27,6 +27,8 @@ sexpr_t match_lower_tree(sexpr_t, ctx_t*);
 bool list_has_tail(sexpr_t);
 int64_t list_n_fixed(sexpr_t);
 bool record_is_open(sexpr_t);
+int64_t hashmap_n_keys(sexpr_t);
+bool hashmap_is_open(sexpr_t);
 int64_t record_n_fields(sexpr_t);
 
 #endif

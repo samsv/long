@@ -363,11 +363,15 @@ static bool bind_record(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen
 static bool bind_hashmap(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
                          int64_t line, ctx_t* ctx)
 {
-    int64_t n = (pattern.cons.size - 1) / 2;
+    int64_t n = hashmap_n_keys(pattern);
     TRY(emit(c, ctx, OP_DUP, line));
-    TRY(add_const(c, ctx, (value_t){ .kind = VALUE_NUMBER, .number = (double)n }, line));
-    TRY(emit(c, ctx, OP_SWAP, line));
-    TRY(emit(c, ctx, OP_IS_HASHMAP, line));
+    if (hashmap_is_open(pattern)) {
+        TRY(emit(c, ctx, OP_IS_HASHMAP_ANY, line));
+    } else {
+        TRY(add_const(c, ctx, (value_t){ .kind = VALUE_NUMBER, .number = (double)n }, line));
+        TRY(emit(c, ctx, OP_SWAP, line));
+        TRY(emit(c, ctx, OP_IS_HASHMAP, line));
+    }
     TRY(emit_assert(c, line, ctx));
 
     for (int64_t i = 0; i < n; i++) {
@@ -424,6 +428,27 @@ static bool bind_list(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
     return true;
 }
 
+static bool bind_literal(compiler_t* c, sexpr_t pattern, int64_t line, ctx_t* ctx)
+{
+    TRY(emit(c, ctx, OP_DUP, line));
+    TRY(compile_sexpr(c, pattern, ctx));
+    TRY(emit(c, ctx, OP_EQUALS, line));
+    return emit_assert(c, line, ctx);
+}
+
+/**
+ * A negated number is a literal pattern, but reaches the left of `=` as a unary
+ * minus cons because the left side is parsed as an expression.
+ */
+static bool is_negative_number(sexpr_t e)
+{
+    return e.tag == S_CONS && e.cons.size == 2
+        && e.cons.arr[0].tag == S_ATOM && e.cons.arr[0].atom.kind == TOKEN_OPERATOR
+        && e.cons.arr[0].atom.operator == OPERATOR_MINUS
+        && e.cons.arr[1].tag == S_ATOM && e.cons.arr[1].atom.kind == TOKEN_LITERAL
+        && e.cons.arr[1].atom.literal.kind == LITERAL_NUMBER;
+}
+
 static bool bind_pattern(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
                          int64_t line, ctx_t* ctx)
 {
@@ -434,11 +459,11 @@ static bool bind_pattern(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* see
             && pattern.atom.literal.kind == LITERAL_IDENTIFIER)
             return bind_var(c, pattern.atom.literal.literal, seen, line, ctx);
 
-        TRY(emit(c, ctx, OP_DUP, line));
-        TRY(compile_sexpr(c, pattern, ctx));
-        TRY(emit(c, ctx, OP_EQUALS, line));
-        return emit_assert(c, line, ctx);
+        return bind_literal(c, pattern, line, ctx);
     }
+
+    if (is_negative_number(pattern))
+        return bind_literal(c, pattern, line, ctx);
 
     token_t head = pattern.cons.arr[0].atom;
     if (head.kind != TOKEN_SP_FUNCTION)
@@ -706,6 +731,9 @@ static bool compile_list(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
 
 static bool compile_hashmap(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
+    if (n > 0 && args[n - 1].tag == S_ATOM && args[n - 1].atom.kind == TOKEN_DOT_DOT)
+        return reject_pattern_only(ctx, args[n - 1].atom.line);
+
     for (int64_t i = 0; i < n; i++)
         TRY(compile_sexpr(c, args[i], ctx));
     return emit2(c, ctx, OP_HASHMAP, (uint8_t)(n / 2), line);
@@ -1101,6 +1129,16 @@ static bool compile_internal(compiler_t* c, sv_str_t name, const sexpr_t* args, 
         return compile_sized_test(c, name, args, n, line, ctx);
     if (is_form(name, "has-field?"))
         return compile_has_field(c, args, n, line, ctx);
+    if (is_form(name, "match-fail")) {
+        if (n != 1)
+            return compiler_malformed(ctx, "match-fail", line);
+        TRY(compile_sexpr(c, args[0], ctx));
+        return emit(c, ctx, OP_NO_MATCH, line);
+    }
+    if (is_form(name, "is-hashmap?") && n == 1) {
+        TRY(compile_sexpr(c, args[0], ctx));
+        return emit(c, ctx, OP_IS_HASHMAP_ANY, line);
+    }
     if (is_form(name, "is-hashmap?") || is_form(name, "has-key?")) {
         if (n != 2)
             return compiler_malformed(ctx, "keyed test", line);

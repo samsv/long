@@ -72,7 +72,9 @@ static const char* op_name(vm_instructions op)
         case OP_HAS_KEY: return "has_key";
         case OP_LIST_UNCONS: return "list_uncons";
         case OP_ASSERT_MATCH: return "assert_match";
+        case OP_NO_MATCH: return "no_match";
         case OP_SWAP: return "swap";
+        case OP_IS_HASHMAP_ANY: return "is_hashmap_any";
         case OP_RETURN: return "return";
     }
     return "unknown";
@@ -157,9 +159,11 @@ void print_chunk(vm_t v)
             case OP_IS_CONS:
             case OP_IS_RECORD_ANY:
             case OP_IS_HASHMAP:
+            case OP_IS_HASHMAP_ANY:
             case OP_HAS_KEY:
             case OP_LIST_UNCONS:
             case OP_ASSERT_MATCH:
+            case OP_NO_MATCH:
             case OP_SWAP:
             case OP_RETURN:
             default:

@@ -38,7 +38,10 @@ FAIL x = FAIL
 That is, `a | b` returns `a`, if `a` is a non FAIL value, otherwise returns `b`. The last rule makes a partial application that already
 FAILed keep FAILing, which the multiple argument translation below relies on.
 
-The `nil` on the last alternative makes a match with no matching pattern evaluate to nil, like an `if` without an `else`.
+The last alternative is where a match with no matching pattern lands. Rather than evaluating to `nil`, it raises
+`VM_ERR_NO_CLAUSE`: a coverage gap is a mistake, and yielding `nil` would hide it. In the lowered tree the
+alternative is `(match-fail u)`, carrying the scrutinee so the error can name the value that matched nothing. The
+clause form of `fun` raises the same way, which is Erlang's `function_clause`.
 
 For multiple arguments, i.e.
 ```elixir
@@ -107,12 +110,13 @@ right hand side and binds the pattern's variables in the enclosing scope.
 {x: a, ..} = rec
 ```
 
-Unlike a `match` clause there is no next alternative to fall through to, so a
-value that does not fit raises `VM_ERR_MATCH_FAILED` at runtime rather than
-producing `nil`. That is the Erlang reading of `=` as a match operator, and it is
-the only one available to a dynamic language: deciding at compile time that a
-pattern cannot fail needs the set of shapes a value may take, which is exactly
-what a dynamic language does not provide.
+There is no next alternative to fall through to, so a value that does not fit
+raises `VM_ERR_MATCH_FAILED` at runtime. That is the Erlang reading of `=` as a
+match operator, and it is the only one available to a dynamic language: deciding at
+compile time that a pattern cannot fail needs the set of shapes a value may take,
+which is exactly what a dynamic language does not provide. It is a distinct error
+from the `VM_ERR_NO_CLAUSE` a `match` raises, because a destructuring that does not
+fit and a clause list with a gap are different mistakes.
 
 Because there is a single row and no fallthrough, none of the matrix machinery
 applies — no column scoring, no grouping, no `|`, no `FAIL`. The compiler walks the
@@ -343,7 +347,8 @@ and each cell means one of three things
 Because a variable cell carries a presence test, the variable rule applies only to `_` columns; mentioned variables compile
 to a lookup that binds on success and FAILs the row otherwise.
 
-Map patterns follow the same schema.
+Map patterns follow the same schema, including the trailing `..` that makes a pattern open: `%{"k": v, ..}` requires
+only the keys it names, while `%{"k": v}` also pins the size.
 
 ## Column reordering
 We may reorder the columns of a tuple pattern match without changing the final result. Reordering the columns may lead to a smaller decision tree. Let's take

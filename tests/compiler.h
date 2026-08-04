@@ -442,7 +442,8 @@ static inline void sv_test_compiler_match(sv_testing_t* t)
 {
    sv_test_run(t, sv_test_compiler_num("match 1 | 1 do 2 end", 2));
    sv_test_run(t, sv_test_compiler_num("match 2 | 1 do 2 | 2 do 3 end", 3));
-   sv_test_run(t, sv_test_compiler_kind("match 9 | 1 do 2 end", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_runtime_err("match 9 | 1 do 2 end")
+               == VM_ERR_NO_CLAUSE);
    sv_test_run(t, sv_test_compiler_num("match 9 | 1 do 2 | _ do 7 end", 7));
    sv_test_run(t, sv_test_compiler_num("match 5 | y do y + 1 end", 6));
    sv_test_run(t, sv_test_compiler_num("match \"a\" | 1 do 2 | \"a\" do 3 end", 3));
@@ -450,20 +451,53 @@ static inline void sv_test_compiler_match(sv_testing_t* t)
 
    sv_test_run(t, sv_test_compiler_num("match (1, 2) | (1, b) do b end", 2));
    sv_test_run(t, sv_test_compiler_num("match (1, 2) | (1, 3) do 8 | (1, 2) do 9 end", 9));
-   sv_test_run(t, sv_test_compiler_kind("match (1, 2, 3) | (1, b) do b end", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_runtime_err("match (1, 2, 3) | (1, b) do b end")
+               == VM_ERR_NO_CLAUSE);
 
    sv_test_run(t, sv_test_compiler_num("match {a: 1, b: 4} | {a: 1, b: v} do v end", 4));
-   sv_test_run(t, sv_test_compiler_kind("match {a: 1} | {b: v} do v end", VALUE_NIL));
-   sv_test_run(t, sv_test_compiler_kind("match {a: 1, b: 2} | {a: 1} do 5 end", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_runtime_err("match {a: 1} | {b: v} do v end")
+               == VM_ERR_NO_CLAUSE);
+   sv_test_run(t, sv_test_compiler_runtime_err("match {a: 1, b: 2} | {a: 1} do 5 end")
+               == VM_ERR_NO_CLAUSE);
    sv_test_run(t, sv_test_compiler_num("match {a: 1, b: 2} | {a: 1, ..} do 5 end", 5));
    sv_test_run(t, sv_test_compiler_num("match %{\"k\": 3} | %{\"k\": v} do v end", 3));
 
    sv_test_run(t, sv_test_compiler_num("match [] | [] do 1 | [a] do a end", 1));
    sv_test_run(t, sv_test_compiler_num("match [7] | [] do 1 | [a] do a end", 7));
-   sv_test_run(t, sv_test_compiler_kind("match [7, 8] | [] do 1 | [a] do a end", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_runtime_err("match [7, 8] | [] do 1 | [a] do a end")
+               == VM_ERR_NO_CLAUSE);
    sv_test_run(t, sv_test_compiler_num("match [1, 2] | [h, ..t] do h end", 1));
    sv_test_run(t, sv_test_compiler_num("match [1, 3] | [1, 2] do 8 | [1, 3] do 9 end", 9));
    sv_test_run(t, sv_test_compiler_num("match [1, 2, 3] | [a, ..r] do match r | [b, ..s] do b end end", 2));
+
+   /* An open map pattern requires only the keys it names, the way an open record
+    * does; the exact form still pins the size. */
+   sv_test_run(t, sv_test_compiler_num(
+      "match %{\"a\": 1, \"b\": 2} | %{\"a\": v, ..} do v | _ do 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num(
+      "match %{\"a\": 1} | %{\"a\": v, ..} do v | _ do 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num(
+      "match %{\"a\": 1, \"b\": 2} | %{\"a\": v} do v | _ do 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num(
+      "match %{\"b\": 2} | %{\"a\": v, ..} do v | _ do 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num(
+      "match %{\"a\": 1, \"b\": 2, \"c\": 3} | %{\"a\": p, \"b\": q, ..} do p + q | _ do 0 end", 3));
+
+   /* Exact is tried before open, so the more specific clause wins. */
+   sv_test_run(t, sv_test_compiler_num(
+      "match %{\"a\": 1} | %{\"a\": v} do 1 | %{\"a\": w, ..} do 2 | _ do 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num(
+      "match %{\"a\": 1, \"z\": 9} | %{\"a\": v} do 1 | %{\"a\": w, ..} do 2 | _ do 0 end", 2));
+
+   /* Negative number literals. */
+   sv_test_run(t, sv_test_compiler_num("match 0 - 1 | -1 do 7 | _ do 0 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match 1 | -1 do 7 | _ do 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("match 0 - 2 | -1 do 7 | _ do 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("match 0 - 1.5 | -1.5 do 7 | _ do 0 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match 0 | -0 do 7 | _ do 0 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match (0 - 3, 4) | (-3, b) do b | _ do 0 end", 4));
+   sv_test_run(t, sv_test_compiler_num("match [0 - 1, 2] | [-1, b] do b | _ do 0 end", 2));
+   sv_test_run(t, sv_test_compiler_num("match {a: 0 - 1} | {a: -1} do 7 | _ do 0 end", 7));
 
    /* A pattern in the tail position: `..[]` pins an exact length, `..[b]` a one
     * element remainder, and they nest. */
@@ -501,7 +535,9 @@ static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
 {
    sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 do 10 | _ do 20 end f(0)", 10));
    sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 do 10 | _ do 20 end f(3)", 20));
-   sv_test_run(t, sv_test_compiler_kind("fun f(x) | 0 do 10 end f(3)", VALUE_NIL));
+   /* A function whose clauses do not cover the argument raises, as Erlang does. */
+   sv_test_run(t, sv_test_compiler_runtime_err("fun f(x) | 0 do 10 end\nf(3)")
+               == VM_ERR_NO_CLAUSE);
    sv_test_run(t, sv_test_compiler_num("fun f(x) | y do y + 1 end f(4)", 5));
 
    /* A block expression, and a function body that is just an expression. */
@@ -519,7 +555,8 @@ static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
     * pop everything the clause bound before jumping there. */
    sv_test_run(t, sv_test_compiler_num("match 1 | y when y > 0 do 10 | _ do 20 end", 10));
    sv_test_run(t, sv_test_compiler_num("match 0 | y when y > 0 do 10 | _ do 20 end", 20));
-   sv_test_run(t, sv_test_compiler_kind("match 0 | y when y > 0 do 10 end", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_runtime_err("match 0 | y when y > 0 do 10 end")
+               == VM_ERR_NO_CLAUSE);
 
    /* Both rows share a literal, so the fallthrough is the empty rule's `|`. */
    sv_test_run(t, sv_test_compiler_num("g = true\nmatch 1 | 1 when g do 2 | 1 do 3 end", 2));
@@ -605,8 +642,11 @@ static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
 
    /* A guard fails to the nearest default: an inner match's guard lands on the
     * inner default, so the outer clause still succeeds with its value. */
-   sv_test_run(t, sv_test_compiler_kind(
-      "match 1 | 1 do match 2 | 2 when false do 7 end | _ do 8 end", VALUE_NIL));
+   /* The inner match has no matching clause, so it raises rather than letting the
+    * outer clause succeed with nil. */
+   sv_test_run(t, sv_test_compiler_runtime_err(
+      "match 1 | 1 do match 2 | 2 when false do 7 end | _ do 8 end")
+               == VM_ERR_NO_CLAUSE);
    sv_test_run(t, sv_test_compiler_num(
       "match 1 | 1 when false do match 2 | 2 do 3 end | _ do 9 end", 9));
    sv_test_run(t, sv_test_compiler_num(
@@ -663,6 +703,13 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("{x: a, ..} = {x: 5, y: 6}\na", 5));
    sv_test_run(t, sv_test_compiler_num("%{\"k\": v} = %{\"k\": 7}\nv", 7));
 
+   sv_test_run(t, sv_test_compiler_num("%{\"a\": v, ..} = %{\"a\": 5, \"b\": 6}\nv", 5));
+   sv_test_run(t, sv_test_compiler_runtime_err("%{\"a\": v} = %{\"a\": 5, \"b\": 6}\nv")
+               == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_num("-1 = 0 - 1\n42", 42));
+   sv_test_run(t, sv_test_compiler_runtime_err("-1 = 5\n42") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_num("(-1, b) = (0 - 1, 9)\nb", 9));
+
    /* A pattern tail works on the left of `=` too. */
    sv_test_run(t, sv_test_compiler_num("[a, ..[]] = [7]\na", 7));
    sv_test_run(t, sv_test_compiler_num("[a, ..[b]] = [7, 8]\nb", 8));
@@ -700,9 +747,14 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("(a, b, a) = (1, 2, 3)\nb")
                == VM_ERR_MATCH_FAILED);
 
-   /* `..` is pattern and LHS syntax only. */
+   /* `..` is pattern and LHS syntax only, in all three container kinds. */
    sv_test_run(t, sv_test_compiler_err("y = 1\nx = [1, ..y]\nx") == C_ERR_UNEXPECTED_SEXPR);
    sv_test_run(t, sv_test_compiler_err("x = {a: 1, ..}\nx") == C_ERR_UNEXPECTED_SEXPR);
+   sv_test_run(t, sv_test_compiler_err("x = %{\"a\": 1, ..}\nx") == C_ERR_UNEXPECTED_SEXPR);
+
+   /* A match with no matching clause raises rather than yielding nil. */
+   sv_test_run(t, sv_test_compiler_runtime_err("match 5 | 1 do 2 end") == VM_ERR_NO_CLAUSE);
+   sv_test_run(t, sv_test_compiler_runtime_err("match 5 end") == VM_ERR_NO_CLAUSE);
 }
 
 static inline void sv_test_compiler(sv_testing_t* t)

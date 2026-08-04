@@ -351,6 +351,13 @@ static sexpr_t parse_hashmap(scanner_t* s, ctx_t* ctx, token_t open)
         return cons_sexpr(list);
 
     for (;;) {
+        token_t dots;
+        if (parser_check(s, ctx, kind_pattern(TOKEN_DOT_DOT), &dots)) {
+            if (!push_sexpr(&list, atom_sexpr(dots), ctx))
+                return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+            break;
+        }
+
         sexpr_t key = parse_expr(s, ctx, 5);
         if (is_error_sexpr(key))
             return free_list_error(&list, ctx, key);
@@ -1011,6 +1018,13 @@ static sexpr_t parse_hashmap_pattern(scanner_t* s, ctx_t* ctx, token_t open)
         return cons_sexpr(list);
 
     for (;;) {
+        token_t dots;
+        if (parser_check(s, ctx, kind_pattern(TOKEN_DOT_DOT), &dots)) {
+            if (!push_sexpr(&list, atom_sexpr(dots), ctx))
+                return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+            break;
+        }
+
         token_t key = scanner_next(s, ctx);
         if (key.kind == TOKEN_ERROR)
             return free_list_error(&list, ctx, atom_sexpr(key));
@@ -1067,6 +1081,16 @@ static sexpr_t parse_pattern(scanner_t* s, ctx_t* ctx)
         return parse_record_pattern(s, ctx, token);
     if (token.kind == TOKEN_PERCENT_BRACE)
         return parse_hashmap_pattern(s, ctx, token);
+    if (token_is(token, op_pattern(OPERATOR_MINUS))) {
+        token_t num = scanner_next(s, ctx);
+        if (num.kind == TOKEN_ERROR)
+            return atom_sexpr(num);
+        if (num.kind != TOKEN_LITERAL || num.literal.kind != LITERAL_NUMBER)
+            return unexpected_token_error(ctx, num, "Expected a number after '-' in a pattern");
+
+        num.literal.number = -num.literal.number;
+        return atom_sexpr(num);
+    }
 
     return unexpected_token_error(ctx, token, "Expected a pattern");
 }

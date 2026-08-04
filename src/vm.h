@@ -102,10 +102,12 @@ typedef enum {
     OP_IS_RECORD_ANY,
     /* A hashmap has no such cap, so this one takes its size off the stack. */
     OP_IS_HASHMAP,
+    OP_IS_HASHMAP_ANY,
     OP_HAS_FIELD,
     OP_HAS_KEY,
     OP_LIST_UNCONS,
     OP_ASSERT_MATCH,
+    OP_NO_MATCH,
     OP_SWAP,
     OP_RETURN,
 } vm_instructions;
@@ -120,6 +122,7 @@ typedef enum {
     VM_ERR_KEY_NOT_FOUND,
     VM_ERR_WRONG_TYPE,
     VM_ERR_MATCH_FAILED,
+    VM_ERR_NO_CLAUSE,
 } vm_error_kinds;
 
 /**
