@@ -29,6 +29,31 @@ void sexpr_free(sexpr_t* sexpr, const sv_allocator_t* a)
     }
 }
 
+bool sexpr_clone(sexpr_t* out, sexpr_t src, const sv_allocator_t* a)
+{
+    if (src.tag == S_ATOM) {
+        *out = src;
+        return true;
+    }
+
+    sv_vec_t(sexpr_t) list = sv_vec_init_capacity(sexpr_t, src.cons.size, a);
+    if (list.arr == NULL)
+        return false;
+
+    for (int64_t i = 0; i < src.cons.size; i++) {
+        sexpr_t child = { 0 };
+        if (!sexpr_clone(&child, src.cons.arr[i], a)) {
+            sexpr_t partial = cons_sexpr(list);
+            sexpr_free(&partial, a);
+            return false;
+        }
+        list.arr[list.size++] = child;
+    }
+
+    *out = cons_sexpr(list);
+    return true;
+}
+
 static bool sexpr_format_builder(sexpr_t sexpr, sv_str_builder* b, const sv_allocator_t* a)
 {
 #define CHECK(...) if (!(__VA_ARGS__)) return false

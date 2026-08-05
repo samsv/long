@@ -613,6 +613,66 @@ static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
    /* The guard is a plain expression, so a block body works behind one. */
    sv_test_run(t, sv_test_compiler_num("match 1 | 1 when true do y = 3; y + 1 end", 4));
 
+   /* Alternatives share one body: each one reaches it, and none of the others do. */
+   sv_test_run(t, sv_test_compiler_num("match 1 | 1 | 2 | 3 do 7 | _ do 0 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match 2 | 1 | 2 | 3 do 7 | _ do 0 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match 3 | 1 | 2 | 3 do 7 | _ do 0 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match 9 | 1 | 2 | 3 do 7 | _ do 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("match 5 | 1 | 2 | 3 | 4 | 5 do 9 | _ do 0 end", 9));
+   sv_test_run(t, sv_test_compiler_num("match \"b\" | \"a\" | \"b\" do 1 | _ do 0 end", 1));
+
+   /* Alternatives may bind, as long as they all bind the same names. */
+   sv_test_run(t, sv_test_compiler_num("match (2, 7) | (1, a) | (2, a) do a | _ do 0 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match (1, 5) | (1, a) | (2, a) do a | _ do 0 end", 5));
+   sv_test_run(t, sv_test_compiler_num("match (3, 4) | (1, a) | (3, a) do a | _ do 0 end", 4));
+   sv_test_run(t, sv_test_compiler_err("match x | (1, a) | (2, b) do a end") != -1);
+
+   /* A guard is cloned into each alternative, so it gates all of them. */
+   sv_test_run(t, sv_test_compiler_num("match 2 | 1 | 2 when true do 7 | _ do 0 end", 7));
+   sv_test_run(t, sv_test_compiler_num("match 2 | 1 | 2 when false do 7 | _ do 0 end", 0));
+
+   /* Alternatives of different shapes. */
+   sv_test_run(t, sv_test_compiler_num("match [] | [] | %{} do 5 | _ do 0 end", 5));
+   sv_test_run(t, sv_test_compiler_num("match %{} | [] | %{} do 5 | _ do 0 end", 5));
+
+   /* One compiled body, several entry points. These are the cases that only work
+    * because each alternative writes the clause's variables into the same slots. */
+   sv_test_run(t, sv_test_compiler_num(
+      "match (5, 2) | (1, a) | (a, 2) do a | _ do 0 end", 5));
+   sv_test_run(t, sv_test_compiler_num(
+      "match (1, 9) | (1, a) | (a, 2) do a | _ do 0 end", 9));
+   sv_test_run(t, sv_test_compiler_num(
+      "match (1, [2, 3]) | (1, [a, b]) | (2, [b, a]) do a + b | _ do 0 end", 5));
+
+   /* A repeat inside an alternative binds one name, so it still lines up. */
+   sv_test_run(t, sv_test_compiler_num("match (4, 4) | (a, a) | (a, 9) do a | _ do 0 end", 4));
+
+   /* Two shared clauses may name the same variable; it is declared once. */
+   sv_test_run(t, sv_test_compiler_num(
+      "match (3, 2) | (1, a) | (a, 2) do a | (5, b) | (b, 6) do b | _ do 0 end", 3));
+   sv_test_run(t, sv_test_compiler_num(
+      "match (5, 9) | (1, a) | (a, 2) do a | (5, b) | (b, 6) do b | _ do 0 end", 9));
+
+   /* The join point must survive a body that opens its own scopes. */
+   sv_test_run(t, sv_test_compiler_num("match 2 | 1 | 2 do do k = 3\nk + 1 end | _ do 0 end", 4));
+   sv_test_run(t, sv_test_compiler_num(
+      "match 2 | 1 | 2 do for i in [1, 2, 3] do i end | _ do 0 end", 3));
+   sv_test_run(t, sv_test_compiler_num(
+      "match 2 | 1 | 2 do match 4 | 3 | 4 do 8 | _ do 0 end | _ do 0 end", 8));
+   sv_test_run(t, sv_test_compiler_num(
+      "fun f(x) | 0 | 1 do for i in [7, 8] do i end | _ do 0 end\nf(1)", 8));
+   sv_test_run(t, sv_test_compiler_num(
+      "for v in [1, 2, 3] do match v | 1 | 2 do 7 | _ do 0 end end", 0));
+
+   /* A guard over an alternation reads the shared variable. */
+   sv_test_run(t, sv_test_compiler_num(
+      "match (1, 8) | (1, a) | (a, 2) when a > 5 do a | _ do 0 end", 8));
+   sv_test_run(t, sv_test_compiler_num(
+      "match (1, 3) | (1, a) | (a, 2) when a > 5 do a | _ do 0 end", 0));
+
+   sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 | 1 do 7 | _ do 0 end\nf(1)", 7));
+   sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 | 1 do 7 | _ do 0 end\nf(9)", 0));
+
    /* A repeated variable constrains the positions to be equal. The non-adjacent
     * cases are the ones that matter: an implementation comparing only neighbouring
     * slots would pass (a, a) and fail every one of these. */

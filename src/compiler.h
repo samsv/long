@@ -22,6 +22,17 @@ typedef struct fail_target_t {
     struct fail_target_t* next;
 } fail_target_t;
 
+/**
+ * Where the leaves of one match's decision tree jump to. Bodies are compiled once
+ * after the tree, so several leaves can reach the same one. Nested matches stack.
+ */
+typedef struct body_target_t {
+    sv_vec_t(int64_t)* jumps;
+    int64_t n;
+    int64_t locals;
+    struct body_target_t* next;
+} body_target_t;
+
 typedef struct {
     globals_t globals;
     locals_t upvalues;
@@ -29,6 +40,7 @@ typedef struct {
     transient_hashmap_t members;
     transient_hashmap_t* record_fields;
     fail_target_t* fail_targets;
+    body_target_t* body_targets;
     vm_builder_t builder;
 } compiler_t;
 

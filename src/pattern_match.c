@@ -47,9 +47,16 @@ typedef struct {
     pattern_class known;
 } col_t;
 
+/**
+ * A clause body and two facts about the row holding it: whether it can still fail
+ * after its patterns matched, and whether several rows share one compiled body.
+ * A shared row stores its variables into pre declared slots instead of declaring
+ * fresh ones, so the single body reads the same slot however it was entered.
+ */
 typedef struct {
     sexpr_t* slot;
     bool guarded;
+    bool shared;
 } row_t;
 
 /**
@@ -302,6 +309,15 @@ static bool is_var_cell(cell_t c)
     return cell_class(c) == PAT_VAR;
 }
 
+/**
+ * True for a name the lowering generated. The scanner rejects `$`, so a source
+ * variable can never collide with one.
+ */
+static bool is_temp_name(sv_str_t name)
+{
+    return name.size > 0 && name.chars[0] == '$';
+}
+
 static bool is_named(sexpr_t e, const char* name)
 {
     return e.tag == S_ATOM && e.atom.kind == TOKEN_LITERAL
@@ -458,6 +474,10 @@ static void matrix_free(matrix_t* m, ctx_t* ctx)
     *m = (matrix_t){ 0 };
 }
 
+/**
+ * Moves a body out of the input tree, writing `nil` back through the slot. A body is
+ * therefore emitted at most once, which is why the matrix cannot duplicate one.
+ */
 static sexpr_t take_body(const matrix_t* m, int64_t i, int64_t line)
 {
     sexpr_t body = *m->bodies[i].slot;
@@ -490,11 +510,12 @@ static int64_t best_column(const matrix_t* m)
 }
 
 static bool lower_bind(sexpr_t* out, sexpr_t name, sexpr_t value, sexpr_t body, int64_t line,
-                       ctx_t* ctx)
+                       ctx_t* ctx, bool store)
 {
     sexpr_t bind = { 0 };
 
-    sexpr_t bind_items[] = { op_atom(OPERATOR_EQUAL, line), name, value };
+    sexpr_t head = store ? id_atom("store", line) : op_atom(OPERATOR_EQUAL, line);
+    sexpr_t bind_items[] = { head, name, value };
     if (!cons_build(&bind, bind_items, 3, &ctx->alloc))
         goto error;
     value = (sexpr_t){ 0 };
@@ -524,7 +545,7 @@ static bool wrap_binds(sexpr_t* out, const col_t* cols, sexpr_t* reads, int64_t 
         reads[i] = (sexpr_t){ 0 };
 
         sexpr_t wrapped;
-        if (!lower_bind(&wrapped, cols[i].subject, read, body, line, ctx))
+        if (!lower_bind(&wrapped, cols[i].subject, read, body, line, ctx, false))
             return false;
         body = wrapped;
     }
@@ -1188,7 +1209,10 @@ static bool compile_var_group(sexpr_t* out, const matrix_t* m, int64_t col,
 
         sexpr_t body = take_body(m, i, line);
         sexpr_t wrapped;
-        ok = lower_bind(&wrapped, var, m->cols[col].subject, body, line, ctx);
+        /* Only the clause's own variables are pre-declared and shared. A `$` name is a
+         * temp this row introduced, whose scope ends at the goto, so it still declares. */
+        bool store = m->bodies[i].shared && !is_temp_name(var.atom.literal.literal);
+        ok = lower_bind(&wrapped, var, m->cols[col].subject, body, line, ctx, store);
         if (ok)
             *m->bodies[i].slot = wrapped;
     }
@@ -1200,6 +1224,11 @@ static bool compile_var_group(sexpr_t* out, const matrix_t* m, int64_t col,
     return ok;
 }
 
+/**
+ * The empty rule: with every column consumed the rows reduce to `E1 | ... | EM`. A
+ * body that cannot fail always succeeds, so the chain stops at the first unguarded
+ * row and the rows after it are unreachable.
+ */
 static bool compile_bodies(sexpr_t* out, const matrix_t* m, int64_t line, ctx_t* ctx)
 {
     int64_t last = 0;
@@ -1292,6 +1321,64 @@ static bool link_repeat(sexpr_t* slot, sexpr_t* eq, int64_t line, ctx_t* ctx)
     return true;
 }
 
+/**
+ * Collects the variables a pattern binds, skipping `_`. Record and hashmap keys
+ * are not variables, so only their values are visited. Kept beside linearise,
+ * which walks the same shape.
+ */
+bool pattern_vars(sexpr_t p, sv_vec_t(sv_str_t)* out, ctx_t* ctx)
+{
+    if (p.tag == S_ATOM) {
+        if (p.atom.kind != TOKEN_LITERAL || p.atom.literal.kind != LITERAL_IDENTIFIER
+            || is_wildcard(p))
+            return true;
+
+        /* A set: a repeated variable binds one name, so it must not be counted twice. */
+        for (int64_t i = 0; i < out->size; i++)
+            if (sv_str_comp(out->arr[i], p.atom.literal.literal))
+                return true;
+
+        int success = 0;
+        sv_vec_push(out, p.atom.literal.literal, &success, &ctx->alloc);
+        return success != 0 ? true : match_oom(ctx, p.atom.line);
+    }
+
+    token_t head = p.cons.arr[0].atom;
+    if (head.kind != TOKEN_SP_FUNCTION)
+        return true;
+
+    if (head.fn == FN_RECORD || head.fn == FN_HASHMAP) {
+        int64_t n = head.fn == FN_RECORD ? record_n_fields(p) : hashmap_n_keys(p);
+        for (int64_t i = 0; i < n; i++)
+            if (!pattern_vars(p.cons.arr[2 + 2 * i], out, ctx))
+                return false;
+
+        return true;
+    }
+
+    if (head.fn == FN_LIST) {
+        for (int64_t i = 0; i < list_n_fixed(p); i++)
+            if (!pattern_vars(p.cons.arr[1 + i], out, ctx))
+                return false;
+
+        if (list_has_tail(p))
+            return pattern_vars(p.cons.arr[p.cons.size - 1].cons.arr[1], out, ctx);
+
+        return true;
+    }
+
+    for (int64_t i = 1; i < p.cons.size; i++)
+        if (!pattern_vars(p.cons.arr[i], out, ctx))
+            return false;
+
+    return true;
+}
+
+/**
+ * Rewrites every repeated variable to a fresh temp and collects one equality per
+ * repeat into eq. Record and hashmap keys are not variables, so only their values
+ * are visited, and `_` never constrains anything.
+ */
 static bool linearise(sexpr_t* slot, sv_vec_t(sv_str_t)* seen, sexpr_t* eq,
                       int64_t line, ctx_t* ctx)
 {
@@ -1341,6 +1428,11 @@ static bool linearise(sexpr_t* slot, sv_vec_t(sv_str_t)* seen, sexpr_t* eq,
     return true;
 }
 
+/**
+ * Turns a non linear row into a linear one guarded by the equalities its repeats
+ * imply, so the guard machinery enforces them and a mismatch falls through to the
+ * next clause.
+ */
 static bool lower_repeats(sexpr_t* pattern, row_t* row, int64_t line, ctx_t* ctx)
 {
     sv_vec_t(sv_str_t) seen = sv_vec_init(sv_str_t);
@@ -1383,6 +1475,10 @@ static bool lower_repeats(sexpr_t* pattern, row_t* row, int64_t line, ctx_t* ctx
     return true;
 }
 
+/**
+ * Rewrites a `(when g body)` marker into `(if g body $fail)`, so a failing guard
+ * takes the same path as a failing pattern. Marks the row as able to fail.
+ */
 static bool lower_guard(row_t* row, int64_t line, ctx_t* ctx)
 {
     sexpr_t marker = *row->slot;
@@ -1408,13 +1504,118 @@ static bool lower_guard(row_t* row, int64_t line, ctx_t* ctx)
     return true;
 }
 
+static bool is_alt(sexpr_t p)
+{
+    return p.tag == S_CONS && p.cons.size > 0 && p.cons.arr[0].tag == S_ATOM
+        && p.cons.arr[0].atom.kind == TOKEN_KEYWORD
+        && p.cons.arr[0].atom.keyword == KEYWORD_OR;
+}
+
+static int64_t alt_count(sexpr_t p)
+{
+    return is_alt(p) ? p.cons.size - 1 : 1;
+}
+
+/**
+ * The per row gotos and the bodies they share. A row's slot points into gotos, so
+ * take_body still consumes each row's own slot exactly once.
+ */
+typedef struct {
+    sexpr_t* gotos;
+    sexpr_t* bodies;
+    sv_vec_t(sv_str_t) decls;
+    int64_t n_gotos;
+    int64_t n_bodies;
+} shared_t;
+
+static void shared_free(shared_t* sh, ctx_t* ctx)
+{
+    for (int64_t i = 0; i < sh->n_gotos; i++)
+        sexpr_free(&sh->gotos[i], &ctx->alloc);
+    for (int64_t i = 0; i < sh->n_bodies; i++)
+        sexpr_free(&sh->bodies[i], &ctx->alloc);
+
+    sv_vec_deinit(&sh->decls, &ctx->alloc);
+    sv_free(&ctx->alloc, sh->gotos);
+    sv_free(&ctx->alloc, sh->bodies);
+    *sh = (shared_t){ 0 };
+}
+
+/**
+ * Moves a shared clause's body out of the tree, splitting off any guard so it can be
+ * re-attached to each alternative: failing it must fall through to the next one.
+ */
+static bool split_shared_body(sexpr_t* slot, sexpr_t* body, sexpr_t* guard, int64_t line,
+                              ctx_t* ctx)
+{
+    sexpr_t taken = *slot;
+    *slot = nil_atom(line);
+    *guard = (sexpr_t){ 0 };
+
+    if (!is_guard(taken)) {
+        *body = taken;
+        return true;
+    }
+
+    *guard = taken.cons.arr[1];
+    *body = taken.cons.arr[2];
+    taken.cons.arr[1] = nil_atom(line);
+    taken.cons.arr[2] = nil_atom(line);
+    sexpr_free(&taken, &ctx->alloc);
+    return true;
+}
+
+/**
+ * Builds the slot for one alternative: `(goto k)`, wrapped in the clause's guard when
+ * it has one, so lower_guard turns it into `(if g (goto k) $fail)` per row.
+ */
+static bool build_goto(sexpr_t* out, int64_t label, sexpr_t guard, int64_t line, ctx_t* ctx)
+{
+    sexpr_t go = { 0 };
+    sexpr_t items[] = { id_atom("goto", line), num_atom((double)label, line) };
+    if (!cons_build(&go, items, 2, &ctx->alloc))
+        return match_oom(ctx, line);
+
+    if (guard.tag != S_CONS && guard.atom.kind != TOKEN_LITERAL) {
+        *out = go;
+        return true;
+    }
+
+    sexpr_t copy = { 0 };
+    if (!sexpr_clone(&copy, guard, &ctx->alloc)) {
+        sexpr_free(&go, &ctx->alloc);
+        return match_oom(ctx, line);
+    }
+
+    sexpr_t wrapped = { 0 };
+    sexpr_t w_items[] = { when_atom(line), copy, go };
+    if (!cons_build(&wrapped, w_items, 3, &ctx->alloc)) {
+        sexpr_free(&copy, &ctx->alloc);
+        sexpr_free(&go, &ctx->alloc);
+        return match_oom(ctx, line);
+    }
+
+    *out = wrapped;
+    return true;
+}
+
 static sexpr_t match_lower(sexpr_t s, ctx_t* ctx)
 {
     cons_t match = s.cons;
     int64_t line = match.arr[0].atom.line;
-    int64_t n_rows = match.size - CLAUSES_START;
+    int64_t n_clauses = match.size - CLAUSES_START;
+
+    int64_t n_rows = 0;
+    int64_t n_shared = 0;
+    for (int64_t i = 0; i < n_clauses; i++) {
+        sexpr_t pattern = match.arr[CLAUSES_START + i].cons.arr[1];
+        n_rows += alt_count(pattern);
+        if (is_alt(pattern))
+            n_shared++;
+    }
 
     matrix_t m = { 0 };
+    shared_t sh = { .decls = sv_vec_init(sv_str_t) };
     sexpr_t subject = { 0 };
     sexpr_t chain = { 0 };
     sexpr_t out = { 0 };
@@ -1422,47 +1623,162 @@ static sexpr_t match_lower(sexpr_t s, ctx_t* ctx)
     if (!next_temp(&subject, line, ctx))
         return discard(&s, ctx);
 
+    if (n_shared > 0) {
+        sh.gotos = alloc_sexprs(n_rows, &ctx->alloc);
+        sh.bodies = alloc_sexprs(n_shared, &ctx->alloc);
+        if (!alloc_ok(sh.gotos, n_rows) || !alloc_ok(sh.bodies, n_shared)) {
+            shared_free(&sh, ctx);
+            match_oom(ctx, line);
+            return discard(&s, ctx);
+        }
+        for (int64_t i = 0; i < n_rows; i++)
+            sh.gotos[i] = (sexpr_t){ 0 };
+        for (int64_t i = 0; i < n_shared; i++)
+            sh.bodies[i] = (sexpr_t){ 0 };
+    }
+
     if (!matrix_alloc(&m, 1, n_rows, ctx)) {
         matrix_free(&m, ctx);
+        shared_free(&sh, ctx);
         match_oom(ctx, line);
         return discard(&s, ctx);
     }
 
     m.cols[0] = (col_t){ .subject = subject, .known = PAT_UNKNOWN };
     bool ok = true;
-    for (int64_t i = 0; i < n_rows && ok; i++) {
+    int64_t row = 0;
+    for (int64_t i = 0; i < n_clauses && ok; i++) {
         sexpr_t* slots = match.arr[CLAUSES_START + i].cons.arr;
-        m.cells[i] = cell_of(&slots[1]);
-        m.bodies[i] = (row_t){ .slot = &slots[2] };
-        ok = lower_repeats(&slots[1], &m.bodies[i], line, ctx)
-            && lower_guard(&m.bodies[i], line, ctx);
+        if (!is_alt(slots[1])) {
+            m.cells[row] = cell_of(&slots[1]);
+            m.bodies[row] = (row_t){ .slot = &slots[2] };
+            ok = lower_repeats(&slots[1], &m.bodies[row], line, ctx)
+                && lower_guard(&m.bodies[row], line, ctx);
+            row++;
+            continue;
+        }
+
+        int64_t label = sh.n_bodies;
+        sexpr_t body = { 0 };
+        sexpr_t guard = { 0 };
+        ok = split_shared_body(&slots[2], &body, &guard, line, ctx);
+        if (!ok)
+            break;
+
+        sh.bodies[sh.n_bodies++] = body;
+        ok = pattern_vars(slots[1].cons.arr[1], &sh.decls, ctx);
+
+        int64_t n_alts = slots[1].cons.size - 1;
+        for (int64_t j = 0; j < n_alts && ok; j++) {
+            ok = build_goto(&sh.gotos[sh.n_gotos], label, guard, line, ctx);
+            if (!ok)
+                break;
+
+            m.cells[row] = cell_of(&slots[1].cons.arr[1 + j]);
+            m.bodies[row] = (row_t){ .slot = &sh.gotos[sh.n_gotos], .shared = true };
+            sh.n_gotos++;
+            ok = lower_repeats(&slots[1].cons.arr[1 + j], &m.bodies[row], line, ctx)
+                && lower_guard(&m.bodies[row], line, ctx);
+            row++;
+        }
+        sexpr_free(&guard, &ctx->alloc);
     }
     if (!ok) {
         matrix_free(&m, ctx);
+        shared_free(&sh, ctx);
         return discard(&s, ctx);
     }
 
     ok = compile_matrix(&chain, &m, line, ctx);
     matrix_free(&m, ctx);
-    if (!ok)
+    if (!ok) {
+        shared_free(&sh, ctx);
         return discard(&s, ctx);
+    }
 
     sexpr_t def = { 0 };
     if (!build_call1(&def, "match-fail", subject, line, ctx)) {
         sexpr_free(&chain, &ctx->alloc);
+        shared_free(&sh, ctx);
         return discard(&s, ctx);
     }
 
     if (!build_alt(&chain, chain, def, line, ctx)) {
         sexpr_free(&chain, &ctx->alloc);
         sexpr_free(&def, &ctx->alloc);
+        shared_free(&sh, ctx);
         return discard(&s, ctx);
     }
+
+    if (sh.n_bodies > 0) {
+        /* (match-bodies <tree> (body 0 b0) ...) */
+        sexpr_t* items = alloc_sexprs(1 + sh.n_bodies + 1, &ctx->alloc);
+        if (!alloc_ok(items, 1 + sh.n_bodies + 1)) {
+            sexpr_free(&chain, &ctx->alloc);
+            shared_free(&sh, ctx);
+            match_oom(ctx, line);
+            return discard(&s, ctx);
+        }
+
+        items[0] = id_atom("match-bodies", line);
+        items[1] = chain;
+        chain = (sexpr_t){ 0 };
+        int64_t n_items = 2;
+
+        for (int64_t i = 0; i < sh.n_bodies && ok; i++) {
+            sexpr_t b_items[] = { id_atom("body", line), num_atom((double)i, line),
+                                  sh.bodies[i] };
+            sexpr_t form = { 0 };
+            ok = cons_build(&form, b_items, 3, &ctx->alloc) ? true : match_oom(ctx, line);
+            if (!ok)
+                break;
+            sh.bodies[i] = (sexpr_t){ 0 };
+            items[n_items++] = form;
+        }
+
+        sexpr_t wrapped = { 0 };
+        ok = ok && (cons_build(&wrapped, items, n_items, &ctx->alloc) ? true
+                                                                     : match_oom(ctx, line));
+        if (!ok) {
+            for (int64_t i = 0; i < n_items; i++)
+                sexpr_free(&items[i], &ctx->alloc);
+            sv_free(&ctx->alloc, items);
+            shared_free(&sh, ctx);
+            return discard(&s, ctx);
+        }
+        sv_free(&ctx->alloc, items);
+        chain = wrapped;
+
+        /* Declare each shared clause's variables once, above the tree and the bodies,
+         * so every alternative's store writes the same slot. Two clauses may name the
+         * same variable, so declare each name only once. */
+        for (int64_t i = sh.decls.size - 1; i >= 0 && ok; i--) {
+            bool seen = false;
+            for (int64_t j = 0; j < i && !seen; j++)
+                seen = sv_str_comp(sh.decls.arr[j], sh.decls.arr[i]);
+            if (seen)
+                continue;
+
+            sexpr_t nested = { 0 };
+            ok = lower_bind(&nested, id_atom_str(sh.decls.arr[i], line), nil_atom(line),
+                            chain, line, ctx, false);
+            if (ok)
+                chain = nested;
+            else
+                chain = (sexpr_t){ 0 };
+        }
+        if (!ok) {
+            sexpr_free(&chain, &ctx->alloc);
+            shared_free(&sh, ctx);
+            return discard(&s, ctx);
+        }
+    }
+    shared_free(&sh, ctx);
 
     sexpr_t scrutinee = match.arr[1];
     match.arr[1] = nil_atom(line);
 
-    if (!lower_bind(&out, subject, scrutinee, chain, line, ctx))
+    if (!lower_bind(&out, subject, scrutinee, chain, line, ctx, false))
         return discard(&s, ctx);
 
     sexpr_free(&s, &ctx->alloc);

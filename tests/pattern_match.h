@@ -356,17 +356,49 @@ static inline void sv_test_match_repeats(sv_testing_t* t)
       ") (do a))))) $fail) (match-fail " T1 ")))");
 }
 
+static inline void sv_test_match_alternatives(sv_testing_t* t)
+{
+   /* Alternatives jump to one compiled body instead of duplicating it. */
+   sv_test_match_ok(t, "match x | 1 | 2 do b end",
+      "(do (= " T1 " x) (match-bodies (| (if (is-number? " T1 ") (if (== " T1
+      " 1) (goto 0) (if (== " T1 " 2) (goto 0) $fail)) $fail) (match-fail " T1
+      ")) (body 0 (do b))))");
+
+   /* A clause that is not shared keeps its body inline in the tree, so the
+    * tree must be able to fall through past the shared bodies. */
+   sv_test_match_ok(t, "match x | 1 | 2 | 3 do b | _ do c end",
+      "(do (= " T1 " x) (match-bodies (| (| (if (is-number? " T1 ") (if (== " T1
+      " 1) (goto 0) (if (== " T1 " 2) (goto 0) (if (== " T1
+      " 3) (goto 0) $fail))) $fail) (do c)) (match-fail " T1 ")) (body 0 (do b))))");
+
+   /* The clause's variable is declared once above the tree and written by
+    * each alternative, so the single body reads one slot. */
+   sv_test_match_ok(t, "match x | (1, a) | (2, a) do a end",
+      "(do (= " T1 " x) (do (= a nil) (match-bodies (| (if (is-tuple? " T1 " 2) (do (= "
+      T2 " ([ " T1 " 0)) (do (= " T3 " ([ " T1 " 1)) (if (is-number? " T2 ") (if (== " T2
+      " 1) (do (store a " T3 ") (goto 0)) (if (== " T2 " 2) (do (store a " T3
+      ") (goto 0)) $fail)) $fail))) $fail) (match-fail " T1 ")) (body 0 (do a)))))");
+
+   /* The guard sits on each goto, not in the body: failing it has to fall
+    * through to the next alternative. */
+   sv_test_match_ok(t, "match x | 1 | 2 when g do b end",
+      "(do (= " T1 " x) (match-bodies (| (if (is-number? " T1 ") (if (== " T1
+      " 1) (if g (goto 0) $fail) (if (== " T1
+      " 2) (if g (goto 0) $fail) $fail)) $fail) (match-fail " T1 ")) (body 0 (do b))))");
+}
+
 static inline void sv_test_match_oom(sv_testing_t* t)
 {
    const char* src =
       "match x | 1 do 2 | \"a\" do 3 | (4, 5) do 6 | {k: 7, j: 8} do 9"
       " | [1, ..zs] do zs | (a, 1) do a | b when b > 0 do b"
       " | (c, d, d, c) do c"
-      " | %{\"m\": q, ..} do q | y do y end";
+      " | %{\"m\": q, ..} do q"
+      " | (7, e) | (e, 8) when e > 0 do e | y do y end";
    int64_t errored = 0;
    int64_t completed = 0;
 
-   for (int64_t budget = 0; budget < 260; budget++) {
+   for (int64_t budget = 0; budget < 400; budget++) {
       sv_test_countdown_t counter = { .remaining = 1000000 };
       sv_allocator_t countdown = { .vtable = &sv_test_countdown_vtable, .self = &counter };
       ctx_t ctx = { .alloc = countdown, .logger = sv_std_logger, .err = { 0 } };
@@ -402,6 +434,7 @@ static inline void sv_test_pattern_match(sv_testing_t* t)
    sv_test_match_lists(t);
    sv_test_match_guards(t);
    sv_test_match_repeats(t);
+   sv_test_match_alternatives(t);
    sv_test_match_oom(t);
 }
 

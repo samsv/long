@@ -145,6 +145,21 @@ static inline void sv_test_parser_forms(sv_testing_t* t)
                     "(match x (tuple 1 (do (= y 3) (+ y 1))))");
 
    /* A guard rides inside the body slot, so a clause keeps a fixed size. */
+   /* Several alternatives become one clause with an `(or ...)` pattern; the lowering
+    * turns that into one row each, all jumping to a single compiled body. */
+   sv_test_parse_ok(t, "match x | 1 | 2 do true end",
+                    "(match x (tuple (or 1 2) (do true)))");
+   sv_test_parse_ok(t, "match x | 1 | 2 | 3 do true | _ do false end",
+                    "(match x (tuple (or 1 2 3) (do true)) (tuple _ (do false)))");
+   sv_test_parse_ok(t, "match x | 1 | 2 when g do b end",
+                    "(match x (tuple (or 1 2) (when g (do b))))");
+   sv_test_parse_ok(t, "match x | (1, a) | (2, a) do a end",
+                    "(match x (tuple (or (tuple 1 a) (tuple 2 a)) (do a)))");
+   sv_test_parse_ok(t, "fun f(x) | 0 | 1 do true | _ do false end",
+                    "(fun f (x) (match x (tuple (or 0 1) (do true)) (tuple _ (do false))))");
+   sv_test_parse_ok(t, "fun | f(x) | 0 | 1 do 2 | g(y) 3 end",
+                    "(fun (f (x) (match x (tuple (or 0 1) (do 2)))) (g (y) 3))");
+
    sv_test_parse_ok(t, "match x | 1 when g do 2 end",
                     "(match x (tuple 1 (when g (do 2))))");
    sv_test_parse_ok(t, "fun f(x) | 0 when g do 1 | _ do 2 end",
@@ -379,6 +394,14 @@ static inline void sv_test_parser_errors(sv_testing_t* t)
    sv_test_parse_error(t, "match x | 1 when g", (int)PARSER_ERROR_EOF);
    sv_test_parse_error(t, "match x | 1 when g do", (int)PARSER_ERROR_EOF);
 
+   /* Every alternative must bind the same names, or a row would be missing one. */
+   sv_test_parse_error(t, "match x | (1, a) | (2, b) do a end",
+                       (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | 1 | do 2 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | 1 | 2 3 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun f(a, b) | (1, y) | 2 do y end",
+                       (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+
    /* `when` is a keyword now, so it is no longer usable as a name. */
    sv_test_parse_error(t, "when = 1", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "fun f(when) 1", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
@@ -439,6 +462,31 @@ static inline void sv_test_parser_oom(sv_testing_t* t)
    sv_test_run(t, e2.tag == S_ATOM && e2.atom.kind == TOKEN_ERROR);
    sv_test_run(t, cd_ctx.err.error_code != 0);
    sv_str_deinit(&cd_ctx.err.msg, &cd_ctx.alloc);
+
+   /* Sweep an or-pattern clause, whose expansion clones the body, so every
+    * allocation on that path is exercised under failure. */
+   int64_t errored = 0;
+   int64_t completed = 0;
+   for (int64_t budget = 0; budget < 80; budget++) {
+      sv_test_countdown_t c = { .remaining = budget };
+      sv_allocator_t cd = { .vtable = &sv_test_countdown_vtable, .self = &c };
+      ctx_t ctx = { .alloc = cd, .logger = sv_std_logger, .err = { 0 } };
+
+      scanner_t sc = scanner_init(sv_str_init(
+         "match x | (1, a) | (2, a) | (3, a) when a > 0 do a + 1 | _ do 0 end"));
+      sexpr_t e3 = parser_expr(&sc, &ctx);
+      if (e3.tag == S_ATOM && e3.atom.kind == TOKEN_ERROR)
+         errored++;
+      else
+         completed++;
+
+      c.remaining = 1000000;
+      if (ctx.err.msg.size > 0)
+         sv_str_deinit(&ctx.err.msg, &ctx.alloc);
+      sexpr_free(&e3, &ctx.alloc);
+   }
+   sv_test_run(t, errored > 0);
+   sv_test_run(t, completed > 0);
 }
 
 static inline void sv_test_parser(sv_testing_t* t)

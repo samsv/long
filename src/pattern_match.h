@@ -29,6 +29,11 @@ int64_t list_n_fixed(sexpr_t);
 bool record_is_open(sexpr_t);
 int64_t hashmap_n_keys(sexpr_t);
 bool hashmap_is_open(sexpr_t);
+
+/**
+ * Appends every variable a pattern binds to out, skipping `_`.
+ */
+bool pattern_vars(sexpr_t, sv_vec_t(sv_str_t)*, ctx_t*);
 int64_t record_n_fields(sexpr_t);
 
 #endif
