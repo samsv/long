@@ -71,24 +71,24 @@
 (do
   (= $1 x)
   (|
-    (if
-      (is-number? $1)
+    (if (is-number? $1)
       (if
         (== $1 1)
-        (do 1) $fail)
+        (do 1)
+        $fail)
+      $fail)
+    (|
+      (do
+        (= a $1)
+        (do a))
       (|
-        (do
-          (= a $1)
-          (do a))
         (if
           (is-number? $1)
           (if
             (== $1 2)
-            (do (* 2 x))
-            $fail))
-        $fail))
-    (match-fail $1)))
-
+            (do
+              (* 2 x)) $fail) $fail)
+        (match-fail $1)))))
 
 (comment
   "match x \n"
