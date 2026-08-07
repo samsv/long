@@ -5,6 +5,7 @@
 
 typedef sv_vec_t(sexpr_t) cons_t;
 
+#define CONDS_START 2
 #define TEMP_DIGITS 12
 #define TEMP_SIZE (TEMP_DIGITS + 2)
 #define TEMPS_MAX 1024
@@ -175,7 +176,7 @@ static sexpr_t match_fail(cons_t* cons, sexpr_t u)
     return cons_sexpr(*cons);
 }
 
-static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx);
+static sexpr_t compile_pattern(cons_t match, int* start_i, ctx_t* ctx);
 
 static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
@@ -189,7 +190,7 @@ static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 
     APPEND_CAP(&bar_expr, ATOM_TOKEN_NO_CASE(TOKEN_PIPE));
     APPEND_CAP(&bar_expr, cons_sexpr(do_expr));
-    sexpr_t deflt = compile_pattern(match, start_i, u, ctx);
+    sexpr_t deflt = compile_pattern(match, start_i, ctx);
     if (deflt.tag == S_ATOM && deflt.atom.kind == TOKEN_ERROR)
         return deflt;
     APPEND_CAP(&bar_expr, deflt);
@@ -226,33 +227,8 @@ static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_c
     return cons_sexpr(if_block);
 }
 
-static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
+static sexpr_t compile_pattern(cons_t match, int* start_i, ctx_t* ctx)
 {
-    // TODO: Check the pattern type, if it's a variable (x, y, etc), constant (1, true, nil, "str", etc) or a
-    // more complex pattern (e.g. [x, ..xs], {x, y}, etc)
-    pattern_class pat_type = pattern_class_of(match.arr[*start_i].cons.arr[1]);
-    INIT_CAPACITY(pat_cond, 2, match.arr[0].atom);
-    APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(pat_type))));
-    APPEND_CAP(&pat_cond, u);
-    // compile literal patterns
-    if (pat_type >= PAT_STR && pat_type <= PAT_BOOL)
-        return compile_literals(match, start_i, u, pat_type, pat_cond, ctx);
-    if (pat_type == PAT_VAR)
-        return compile_var(match, start_i, u, ctx);
-
-    return cons_sexpr(pat_cond);
-}
-
-sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
-{
-    int conds_start = 2;
-
-    cons_t match = s.cons;
-    if (match.size <= conds_start)
-        return discard(&s, ctx);
-
-    group(match);
-
     // Initialize (do (= u_i x) (| ...))
     INIT_CAPACITY(do_expr, 3, match.arr[0].atom);
     APPEND_CAP(&do_expr, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_DO));
@@ -266,22 +242,44 @@ sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
     INIT_CAPACITY(bar_expr, 3, match.arr[0].atom);
     APPEND_CAP(&bar_expr, ATOM_TOKEN_NO_CASE(TOKEN_PIPE));
 
-    int current_i = conds_start;
+    int current_i = *start_i;
     cons_t* end = &bar_expr;
     // start matching the conditions
     while (current_i < match.size) {
-        sexpr_t blk = compile_pattern(match, &current_i, u, ctx);
-        if (blk.tag == S_ATOM && blk.atom.kind == TOKEN_ERROR)
-            return blk;
+        // TODO: Check the pattern type, if it's a variable (x, y, etc), constant (1, true, nil, "str", etc) or a
+        // more complex pattern (e.g. [x, ..xs], {x, y}, etc)
+        pattern_class pat_type = pattern_class_of(match.arr[current_i].cons.arr[1]);
+        INIT_CAPACITY(pat_cond, 2, match.arr[0].atom);
+        APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(pat_type))));
+        APPEND_CAP(&pat_cond, u);
+        // compile literal patterns
+        if (pat_type >= PAT_STR && pat_type <= PAT_BOOL)
+            APPEND_CAP(end, compile_literals(match, &current_i, u, pat_type, pat_cond, ctx));
+        if (pat_type == PAT_VAR) {
+            APPEND_CAP(&bar_expr, compile_var(match, &current_i, u, ctx));
+            goto end;
+        }
 
-        APPEND_CAP(end, blk);
         end = &end->arr[end->size - 1].cons;
     }
 
     APPEND_CAP(end, id_atom(FAIL_NAME));
     INIT_CAPACITY(match_fail_expr, 2, match.arr[0].atom);
     APPEND_CAP(&bar_expr, match_fail(&match_fail_expr, u));
-    APPEND_CAP(&do_expr, cons_sexpr(bar_expr));
 
+end:
+    APPEND_CAP(&do_expr, cons_sexpr(bar_expr));
     return cons_sexpr(do_expr);
+}
+
+sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
+{
+    cons_t match = s.cons;
+    if (match.size <= CONDS_START)
+        return discard(&s, ctx);
+
+    group(match);
+
+    int start_i = CONDS_START;
+    return compile_pattern(match, &start_i, ctx);
 }
