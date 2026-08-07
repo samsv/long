@@ -58,21 +58,21 @@ psamples[0] =
 
 psamples[1] =
     "match x\n"
-    "| 1 do 0\n"
+    "| 1 do 1\n"
     "| 2 do 2 * x\n"
     "| a do a\n"
     "end";
 
 psamples[2] =
     "match x\n"
-    "| 1 do 0\n"
+    "| 1 do 1\n"
     "| a do a\n"
     "| 2 do 2 * x\n"
     "end";
 
 psamples[3] =
     "match x \n"
-    "| 1 do 0\n"
+    "| 1 do 5\n"
     "|\"hello\" do 1\n"
     "| 2 do 2\n"
     "|\"world\" do 1\n"

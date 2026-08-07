@@ -20,7 +20,7 @@
 
 (comment
   "match x\n"
-  "| 1 do \n"
+  "| 1 do 1\n"
   "| 2 do 2 * x\n"
   "| a do a\n"
   "end";
@@ -31,7 +31,7 @@
    (|
     (if (is-number? $1)
       (if (== $1 1)
-        (do )
+        (do 1)
         (if (== $1 2)
           (do (* 2 x))
           $fail))
@@ -43,7 +43,7 @@
 
 (comment
   "match x\n"
-  "| 1 do \n"
+  "| 1 do 1\n"
   "| a do a\n"
   "| 2 do 2 * x\n"
   "end";
@@ -54,7 +54,7 @@
    (|
     (if (is-number? $1)
       (if (== $1 1)
-        (do 0)
+        (do 1)
         $fail)
       $fail)
     (|
@@ -91,7 +91,7 @@
 
 (comment
   "match x \n"
-  "| 1 do \n"
+  "| 1 do -1\n"
   "|\"hello\" do 1\n"
   "| 2 do 2\n"
   "end";
@@ -103,7 +103,7 @@
      (is-number? $1)
      (if
        (== $1 1)
-       (do 0)
+       (do -1)
        (if
          (== $1 2)
          (do 2) $fail))
@@ -117,7 +117,7 @@
 
 (comment
   "match x \n"
-  "| 1 do \n"
+  "| 1 do 5\n"
   "|\"hello\" do 1\n"
   "| 2 do 2\n"
   "|\"world\" do 1\n"
@@ -130,7 +130,7 @@
      (is-number? $1)
      (if
        (== $1 1)
-       (do )
+       (do 5)
        (if
          (== $1 2)
          (do 2)
@@ -147,25 +147,26 @@
        $fail))
    (match-fail $1)))
 
-
 (do
   (= $1 x)
-  (if
-    (is-str? $1)
+  (|
     (if
-      (== $1 "hello")
-      (do 1)
+      (is-str? $1)
       (if
-        (== $1 "world")
+        (== $1 "hello")
         (do 1)
-        $fail))
-    (if
-      (is-number? $1)
-      (if
-        (== $1 1)
-        (do 0)
         (if
-          (== $1 2)
-          (do 2)
+          (== $1 "world")
+          (do 1)
           $fail))
-      $fail)))
+      (if
+        (is-number? $1)
+        (if
+          (== $1 1)
+          (do 5)
+          (if
+            (== $1 2)
+            (do 2)
+            $fail))
+        $fail))
+    (match-fail $1)))
