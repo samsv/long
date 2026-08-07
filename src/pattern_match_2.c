@@ -63,10 +63,13 @@ static void group(cons_t match)
 
 typedef enum {
     PAT_UNKNOWN,
+    // Literals
     PAT_STR,
     PAT_NUMBER,
     PAT_NIL,
     PAT_BOOL,
+
+    // Collections
     PAT_LIST,
     PAT_HASHMAP,
     PAT_RECORD,
@@ -144,32 +147,62 @@ static sexpr_t sexpr_literal(const char* name)
     });
 }
 
-/**
- * Creates a new `u` var from the book `the implementation of functional programming languages`.
- */
-static sexpr_t bind_u_var(cons_t* cons, sexpr_t rhs)
+static sexpr_t bind_var(cons_t* cons, sexpr_t lhs, sexpr_t rhs)
 {
     token_t eql_token = { .kind = TOKEN_OPERATOR, .line = 0, .operator = OPERATOR_EQUAL };
-    char* buf = temp_names[temps_used];
-    snprintf(buf, TEMP_SIZE, "$%0*d", TEMP_DIGITS, ++temps_used);
     APPEND_CAP(cons, atom_sexpr(eql_token));
-    APPEND_CAP(cons, sexpr_literal(buf));
+    APPEND_CAP(cons, lhs);
     APPEND_CAP(cons, rhs);
 
     return cons_sexpr(*cons);
 }
 
-static sexpr_t compile_cond(cons_t match, int* start_i, sexpr_t u_var, ctx_t* ctx)
+/**
+ * Creates a new `u` var from the book `the implementation of functional programming languages`.
+ */
+static sexpr_t bind_u_var(cons_t* cons, sexpr_t rhs)
+{
+    char* buf = temp_names[temps_used];
+    //snprintf(buf, TEMP_SIZE, "$%0*d", TEMP_DIGITS, ++temps_used);
+    snprintf(buf, TEMP_SIZE, "$%d", ++temps_used);
+    return bind_var(cons, sexpr_literal(buf), rhs);
+}
+
+static sexpr_t match_fail(cons_t* cons, sexpr_t u)
+{
+    APPEND_CAP(cons, id_atom("match-fail"));
+    APPEND_CAP(cons, u);
+    return cons_sexpr(*cons);
+}
+
+static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx);
+
+static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
+{
+    INIT_CAPACITY(bar_expr, 4, match.arr[0].atom);
+    INIT_CAPACITY(do_expr, 3, match.arr[0].atom);
+    INIT_CAPACITY(set_var_expr, 3, match.arr[0].atom);
+
+    APPEND_CAP(&do_expr, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_DO));
+    APPEND_CAP(&do_expr, bind_var(&set_var_expr, match.arr[*start_i].cons.arr[1], u));
+    APPEND_CAP(&do_expr, match.arr[(*start_i)++].cons.arr[2]);
+
+    APPEND_CAP(&bar_expr, ATOM_TOKEN_NO_CASE(TOKEN_PIPE));
+    APPEND_CAP(&bar_expr, cons_sexpr(do_expr));
+    sexpr_t deflt = compile_pattern(match, start_i, u, ctx);
+    if (deflt.tag == S_ATOM && deflt.atom.kind == TOKEN_ERROR)
+        return deflt;
+    APPEND_CAP(&bar_expr, deflt);
+
+    return cons_sexpr(bar_expr);
+}
+
+static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_class pat_type,
+                                cons_t pat_cond, ctx_t* ctx)
 {
     INIT_CAPACITY(if_block, 4, match.arr[0].atom);
     APPEND_CAP(&if_block, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_IF));
 
-    // TODO: Check the pattern type, if it's a variable (x, y, etc), constant (1, true, nil, "str", etc) or a
-    // more complex pattern (e.g. [x, ..xs], {x, y}, etc)
-    pattern_class pat_type = pattern_class_of(match.arr[*start_i].cons.arr[1]);
-    INIT_CAPACITY(pat_cond, 2, match.arr[0].atom);
-    APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(pat_type))));
-    APPEND_CAP(&pat_cond, u_var);
     APPEND_CAP(&if_block, cons_sexpr(pat_cond));
 
     cons_t* end = &if_block;
@@ -179,7 +212,7 @@ static sexpr_t compile_cond(cons_t match, int* start_i, sexpr_t u_var, ctx_t* ct
 
         INIT_CAPACITY(if_cond, 4, match.arr[0].atom);
         APPEND_CAP(&if_cond, ATOM_TOKEN(TOKEN_OPERATOR, .operator = OPERATOR_EQUAL_EQUAL));
-        APPEND_CAP(&if_cond, u_var);
+        APPEND_CAP(&if_cond, u);
         APPEND_CAP(&if_cond, match.arr[i].cons.arr[1]);
 
         APPEND_CAP(&if_body_block, cons_sexpr(if_cond));
@@ -193,11 +226,21 @@ static sexpr_t compile_cond(cons_t match, int* start_i, sexpr_t u_var, ctx_t* ct
     return cons_sexpr(if_block);
 }
 
-static sexpr_t match_fail(cons_t* cons, sexpr_t u)
+static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
-    APPEND_CAP(cons, id_atom("match-fail"));
-    APPEND_CAP(cons, u);
-    return cons_sexpr(*cons);
+    // TODO: Check the pattern type, if it's a variable (x, y, etc), constant (1, true, nil, "str", etc) or a
+    // more complex pattern (e.g. [x, ..xs], {x, y}, etc)
+    pattern_class pat_type = pattern_class_of(match.arr[*start_i].cons.arr[1]);
+    INIT_CAPACITY(pat_cond, 2, match.arr[0].atom);
+    APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(pat_type))));
+    APPEND_CAP(&pat_cond, u);
+    // compile literal patterns
+    if (pat_type >= PAT_STR && pat_type <= PAT_BOOL)
+        return compile_literals(match, start_i, u, pat_type, pat_cond, ctx);
+    if (pat_type == PAT_VAR)
+        return compile_var(match, start_i, u, ctx);
+
+    return cons_sexpr(pat_cond);
 }
 
 sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
@@ -219,6 +262,7 @@ sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
     sexpr_t u = u_expr.cons.arr[1];
     APPEND_CAP(&do_expr, u_expr);
 
+    // initialize bar
     INIT_CAPACITY(bar_expr, 3, match.arr[0].atom);
     APPEND_CAP(&bar_expr, ATOM_TOKEN_NO_CASE(TOKEN_PIPE));
 
@@ -226,7 +270,7 @@ sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
     cons_t* end = &bar_expr;
     // start matching the conditions
     while (current_i < match.size) {
-        sexpr_t blk = compile_cond(match, &current_i, u, ctx);
+        sexpr_t blk = compile_pattern(match, &current_i, u, ctx);
         if (blk.tag == S_ATOM && blk.atom.kind == TOKEN_ERROR)
             return blk;
 

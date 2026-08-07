@@ -88,7 +88,7 @@ psamples[3] =
     }
 
     {
-        scanner_t s = scanner_init(sv_str_init(psamples[3]));
+        scanner_t s = scanner_init(sv_str_init(psamples[2]));
         sexpr_t sexpr = parser_expr(&s, &ctx);
         sexpr_t ms = match_compile_2(sexpr, &ctx);
         sv_str_t og_expr = sexpr_format(sexpr, &sv_gpa);
