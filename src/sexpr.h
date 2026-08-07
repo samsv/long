@@ -10,7 +10,6 @@ typedef enum {
     S_CONS,
 } sexpr_kind;
 
-struct sexpr_t;
 typedef struct sexpr_t sexpr_t;
 sv_vec_def(sexpr_t);
 
