@@ -59,8 +59,6 @@ static sexpr_t match_atom(int64_t line)
     return match_token;
 }
 
-static sexpr_t empty_atom = { .tag = S_ATOM, .atom = { .kind = TOKEN_EOF } };
-
 static sexpr_t error_oom(token_t t, ctx_t* c)
 {
     error_set_oom(&c->err, C_ERR_OOM, t.line, &c->alloc);
@@ -176,7 +174,7 @@ static bool constructor_eql(sexpr_t a, sexpr_t b)
     if (a.tag != b.tag)
         return false;
 
-    if (a.tag == S_ATOM) switch (AS_LITERAL(a).kind) {
+    if (a.tag == S_ATOM && AS_LITERAL(a).kind == AS_LITERAL(b).kind) switch (AS_LITERAL(a).kind) {
         case LITERAL_FALSE:
         case LITERAL_TRUE:
         case LITERAL_NIL:
@@ -186,7 +184,7 @@ static bool constructor_eql(sexpr_t a, sexpr_t b)
         case LITERAL_STRING:
             return sv_str_comp(AS_LITERAL(a).str, AS_LITERAL(b).str);
         case LITERAL_IDENTIFIER:
-            return true;
+            return sv_str_comp(AS_LITERAL(a).literal, AS_LITERAL(b).literal);
     }
 
     /**
@@ -205,9 +203,9 @@ static bool constructor_eql(sexpr_t a, sexpr_t b)
 #undef AS_FN
 
 /**
- * Reorders the pattern to group patterns of the same type together.
+ * Reorders the rows to put patterns of the same constructor next to each other.
  */
-static sexpr_t group(cons_t* match_ptr, ctx_t* ctx)
+static void group(cons_t* match_ptr)
 {
     int start = 2;
     int current = start;
@@ -221,23 +219,38 @@ static sexpr_t group(cons_t* match_ptr, ctx_t* ctx)
 
     if (start != current)
         stable_sort(&match_ptr->arr[start], current - start, sizeof(sexpr_t), group_cmp);
+}
 
-    cons_t match = *match_ptr;
-    for (int64_t i = match_ptr->size - 1; i > 2; i--) {
-        sexpr_t a = match_ptr->arr[i].cons.arr[1];
-        sexpr_t b = match_ptr->arr[i - 1].cons.arr[1];
+/**
+ * Merges the rows of `lower` that test the same head constructor into a single row.
+ * Rows are in the form (tuple head (match us conds...)).
+ * `lower` must already be sorted by constructor. Identifier heads are left alone.
+ * Example
+ * lower =
+ * (match $1
+        (tuple 1 (match $2 (tuple 2 (do 1))))
+        (tuple 1 (match $2 (tuple 4 (do 3)))))
+ * out =
+ * (match $1
+        (tuple 1 (match $2 (tuple 2 (do 1))
+                           (tuple 4 (do 3)))))
+ */
+static void fuse_tuple_rows(cons_t* lower)
+{
+    for (int64_t i = lower->size - 1; i > CONDS_START; i--) {
+        sexpr_t a = lower->arr[i].cons.arr[1];
+        sexpr_t b = lower->arr[i - 1].cons.arr[1];
 
         if (!constructor_eql(a, b))
             continue;
 
-        INIT_PIPE(bar_expr);
-        APPEND_CAP(&bar_expr, match_ptr->arr[i - 1].cons.arr[2]);
-        APPEND_CAP(&bar_expr, match_ptr->arr[i].cons.arr[2]);
-        match_ptr->arr[i - 1].cons.arr[2] = cons_sexpr(bar_expr);
-        sv_vec_remove_linear(match_ptr, i, NULL);
-    }
+        cons_t* dest = &lower->arr[i - 1].cons.arr[2].cons;
+        cons_t src = lower->arr[i].cons.arr[2].cons;
+        for (int64_t j = CONDS_START; j < src.size; j++)
+            APPEND_CAP(dest, src.arr[j]);
 
-    return empty_atom;
+        sv_vec_remove_linear(lower, i, NULL);
+    }
 }
 
 static int tuple_cmp(const void* a, const void* b)
@@ -317,7 +330,7 @@ static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u,  sexpr_t d
 
 static sexpr_t group_and_compile_pattern(cons_t* match, sexpr_t fail, ctx_t* ctx)
 {
-    group(match, ctx);
+    group(match);
     int start_i = 2;
     return compile_pattern(*match, &start_i, match->arr[1], fail, ctx);
 }
@@ -352,7 +365,7 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
         // cond first item
         APPEND_CAP(&body, match.arr[i].cons.arr[1].cons.arr[1]);
 
-        INIT_MATCH(body_match, 2);
+        INIT_MATCH(body_match, match.size - 1);
         APPEND_CAP(&body_match, us_sexpr);
 
         INIT_TUPLE(cond_tuple, 2);
@@ -366,14 +379,21 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
 
         APPEND_CAP(&body_match, cons_sexpr(cond_tuple));
 
-        sexpr_t body_sexpr = us.size > 2 ?
-            compile_tuple(body_match, ctx) : group_and_compile_pattern(&body_match, fail, ctx);
-
-        APPEND_CAP(&body, body_sexpr);
+        APPEND_CAP(&body, cons_sexpr(body_match));
         APPEND_CAP(&lower_match, cons_sexpr(body));
     }
 
-    return group_and_compile_pattern(&lower_match, fail, ctx);
+    group(&lower_match);
+    fuse_tuple_rows(&lower_match);
+
+    for (int64_t i = CONDS_START; i < lower_match.size; i++) {
+        cons_t body_match = lower_match.arr[i].cons.arr[2].cons;
+        lower_match.arr[i].cons.arr[2] = us.size > 2 ?
+            compile_tuple(body_match, ctx) : group_and_compile_pattern(&body_match, fail, ctx);
+    }
+
+    int start_i = CONDS_START;
+    return compile_pattern(lower_match, &start_i, lower_match.arr[1], fail, ctx);
 }
 
 static sexpr_t compile_tuple_init(cons_t match, int* start_i, sexpr_t u, cons_t** end, ctx_t* ctx)
@@ -529,10 +549,10 @@ sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
     if (s.cons.size <= CONDS_START)
         return discard(&s, ctx);
 
-    sexpr_t e = group(&s.cons, ctx);
+    group(&s.cons);
 
     cons_t match = s.cons;
-    sv_str_t str = sexpr_format(e, &ctx->alloc);
+    sv_str_t str = sexpr_format(s, &ctx->alloc);
     printf("\n\n %.*s \n\n", (int)str.size, str.chars);
 
     int start_i = CONDS_START;
