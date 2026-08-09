@@ -21,7 +21,7 @@ static const char* sample =
     "end\n"
     "is_even(2)";
 
-#define P_SIZE 4
+#define P_SIZE 5
 char* psamples[P_SIZE];
 
 int main(void)
@@ -78,6 +78,13 @@ psamples[3] =
     "|\"world\" do 1\n"
     "end";
 
+psamples[4] =
+    "match x \n"
+    "| (1, 2) do 1\n"
+    "| (1, 2, 3) do 2\n"
+    "| (1, 4) do 3\n"
+    "end";
+
     for (int i = 0; i < P_SIZE; i++) {
         char* psample = psamples[i];
         scanner_t s = scanner_init(sv_str_init(psample));
@@ -88,7 +95,7 @@ psamples[3] =
     }
 
     {
-        scanner_t s = scanner_init(sv_str_init(psamples[3]));
+        scanner_t s = scanner_init(sv_str_init(psamples[4]));
         sexpr_t sexpr = parser_expr(&s, &ctx);
         sexpr_t ms = match_compile_2(sexpr, &ctx);
         sv_str_t og_expr = sexpr_format(sexpr, &sv_gpa);

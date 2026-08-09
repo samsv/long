@@ -193,7 +193,7 @@ static bool next_temp(sexpr_t* out, int64_t line, ctx_t* ctx)
     }
 
     char* buf = temp_names[temps_used];
-    snprintf(buf, TEMP_SIZE, "$%0*d", TEMP_DIGITS, ++temps_used);
+    snprintf(buf, TEMP_SIZE, "$%d", ++temps_used);
     *out = id_atom(buf, line);
     return true;
 }
