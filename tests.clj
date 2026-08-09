@@ -1,9 +1,9 @@
-G(comment "match x\n"
-          "| 1 do x\n"
-          "| 2 do 2 * x\n"
-          "| 3 do 9 * x\n"
-          "end";
-          )
+(comment "match x\n"
+         "| 1 do x\n"
+         "| 2 do 2 * x\n"
+         "| 3 do 9 * x\n"
+         "end";
+         )
 (do
   (= $1 x)
   (|
@@ -243,18 +243,14 @@ G(comment "match x\n"
           (if
             (== $1 1)
             (|
-              (|
+              (if
+                (is-number? $2)
                 (if
-                  (is-number? $2)
-                  (if
-                    (== $2 2)
-                    (do 1) $fail) $fail) $fail)
-              (|
-                (if
-                  (is-number? $2)
+                  (== $2 2)
+                  (do 1)
                   (if
                     (== $2 4)
-                    (do 3) $fail) $fail) $fail)) $fail) $fail) $fail))
+                    (do 3) $fail)) $fail) $fail) $fail) $fail) $fail))
     (if
       (is-tuple? x 3)
       (do
