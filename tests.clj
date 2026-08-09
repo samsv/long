@@ -1,9 +1,9 @@
-(comment "match x\n"
-         "| 1 do x\n"
-         "| 2 do 2 * x\n"
-         "| 3 do 9 * x\n"
-         "end";
-         )
+G(comment "match x\n"
+          "| 1 do x\n"
+          "| 2 do 2 * x\n"
+          "| 3 do 9 * x\n"
+          "end";
+          )
 (do
   (= $1 x)
   (|
@@ -173,60 +173,61 @@
    (match-fail $1)))
 
 (comment
-    "match x \n"
-    "| (1, 2) do 1\n"
-    "| (1, 2, 3) do 2\n"
-    "| (1, 4) do 3\n"
-    "end";
+  "match x \n"
+  "| (1, 2) do 1\n"
+  "| (1, 2, 3) do 2\n"
+  "| (1, 4) do 3\n"
+  "end";
   )
 (do
   (= $1 x)
   (|
-    (if
-      (is-tuple? $1 2)
-      (do
-        (= $5
-           (nth $1 0))
-        (do
-          (= $6
-             (nth $1 1))
-          (if
-            (is-number? $5)
-            (if
-              (== $5 1)
-              (if
-                (is-number? $6)
-                (if
-                  (== $6 2)
-                  (do 1)
-                  (if
-                    (== $6 4)
-                    (do 3) $fail)) $fail) $fail) $fail)))
-      (if
-        (is-tuple? $1 3)
-        (do
-          (= $2
-             (nth $1 0))
-          (do
-            (= $3
-               (nth $1 1))
-            (do
-              (= $4
-                 (nth $1 2))
-              (if
-                (is-number? $2)
-                (if
-                  (== $2 1)
-                  (if
-                    (is-number? $3)
-                    (if
-                      (== $3 2)
-                      (if
-                        (is-number? $4)
-                        (if
-                          (== $4 3)
-                          (do 2) $fail) $fail) $fail) $fail) $fail) $fail)))) $fail))
-    (match-fail $1)))
+   (if
+     (is-tuple? $1 2)
+     (do
+       (= $5
+          (nth $1 0))
+       (do
+         (= $6
+            (nth $1 1))
+         (if
+           (is-number? $5)
+           (if
+             (== $5 1)
+             (if
+               (is-number? $6)
+               (if
+                 (== $6 2)
+                 (do 1)
+                 (if
+                   (== $6 4)
+                   (do 3) $fail)) $fail) $fail) $fail)))
+     (if
+       (is-tuple? $1 3)
+       (do
+         (= $2
+            (nth $1 0))
+         (do
+           (= $3
+              (nth $1 1))
+           (do
+             (= $4
+                (nth $1 2))
+             (if
+               (is-number? $2)
+               (if
+                 (== $2 1)
+                 (if
+                   (is-number? $3)
+                   (if
+                     (== $3 2)
+                     (if
+                       (is-number? $4)
+                       (if
+                         (== $4 3)
+                         (do 2) $fail) $fail) $fail) $fail) $fail) $fail)))) $fail))
+   (match-fail $1)))
+
 
 (|
   (if
@@ -242,19 +243,18 @@
           (if
             (== $1 1)
             (|
-              (if
-                (is-number? $2)
+              (|
                 (if
-                  (== $2 2)
-                  (do 1) $fail) $fail) $fail)
-            (if
-              (== $1 1)
+                  (is-number? $2)
+                  (if
+                    (== $2 2)
+                    (do 1) $fail) $fail) $fail)
               (|
                 (if
                   (is-number? $2)
                   (if
                     (== $2 4)
-                    (do 3) $fail) $fail) $fail) $fail)) $fail) $fail))
+                    (do 3) $fail) $fail) $fail)) $fail) $fail) $fail))
     (if
       (is-tuple? x 3)
       (do
