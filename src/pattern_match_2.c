@@ -18,16 +18,30 @@ static int temps_used;
 #define APPEND_CAP(vec, val) (vec)->arr[(vec)->size++] = (val)
 #define LITERAL(name) { .kind = LITERAL_IDENTIFIER, .literal = sv_str_init((name)) }
 #define NUMBER(value) { .kind = LITERAL_NUMBER, .number = (value) }
+
 #define ATOM_TOKEN(k, union_case) (sexpr_t){ .tag = S_ATOM, .atom = { .kind = k, union_case } }
 #define ATOM_TOKEN_NO_CASE(k) (sexpr_t){ .tag = S_ATOM, .atom = { .kind = k } }
-#define INIT_CAPACITY(name, cap, token) \
+
+#define INIT_CAPACITY(name, cap) \
     cons_t name = sv_vec_init_capacity(sexpr_t, (cap), &ctx->alloc); \
-    if (name.arr == NULL) return error_oom((token), ctx);
+    if (name.arr == NULL) return error_oom(match.arr[0].atom, ctx);
 
 #define PUSH(vec, val) do { \
     sv_vec_push((vec), (val), &success, &ctx->alloc); \
     if (!success) return atom_sexpr((token_t){ .kind = TOKEN_ERROR }); \
 } while(0)
+
+#define INIT_DO(name, size) \
+    INIT_CAPACITY(name, (size) + 1); \
+    APPEND_CAP(&name, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_DO))
+
+#define INIT_IF(name) \
+    INIT_CAPACITY(name, 4); \
+    APPEND_CAP(&name, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_IF));
+
+#define INIT_MATCH(name, size) \
+    INIT_CAPACITY(name, (size) + 1); \
+    APPEND_CAP(&name, match_atom(match.arr[0].atom.line));
 
 static sexpr_t id_atom(const char* name)
 {
@@ -234,8 +248,15 @@ static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u,  sexpr_t d
 
 #define TUPLE_SIZE(i) match.arr[(i)].cons.arr[1].cons.size - 1
 #define INIT_TUPLE(name, size) \
-    INIT_CAPACITY(name, (size) + 1, match.arr[0].atom); \
+    INIT_CAPACITY(name, (size) + 1); \
     APPEND_CAP(&name, id_atom("tuple"))
+
+static sexpr_t group_and_compile_pattern(cons_t match, sexpr_t fail, ctx_t* ctx)
+{
+    group(match);
+    int start_i = 2;
+    return compile_pattern(match, &start_i, match.arr[1], fail, ctx);
+}
 
 /**
  * Compile a tuple pattern in the form
@@ -249,8 +270,7 @@ static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u,  sexpr_t d
 static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
 {
     // initialize (match ...)
-    INIT_CAPACITY(lower_match, match.size, match.arr[0].atom);
-    APPEND_CAP(&lower_match, match_atom(match.arr[0].atom.line));
+    INIT_MATCH(lower_match, match.size);
     // u_1
     APPEND_CAP(&lower_match, match.arr[1].cons.arr[1]);
 
@@ -268,8 +288,7 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
         // cond first item
         APPEND_CAP(&body, match.arr[i].cons.arr[1].cons.arr[1]);
 
-        INIT_CAPACITY(body_match, 3, match.arr[0].atom);
-        APPEND_CAP(&body_match, match_atom(match.arr[0].atom.line));
+        INIT_MATCH(body_match, 2);
         APPEND_CAP(&body_match, us_sexpr);
 
         INIT_TUPLE(cond_tuple, 2);
@@ -283,21 +302,14 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
 
         APPEND_CAP(&body_match, cons_sexpr(cond_tuple));
 
-        sexpr_t body_sexpr;
-        if (us.size > 2) {
-            body_sexpr = compile_tuple(body_match, ctx);
-        } else {
-            group(body_match);
-            int body_start = 2;
-            body_sexpr = compile_pattern(body_match, &body_start, body_match.arr[1], fail, ctx);
-        }
+        sexpr_t body_sexpr = us.size > 2 ?
+            compile_tuple(body_match, ctx) : group_and_compile_pattern(body_match, fail, ctx);
+
         APPEND_CAP(&body, body_sexpr);
         APPEND_CAP(&lower_match, cons_sexpr(body));
     }
 
-    group(lower_match);
-    int start_i = 2;
-    return compile_pattern(lower_match, &start_i, lower_match.arr[1], fail, ctx);
+    return group_and_compile_pattern(lower_match, fail, ctx);
 }
 
 static sexpr_t compile_tuple_init(cons_t match, int* start_i, sexpr_t u, cons_t** end, ctx_t* ctx)
@@ -309,15 +321,14 @@ static sexpr_t compile_tuple_init(cons_t match, int* start_i, sexpr_t u, cons_t*
         int64_t size = TUPLE_SIZE(*start_i);
 
         // (is-tuple? u size)
-        INIT_CAPACITY(pat_cond, 3, match.arr[0].atom);
+        INIT_CAPACITY(pat_cond, 3);
         APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(PAT_TUPLE))));
         APPEND_CAP(&pat_cond, u);
         sexpr_t size_atom = ATOM_TOKEN(TOKEN_LITERAL, .literal = NUMBER(size));
         APPEND_CAP(&pat_cond, size_atom);
 
         // (if (is-tuple? ...))
-        INIT_CAPACITY(if_block, 4, match.arr[0].atom);
-        APPEND_CAP(&if_block, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_IF));
+        INIT_IF(if_block);
         APPEND_CAP(&if_block, cons_sexpr(pat_cond));
 
         // get the range of patterns which have the same tuple size
@@ -326,32 +337,28 @@ static sexpr_t compile_tuple_init(cons_t match, int* start_i, sexpr_t u, cons_t*
             end_i++;
 
         // if true body
-        INIT_CAPACITY(do_expr, size + 2, match.arr[0].atom);
-        APPEND_CAP(&do_expr, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_DO));
+        INIT_DO(do_expr, size + 1);
         // (do
         //      (= u_1 (nth u 0))
         //      (= u_2 (nth u 1))
         // ...)
-        INIT_CAPACITY(us, size + 1, match.arr[0].atom);
-        APPEND_CAP(&us, id_atom("tuple"));
+        INIT_TUPLE(us, size);
         for (int64_t i = 0; i < size; i++) {
             sexpr_t u_i = next_u();
             APPEND_CAP(&us, u_i);
 
-            INIT_CAPACITY(tuple_get, 3, match.arr[0].atom);
+            INIT_CAPACITY(tuple_get, 3);
             APPEND_CAP(&tuple_get, ATOM_TOKEN(TOKEN_OPERATOR, .operator = OPERATOR_LEFT_BRACKET));
             APPEND_CAP(&tuple_get, u);
             APPEND_CAP(&tuple_get, ATOM_TOKEN(TOKEN_LITERAL, .literal = NUMBER(i)));
 
-            INIT_CAPACITY(u_assign, 3, match.arr[0].atom);
+            INIT_CAPACITY(u_assign, 3);
             sexpr_t assign_expr = bind_var(&u_assign, u_i, cons_sexpr(tuple_get));
             APPEND_CAP(&do_expr, assign_expr);
         }
 
         // build (match (tuple u_1 ... u_n))
-        INIT_CAPACITY(tuple_match, 2 + end_i - *start_i, match.arr[0].atom);
-        sexpr_t match_token = match_atom(match.arr[0].atom.line);
-        APPEND_CAP(&tuple_match, match_token);
+        INIT_MATCH(tuple_match, 1 + end_i - *start_i);
         APPEND_CAP(&tuple_match, cons_sexpr(us));
         for (int64_t i = *start_i; i < end_i; i++)
             APPEND_CAP(&tuple_match, match.arr[i]);
@@ -371,11 +378,10 @@ static sexpr_t compile_tuple_init(cons_t match, int* start_i, sexpr_t u, cons_t*
 
 static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
 {
-    INIT_CAPACITY(bar_expr, 4, match.arr[0].atom);
-    INIT_CAPACITY(do_expr, 3, match.arr[0].atom);
-    INIT_CAPACITY(set_var_expr, 3, match.arr[0].atom);
+    INIT_CAPACITY(bar_expr, 4);
+    INIT_CAPACITY(set_var_expr, 3);
 
-    APPEND_CAP(&do_expr, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_DO));
+    INIT_DO(do_expr, 2);
     APPEND_CAP(&do_expr, bind_var(&set_var_expr, match.arr[*start_i].cons.arr[1], u));
     APPEND_CAP(&do_expr, match.arr[(*start_i)++].cons.arr[2]);
 
@@ -391,21 +397,18 @@ static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_
 
 static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_class pat_type, ctx_t* ctx)
 {
-    INIT_CAPACITY(pat_cond, 2, match.arr[0].atom);
+    INIT_CAPACITY(pat_cond, 2);
     APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(pat_type))));
     APPEND_CAP(&pat_cond, u);
 
-    INIT_CAPACITY(if_block, 4, match.arr[0].atom);
-    APPEND_CAP(&if_block, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_IF));
-
+    INIT_IF(if_block);
     APPEND_CAP(&if_block, cons_sexpr(pat_cond));
 
     cons_t* end = &if_block;
     for (int i = *start_i; i < match.size && pat_type == pattern_class_of(match.arr[i].cons.arr[1]); *start_i = ++i) {
-        INIT_CAPACITY(if_body_block, 4, match.arr[0].atom);
-        APPEND_CAP(&if_body_block, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_IF));
+        INIT_IF(if_body_block);
 
-        INIT_CAPACITY(if_cond, 4, match.arr[0].atom);
+        INIT_CAPACITY(if_cond, 3);
         APPEND_CAP(&if_cond, ATOM_TOKEN(TOKEN_OPERATOR, .operator = OPERATOR_EQUAL_EQUAL));
         APPEND_CAP(&if_cond, u);
         APPEND_CAP(&if_cond, match.arr[i].cons.arr[1]);
@@ -424,8 +427,7 @@ static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_c
 static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
 {
     // initialize bar
-    INIT_CAPACITY(bar_expr, 4, match.arr[0].atom);
-
+    INIT_CAPACITY(bar_expr, 4);
     APPEND_CAP(&bar_expr, ATOM_TOKEN_NO_CASE(TOKEN_PIPE));
 
     int current_i = *start_i;
@@ -469,8 +471,7 @@ sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
     group(match);
 
     int start_i = CONDS_START;
-
-    INIT_CAPACITY(match_fail_expr, 2, match.arr[0].atom);
+    INIT_CAPACITY(match_fail_expr, 2);
 
     sexpr_t subject = match.arr[1];
     if (subject.tag == S_ATOM &&
@@ -483,10 +484,9 @@ sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
     sexpr_t u = next_u();
 
     // Initialize (do (= u_i x) (| ...))
-    INIT_CAPACITY(do_expr, 3, match.arr[0].atom);
-    APPEND_CAP(&do_expr, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_DO));
+    INIT_DO(do_expr, 2);
 
-    INIT_CAPACITY(eql_expr, 3, match.arr[0].atom);
+    INIT_CAPACITY(eql_expr, 3);
     APPEND_CAP(&do_expr, bind_var(&eql_expr, u, match.arr[1]));
     APPEND_CAP(&do_expr, compile_pattern(match, &start_i, u, match_fail(&match_fail_expr, u), ctx));
 
