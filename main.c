@@ -21,7 +21,7 @@ static const char* sample =
     "end\n"
     "is_even(2)";
 
-#define P_SIZE 5
+#define P_SIZE 6
 char* psamples[P_SIZE];
 
 int main(void)
@@ -83,6 +83,13 @@ psamples[4] =
     "| (1, 2) do 1\n"
     "| (1, 2, 3) do 2\n"
     "| (1, 4) do 3\n"
+    "end";
+
+psamples[5] =
+    "match x \n"
+    "| 1 do 1\n"
+    "| 4 do 2\n"
+    "| 1 do 3\n"
     "end";
 
     for (int i = 0; i < P_SIZE; i++) {

@@ -155,9 +155,9 @@
 #define sv_vec_remove_swap(vec, i, allocator) do {                                                            \
     (vec)->arr[i] = (vec)->arr[(vec)->size - 1];                                                              \
     (vec)->size -= 1;                                                                                         \
-    if ((vec)->size <= (vec)->capacity / 2 && (vec)->size) sv_vec_realloc(                                    \
+    if ((allocator) != NULL && (vec)->size <= (vec)->capacity / 2 && (vec)->size) sv_vec_realloc(             \
         (void*)&(vec)->arr, &(vec)->capacity,                                                                 \
-        (vec)->capacity / 2, (vec)->element_size, allocator);                                                 \
+        (vec)->capacity / 2, (vec)->element_size, (allocator));                                               \
 } while (0)
 
 /**
@@ -167,9 +167,9 @@
 #define sv_vec_remove_linear(vec, i, allocator) do {                                                          \
     for (int64_t idx = i; idx < (vec)->size - 1; idx++) (vec)->arr[idx] = (vec)->arr[idx + 1];                \
     (vec)->size -= 1;                                                                                         \
-    if ((vec)->size <= (vec)->capacity / 2 && (vec)->size) sv_vec_realloc(                                    \
+    if ((allocator) != NULL && (vec)->size <= (vec)->capacity / 2 && (vec)->size) sv_vec_realloc(             \
         (void*)&(vec)->arr, &(vec)->capacity,                                                                 \
-        (vec)->capacity / 2, (vec)->element_size, allocator);                                                 \
+        (vec)->capacity / 2, (vec)->element_size, (allocator));                                               \
 } while (0)
 
 /**
