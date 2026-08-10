@@ -21,7 +21,7 @@ static const char* sample =
     "end\n"
     "is_even(2)";
 
-#define P_SIZE 6
+#define P_SIZE 5
 char* psamples[P_SIZE];
 
 int main(void)
@@ -80,16 +80,9 @@ psamples[3] =
 
 psamples[4] =
     "match x \n"
-    "| (1, 2) do 1\n"
-    "| (1, 2, 3) do 2\n"
-    "| (1, 4) do 3\n"
-    "end";
-
-psamples[5] =
-    "match x \n"
-    "| 1 do 1\n"
-    "| 4 do 2\n"
-    "| 1 do 3\n"
+    "| (a, 2) do a\n"
+    "| (a, 2, 3) do 2\n"
+    "| (b, 4) do b\n"
     "end";
 
     for (int i = 0; i < P_SIZE; i++) {
@@ -98,16 +91,14 @@ psamples[5] =
         sexpr_t sexpr = parser_expr(&s, &ctx);
         sexpr_t ms = match_compile(sexpr, &ctx);
         sv_str_t fmt = sexpr_format(ms, &sv_gpa);
-        printf("%.*s\n", (int)fmt.size, fmt.chars);
+        printf("%.*s\n\n", (int)fmt.size, fmt.chars);
     }
 
     {
         scanner_t s = scanner_init(sv_str_init(psamples[4]));
         sexpr_t sexpr = parser_expr(&s, &ctx);
         sexpr_t ms = match_compile_2(sexpr, &ctx);
-        sv_str_t og_expr = sexpr_format(sexpr, &sv_gpa);
         sv_str_t fmt = sexpr_format(ms, &sv_gpa);
-        printf("%.*s\n", (int)og_expr.size, og_expr.chars);
         printf("%.*s\n", (int)fmt.size, fmt.chars);
     }
 

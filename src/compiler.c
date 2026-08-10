@@ -220,7 +220,7 @@ static bool compile_id(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
     if (idx.is_some)
         return emit2(c, ctx, OP_GET_MEMBER, (uint8_t)idx.value, line);
 
-    return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Variable", id);
+    return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", id);
 }
 
 static bool add_var(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
@@ -1292,7 +1292,7 @@ static bool compile_internal(compiler_t* c, sv_str_t name, const sexpr_t* args, 
         TRY(expect_id(args[0], ctx, &target));
         sv_opt_t(int64_t) idx = locals_get(c->locals, target, ctx);
         if (!idx.is_some)
-            return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Variable", target);
+            return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", target);
 
         TRY(compile_sexpr(c, args[1], ctx));
         TRY(emit2(c, ctx, OP_STORE_LOCAL, (uint8_t)idx.value, line));

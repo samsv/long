@@ -61,7 +61,8 @@ static bool sexpr_format_builder(sexpr_t sexpr, sv_str_builder* b, int ident, co
         case S_ATOM:
             return token_format_builder(sexpr.atom, b, a);
         case S_CONS:
-            CHECK(sv_strb_add_char(b, '\n', a) != -1);
+            if (ident > 0)
+                CHECK(sv_strb_add_char(b, '\n', a) != -1);
             for (int i = 0; i < ident; i++)
                 CHECK(sv_strb_add(b, "  ", 2, a) != -1);
             CHECK(sv_strb_add_char(b, '(', a) != -1);

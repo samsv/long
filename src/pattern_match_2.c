@@ -47,6 +47,17 @@ static int temps_used;
     INIT_CAPACITY(name, 3); \
     APPEND_CAP(&name, ATOM_TOKEN_NO_CASE(TOKEN_PIPE))
 
+#define WILDCARD_STR { .chars = "$_", .size = 2 }
+static const sv_str_t wildcard_str = WILDCARD_STR;
+static const sexpr_t wildcard = {
+    .tag = S_ATOM,
+    .atom = {
+        .kind = TOKEN_LITERAL,
+        .literal = { .kind = LITERAL_IDENTIFIER, .literal = WILDCARD_STR }
+    }
+};
+
+
 static sexpr_t id_atom(const char* name)
 {
     return ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(name));
@@ -184,18 +195,8 @@ static bool constructor_eql(sexpr_t a, sexpr_t b)
         case LITERAL_STRING:
             return sv_str_comp(AS_LITERAL(a).str, AS_LITERAL(b).str);
         case LITERAL_IDENTIFIER:
-            return sv_str_comp(AS_LITERAL(a).literal, AS_LITERAL(b).literal);
-    }
-
-    /**
-    if (AS_FN(a) == FN_TUPLE) {
-        return a.cons.size == b.cons.size;
-    } else if (AS_FN(a) == FN_LIST) {
-        if (a.cons.size == b.cons.size)
             return true;
-        return a.cons.size > 1 && b.cons.size > 1;
     }
-    */
 
     return false;
 }
@@ -360,10 +361,24 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
     sexpr_t fail = id_atom(FAIL_NAME);
     // match conditions
     for (int64_t i = 2; i < match.size; i++) {
+        sexpr_t head = match.arr[i].cons.arr[1].cons.arr[1];
+        sexpr_t row_body = match.arr[i].cons.arr[2];
+
+        // Make different named variable patterns work by binding the given name to the body
+        if (pattern_class_of(head) == PAT_VAR) {
+            INIT_CAPACITY(alias, 3);
+            INIT_DO(do_block, 2);
+            APPEND_CAP(&do_block, bind_var(&alias, head, lower_match.arr[1]));
+            APPEND_CAP(&do_block, row_body);
+
+            row_body = cons_sexpr(do_block);
+            head = wildcard;
+        }
+
         // match condition body, in the form (tuple cond (match ...))
         INIT_TUPLE(body, 2);
         // cond first item
-        APPEND_CAP(&body, match.arr[i].cons.arr[1].cons.arr[1]);
+        APPEND_CAP(&body, head);
 
         INIT_MATCH(body_match, match.size - 1);
         APPEND_CAP(&body_match, us_sexpr);
@@ -375,7 +390,7 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
             APPEND_CAP(&cond_tuple_pats, match.arr[i].cons.arr[1].cons.arr[j]);
         sexpr_t pats_sexpr = cond_tuple_pats.size > 2 ? cons_sexpr(cond_tuple_pats) : cond_tuple_pats.arr[1];
         APPEND_CAP(&cond_tuple, pats_sexpr);
-        APPEND_CAP(&cond_tuple, match.arr[i].cons.arr[2]);
+        APPEND_CAP(&cond_tuple, row_body);
 
         APPEND_CAP(&body_match, cons_sexpr(cond_tuple));
 
@@ -462,14 +477,21 @@ static sexpr_t compile_tuple_init(cons_t match, int* start_i, sexpr_t u, cons_t*
 
 static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
 {
+    sexpr_t var = match.arr[*start_i].cons.arr[1];
+    sexpr_t body = match.arr[(*start_i)++].cons.arr[2];
+
     INIT_PIPE(bar_expr);
-    INIT_CAPACITY(set_var_expr, 3);
+    if (sv_str_comp(var.atom.literal.literal, wildcard_str)) {
+        APPEND_CAP(&bar_expr, body);
+    } else {
+        INIT_DO(do_expr, 2);
+        INIT_CAPACITY(set_var_expr, 3);
+        APPEND_CAP(&do_expr, bind_var(&set_var_expr, var, u));
+        APPEND_CAP(&do_expr, body);
 
-    INIT_DO(do_expr, 2);
-    APPEND_CAP(&do_expr, bind_var(&set_var_expr, match.arr[*start_i].cons.arr[1], u));
-    APPEND_CAP(&do_expr, match.arr[(*start_i)++].cons.arr[2]);
+        APPEND_CAP(&bar_expr, cons_sexpr(do_expr));
+    }
 
-    APPEND_CAP(&bar_expr, cons_sexpr(do_expr));
     sexpr_t deflt = compile_pattern(match, start_i, u, deflt_fail, ctx);
     if (deflt.tag == S_ATOM && deflt.atom.kind == TOKEN_ERROR)
         return deflt;
@@ -509,6 +531,9 @@ static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_c
 
 static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
 {
+    if (*start_i >= match.size)
+        return deflt_fail;
+
     // initialize bar
     INIT_PIPE(bar_expr);
 
@@ -552,8 +577,6 @@ sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
     group(&s.cons);
 
     cons_t match = s.cons;
-    sv_str_t str = sexpr_format(s, &ctx->alloc);
-    printf("\n\n %.*s \n\n", (int)str.size, str.chars);
 
     int start_i = CONDS_START;
     INIT_CAPACITY(match_fail_expr, 2);
