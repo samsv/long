@@ -21,9 +21,6 @@ static const char* sample =
     "end\n"
     "is_even(2)";
 
-#define P_SIZE 5
-char* psamples[P_SIZE];
-
 int main(void)
 {
     ctx_t ctx = {
@@ -49,44 +46,12 @@ int main(void)
 
     vm_deinit(&vm, &ctx.alloc);
 
-psamples[0] =
-    "match x\n"
-    "| 1 do x\n"
-    "| 2 do 2 * x\n"
-    "| 3 do 9 * x\n"
-    "end";
+    const char* psample =
+        "match x\n"
+        "| [] do x\n"
+        "end";
 
-psamples[1] =
-    "match x\n"
-    "| 1 do 1\n"
-    "| 2 do 2 * x\n"
-    "| a do a\n"
-    "end";
-
-psamples[2] =
-    "match x\n"
-    "| 1 do 1\n"
-    "| a do a\n"
-    "| 2 do 2 * x\n"
-    "end";
-
-psamples[3] =
-    "match x \n"
-    "| 1 do 5\n"
-    "|\"hello\" do 1\n"
-    "| 2 do 2\n"
-    "|\"world\" do 1\n"
-    "end";
-
-psamples[4] =
-    "match x \n"
-    "| (a, 2) do a\n"
-    "| (a, 2, 3) do 2\n"
-    "| (b, 4) do b\n"
-    "end";
-
-    for (int i = 0; i < P_SIZE; i++) {
-        char* psample = psamples[i];
+    {
         scanner_t s = scanner_init(sv_str_init(psample));
         sexpr_t sexpr = parser_expr(&s, &ctx);
         sexpr_t ms = match_compile(sexpr, &ctx);
@@ -95,10 +60,12 @@ psamples[4] =
     }
 
     {
-        scanner_t s = scanner_init(sv_str_init(psamples[4]));
+        scanner_t s = scanner_init(sv_str_init(psample));
         sexpr_t sexpr = parser_expr(&s, &ctx);
         sexpr_t ms = match_compile_2(sexpr, &ctx);
+        sv_str_t og_fmt = sexpr_format(sexpr, &sv_gpa);
         sv_str_t fmt = sexpr_format(ms, &sv_gpa);
+        printf("%.*s\n", (int)og_fmt.size, og_fmt.chars);
         printf("%.*s\n", (int)fmt.size, fmt.chars);
     }
 
