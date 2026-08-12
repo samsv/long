@@ -18,6 +18,7 @@ static int temps_used;
 #define APPEND_CAP(vec, val) (vec)->arr[(vec)->size++] = (val)
 #define LITERAL(name) { .kind = LITERAL_IDENTIFIER, .literal = sv_str_init((name)) }
 #define NUMBER(value) { .kind = LITERAL_NUMBER, .number = (value) }
+#define BOOL(value) { .kind = (value) ? LITERAL_TRUE : LITERAL_FALSE }
 
 #define ATOM_TOKEN(k, union_case) (sexpr_t){ .tag = S_ATOM, .atom = { .kind = k, union_case } }
 #define ATOM_TOKEN_NO_CASE(k) (sexpr_t){ .tag = S_ATOM, .atom = { .kind = k } }
@@ -515,15 +516,15 @@ static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* 
 {
     sexpr_t list_cond = match.arr[*start_i].cons.arr[1];
 
-    // if is-list?
-    INIT_CAPACITY(pat_cond, 2);
-    APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(PAT_LIST))));
-    APPEND_CAP(&pat_cond, u);
+    INIT_IF(if_block);
 
-    INIT_IF(if_list);
-    APPEND_CAP(&if_list, cons_sexpr(pat_cond));
+    INIT_CAPACITY(if_cond, 2);
+    APPEND_CAP(&if_cond, id_atom("is-nil-list?"));
+    APPEND_CAP(&if_cond, u);
 
-    cons_t* end = &if_list;
+    APPEND_CAP(&if_block, cons_sexpr(if_cond));
+
+    cons_t* end = &if_block;
     for (int64_t i = *start_i; i < match.size && PAT_LIST == pattern_class_of(list_cond); *start_i = ++i) {
         sexpr_t list_cond = match.arr[i].cons.arr[1];
         sexpr_t body = match.arr[i].cons.arr[2];
@@ -531,20 +532,14 @@ static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* 
         if (list_cond.cons.size > 1)
             break;
 
-        // if is-cons?
         INIT_IF(if_cons);
-        INIT_CAPACITY(if_cond, 2);
-        APPEND_CAP(&if_cond, id_atom("is-cons?"));
-        APPEND_CAP(&if_cond, u);
-
-        APPEND_CAP(&if_cons, cons_sexpr(if_cond));
+        APPEND_CAP(&if_cons, ATOM_TOKEN(TOKEN_LITERAL, .literal = BOOL(true)));
         APPEND_CAP(&if_cons, body);
         APPEND_CAP(end, cons_sexpr(if_cons));
         end = &end->arr[end->size - 1].cons;
     }
 
-    APPEND_CAP(end, id_atom(FAIL_NAME));
-    return cons_sexpr(if_list);
+    return cons_sexpr(if_block);
 }
 
 /**
