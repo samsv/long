@@ -528,9 +528,8 @@ static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* 
         sexpr_t list_cond = match.arr[i].cons.arr[1];
         sexpr_t body = match.arr[i].cons.arr[2];
 
-        if (list_cond.cons.size > 1) {
-            goto ret;
-        }
+        if (list_cond.cons.size > 1)
+            break;
 
         // if is-cons?
         INIT_IF(if_cons);
@@ -545,7 +544,6 @@ static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* 
     }
 
     APPEND_CAP(end, id_atom(FAIL_NAME));
-ret:
     return cons_sexpr(if_list);
 }
 
