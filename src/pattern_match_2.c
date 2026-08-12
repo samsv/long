@@ -173,6 +173,10 @@ static int group_cmp(const void* a, const void* b) {
             return 0;
     }
 
+    if (AS_FN(sa) == FN_LIST) {
+        return sa.cons.size == 1 || sb.cons.size == 1 ?
+            sa.cons.size - sb.cons.size : 0;
+    }
     return sa.cons.size - sb.cons.size;
 }
 
@@ -507,8 +511,10 @@ static sexpr_t compile_tuple_init(cons_t match, int* start_i, sexpr_t u, cons_t*
 }
 #undef TUPLE_SIZE
 
-static sexpr_t compile_empty_list(cons_t match, sexpr_t body, sexpr_t u, ctx_t* ctx)
+static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
+    sexpr_t list_cond = match.arr[*start_i].cons.arr[1];
+
     // if is-list?
     INIT_CAPACITY(pat_cond, 2);
     APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(PAT_LIST))));
@@ -517,17 +523,29 @@ static sexpr_t compile_empty_list(cons_t match, sexpr_t body, sexpr_t u, ctx_t* 
     INIT_IF(if_list);
     APPEND_CAP(&if_list, cons_sexpr(pat_cond));
 
-    // if is-cons?
-    INIT_IF(if_cons);
-    INIT_CAPACITY(if_cond, 2);
-    APPEND_CAP(&if_cond, id_atom("is-cons?"));
-    APPEND_CAP(&if_cond, u);
+    cons_t* end = &if_list;
+    for (int64_t i = *start_i; i < match.size && PAT_LIST == pattern_class_of(list_cond); *start_i = ++i) {
+        sexpr_t list_cond = match.arr[i].cons.arr[1];
+        sexpr_t body = match.arr[i].cons.arr[2];
 
-    APPEND_CAP(&if_cons, cons_sexpr(if_cond));
-    APPEND_CAP(&if_cons, id_atom(FAIL_NAME));
-    APPEND_CAP(&if_cons, body);
+        if (list_cond.cons.size > 1) {
+            goto ret;
+        }
 
-    APPEND_CAP(&if_list, cons_sexpr(if_cons));
+        // if is-cons?
+        INIT_IF(if_cons);
+        INIT_CAPACITY(if_cond, 2);
+        APPEND_CAP(&if_cond, id_atom("is-cons?"));
+        APPEND_CAP(&if_cond, u);
+
+        APPEND_CAP(&if_cons, cons_sexpr(if_cond));
+        APPEND_CAP(&if_cons, body);
+        APPEND_CAP(end, cons_sexpr(if_cons));
+        end = &end->arr[end->size - 1].cons;
+    }
+
+    APPEND_CAP(end, id_atom(FAIL_NAME));
+ret:
     return cons_sexpr(if_list);
 }
 
@@ -549,10 +567,9 @@ static sexpr_t compile_empty_list(cons_t match, sexpr_t body, sexpr_t u, ctx_t* 
 static sexpr_t compile_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
     sexpr_t list_cond = match.arr[*start_i].cons.arr[1];
-    sexpr_t body = match.arr[(*start_i)++].cons.arr[2];
 
     if (list_cond.cons.size == 1)
-        return compile_empty_list(match, body, u, ctx);
+        return compile_empty_list(match, start_i, u, ctx);
 
     // (if (is-list? u))
     INIT_CAPACITY(pat_cond, 2);
@@ -578,35 +595,38 @@ static sexpr_t compile_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
     // (match
     //      (tuple $2 $3)
     //      (tuple (tuple x, (list ..)) body) )
-    INIT_MATCH(lower_list_match, 2);
-
+    INIT_MATCH(lower_list_match, match.size - *start_i + 1);
     // (tuple $2 $3)
     INIT_TUPLE(pat, 2);
     APPEND_CAP(&pat, u_2);
     APPEND_CAP(&pat, u_3);
     // holds the tuple
     APPEND_CAP(&lower_list_match, cons_sexpr(pat));
+    for (int64_t i = *start_i; i < match.size && PAT_LIST == pattern_class_of(list_cond); *start_i = ++i) {
+        sexpr_t list_cond = match.arr[i].cons.arr[1];
+        sexpr_t body = match.arr[i].cons.arr[2];
+        // (tuple x, (list ..))
+        INIT_TUPLE(new_pat, 2);
+        APPEND_CAP(&new_pat, list_cond.cons.arr[1]);
 
-    // (tuple x, (list ..))
-    INIT_TUPLE(new_pat, 2);
-    APPEND_CAP(&new_pat, list_cond.cons.arr[1]);
+        INIT_CAPACITY(tail, list_cond.cons.size - 1);
+         APPEND_CAP(&tail, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_LIST));
+        for (int64_t i = 2; i < list_cond.cons.size; i++)
+            APPEND_CAP(&tail, list_cond.cons.arr[i]);
+        if (tail.size == 2 && tail.arr[1].tag == S_CONS && is_dot_dot(tail.arr[1].cons.arr[0])) {
+            // extract xs from (.. xs)
+            APPEND_CAP(&new_pat, tail.arr[1].cons.arr[1]);
+        } else {
+            APPEND_CAP(&new_pat, cons_sexpr(tail));
+        }
 
-    INIT_CAPACITY(tail, list_cond.cons.size - 1);
-    APPEND_CAP(&tail, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_LIST));
-    for (int64_t i = 2; i < list_cond.cons.size; i++)
-        APPEND_CAP(&tail, list_cond.cons.arr[i]);
-    if (tail.size == 2 && tail.arr[1].tag == S_CONS && is_dot_dot(tail.arr[1].cons.arr[0])) {
-        // extract xs from (.. xs)
-        APPEND_CAP(&new_pat, tail.arr[1].cons.arr[1]);
-    } else {
-        APPEND_CAP(&new_pat, cons_sexpr(tail));
+        INIT_TUPLE(row, 2);
+        APPEND_CAP(&row, cons_sexpr(new_pat));
+        APPEND_CAP(&row, body);
+
+        APPEND_CAP(&lower_list_match, cons_sexpr(row));
     }
 
-    INIT_TUPLE(row, 2);
-    APPEND_CAP(&row, cons_sexpr(new_pat));
-    APPEND_CAP(&row, body);
-
-    APPEND_CAP(&lower_list_match, cons_sexpr(row));
     TRY(compiled_match, compile_tuple(lower_list_match, ctx));
 
     // (do (list-uncons ..) (match ..))
