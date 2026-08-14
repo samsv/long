@@ -208,8 +208,6 @@ static bool constructor_eql(sexpr_t a, sexpr_t b)
 
     return false;
 }
-#undef AS_LITERAL
-#undef AS_FN
 
 static bool is_dot_dot(sexpr_t e)
 {
@@ -648,16 +646,15 @@ sv_vec_def(transient_hashmap_t);
  *      (= $1 (get-field? u x))
  *      (= $2 (get-field? u y))
  *      (= $3 (record-size u))
- *      (match (tuple $3 $1 $2)
- *          (tuple (tuple 2 1 0) body); pre compute record size
- *          (tuple (tuple _ 0 1) body); sort x and y fields. record may have any size
+ *      (match (tuple $1 $2 $3)
+ *          (tuple (tuple 1 0 2) body); pre compute record size
+ *          (tuple (tuple 0 1 _) body); sort x and y fields. record may have any size
  *      )
  * )
  */
-static sexpr_t compile_record(cons_t match, int* start_i, ctx_t* ctx)
+static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
 #define CHECK(cond) if (!(cond)) return error_oom(match.arr[0].atom, ctx)
-
     sexpr_t record_cond = match.arr[*start_i].cons.arr[1];
     int last_i = *start_i;
     for (; last_i < match.size && PAT_RECORD == pattern_class_of(record_cond); last_i++) {}
@@ -665,25 +662,123 @@ static sexpr_t compile_record(cons_t match, int* start_i, ctx_t* ctx)
     sv_vec_t(transient_hashmap_t) map_vec = sv_vec_init_capacity(transient_hashmap_t, last_i - *start_i, &ctx->alloc);
     CHECK(map_vec.arr != NULL);
 
+    int max_size = 0;
     for (int i = *start_i; i < last_i; ++i) {
-        cons_t record_cond = match.arr[*start_i].cons.arr[1].cons;
+        cons_t record_cond = match.arr[i].cons.arr[1].cons;
 
         // hashmap where the keys are the literals and the values are the indices of the expression inside match
         transient_hashmap_t map = thm_init(record_cond.size / 2, &ctx->alloc);
         CHECK(map.set.dense.cell != NULL);
 
-        for (int j = 1; j < record_cond.size; j += 2) {
+        for (int j = 1; j < record_cond.size - 1; j += 2) {
             value_t key = value_init_str_own(record_cond.arr[j].atom.literal.literal, &ctx->alloc);
             CHECK(key.obj.cell != NULL);
 
-            thm_put(&map, (kv_t){ .key = key, .value = { .kind = VALUE_NUMBER, .number = i } }, &ctx->alloc);
+            value_t index = { .kind = VALUE_NUMBER, .number = j + 1 };
+            thm_put(&map, (kv_t){ .key = key, .value = index }, &ctx->alloc);
         }
+        max_size += thm_count(map);
         map_vec.arr[map_vec.size++] = map;
     }
 
-    // TODO do AST conversion
+    INIT_DO(do_block, max_size + 2);
+
+    int conds_size = 0;
+    transient_hashmap_t visited = thm_init(16, &ctx->alloc);
+
+    // create the new match expr
+    INIT_MATCH(lower_match, map_vec.size + 1);
+    INIT_TUPLE(tuple, conds_size + 1);
+    APPEND_CAP(&lower_match, cons_sexpr(tuple));
+    for (int i = 0; i < map_vec.size; i++) {
+        INIT_TUPLE(pat_tuple, 2);
+
+        INIT_TUPLE(cond_tuple, 8);
+        APPEND_CAP(&pat_tuple, cons_sexpr(cond_tuple));
+
+        sexpr_t body = match.arr[*start_i + i].cons.arr[2];
+        APPEND_CAP(&pat_tuple, body);
+        APPEND_CAP(&lower_match, cons_sexpr(pat_tuple));
+    }
+
+    for (int i = 0; i < map_vec.size; i++) {
+#define GET_KEY(i, j) match.arr[*start_i + (i)].cons.arr[1].cons.arr[(int)(j)]
+        transient_hashmap_t map = map_vec.arr[i];
+
+        map_iter_t iter = thm_iter_init(map);
+        while (true) {
+            sv_opt_t(kv_t) kv = map_iter_next(&iter);
+            if (!kv.is_some)
+                break;
+
+            sv_opt_t(value_t) exists = thm_get(visited, kv.value.key);
+            if (exists.is_some)
+                continue;
+
+            thm_put(&visited, kv.value, &ctx->alloc);
+
+            // (get-field? u field-name)
+            INIT_CAPACITY(get_field, 3);
+            APPEND_CAP(&get_field, id_atom("get-field?"));
+            APPEND_CAP(&get_field, u);
+            // the field name token
+            APPEND_CAP(&get_field, GET_KEY(i, kv.value.value.number - 1));
+
+            // set as eql
+            INIT_CAPACITY(u_eql, 3);
+            bind_var(&u_eql, next_u(), cons_sexpr(get_field));
+            APPEND_CAP(&do_block, cons_sexpr(u_eql));
+
+            // add value match tuple pattern
+            for (int j = 0; j < map_vec.size; j++) {
+                cons_t* cond = &lower_match.arr[2 + j].cons.arr[1].cons;
+                sv_opt_t(value_t) v = thm_get(map_vec.arr[j], kv.value.key);
+                sexpr_t val = GET_KEY(j, v.value.number);
+
+                int success;
+                if (v.is_some) PUSH(cond, val);
+                else PUSH(cond, id_atom("_"));
+            }
+
+            conds_size++;
+        }
+#undef GET_KEY
+    }
+
+    for (int i = 0; i < map_vec.size; i++) {
+        cons_t record_cond = match.arr[*start_i + i].cons.arr[1].cons;
+        cons_t* cond = &lower_match.arr[2 + i].cons.arr[1].cons;
+        int success;
+        if (is_dot_dot(sv_vec_last(record_cond))) {
+            PUSH(cond, id_atom("_"));
+        } else {
+            sexpr_t size_atom = ATOM_TOKEN(TOKEN_LITERAL, .literal = NUMBER((int)(record_cond.size / 2)));
+            PUSH(cond, size_atom);
+        }
+    }
+    // (= $n (record-size u))
+    INIT_CAPACITY(get_size, 2);
+    APPEND_CAP(&get_size, id_atom("record-size"));
+    APPEND_CAP(&get_size, u);
+
+    // set as eql
+    INIT_CAPACITY(u_eql, 3);
+    sexpr_t un = next_u();
+    bind_var(&u_eql, un, cons_sexpr(get_size));
+    APPEND_CAP(&do_block, cons_sexpr(u_eql));
+
+
+    // (tuple $1 $2 $n)
+    for (int i = 0; i < conds_size; i++)
+        APPEND_CAP(&lower_match.arr[1].cons, do_block.arr[i + 1].cons.arr[1]);
+    APPEND_CAP(&lower_match.arr[1].cons, un);
+    TRY(compiled_match, compile_tuple(lower_match, ctx));
+
+    APPEND_CAP(&do_block, compiled_match);
+
     *start_i = last_i;
-    return cons_sexpr(match);
+    return cons_sexpr(do_block);
+#undef CHECK
 }
 
 static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
@@ -767,7 +862,7 @@ static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, sexpr_t de
             TRY(list, compile_list(match, &current_i, u, ctx));
             APPEND_CAP(end, list);
         } else if (pat_type == PAT_RECORD) {
-            TRY(record, compile_record(match, &current_i, ctx));
+            TRY(record, compile_record(match, &current_i, u, ctx));
             APPEND_CAP(end, record);
         }
 
