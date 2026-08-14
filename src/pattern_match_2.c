@@ -1,4 +1,5 @@
 #include "pattern_match_2.h"
+#include "obj/map.h"
 #include "stable_sort.h"
 #include "compiler.h"
 #include <stdio.h>
@@ -539,6 +540,7 @@ static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* 
         end = &end->arr[end->size - 1].cons;
     }
 
+    APPEND_CAP(end, id_atom(FAIL_NAME));
     return cons_sexpr(if_block);
 }
 
@@ -631,6 +633,59 @@ static sexpr_t compile_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
     return cons_sexpr(if_block);
 }
 
+sv_vec_def(transient_hashmap_t);
+/**
+ * Compiles a series of record expressions in the form
+ * (match x
+ *     (tuple
+ *       (record x 1 y 0) body)
+ *     (tuple
+ *       (record y 1 x 0 ..) body)
+ *     ...
+ * )
+ * into
+ * (do
+ *      (= $1 (get-field? u x))
+ *      (= $2 (get-field? u y))
+ *      (= $3 (record-size u))
+ *      (match (tuple $3 $1 $2)
+ *          (tuple (tuple 2 1 0) body); pre compute record size
+ *          (tuple (tuple _ 0 1) body); sort x and y fields. record may have any size
+ *      )
+ * )
+ */
+static sexpr_t compile_record(cons_t match, int* start_i, ctx_t* ctx)
+{
+#define CHECK(cond) if (!(cond)) return error_oom(match.arr[0].atom, ctx)
+
+    sexpr_t record_cond = match.arr[*start_i].cons.arr[1];
+    int last_i = *start_i;
+    for (; last_i < match.size && PAT_RECORD == pattern_class_of(record_cond); last_i++) {}
+
+    sv_vec_t(transient_hashmap_t) map_vec = sv_vec_init_capacity(transient_hashmap_t, last_i - *start_i, &ctx->alloc);
+    CHECK(map_vec.arr != NULL);
+
+    for (int i = *start_i; i < last_i; ++i) {
+        cons_t record_cond = match.arr[*start_i].cons.arr[1].cons;
+
+        // hashmap where the keys are the literals and the values are the indices of the expression inside match
+        transient_hashmap_t map = thm_init(record_cond.size / 2, &ctx->alloc);
+        CHECK(map.set.dense.cell != NULL);
+
+        for (int j = 1; j < record_cond.size; j += 2) {
+            value_t key = value_init_str_own(record_cond.arr[j].atom.literal.literal, &ctx->alloc);
+            CHECK(key.obj.cell != NULL);
+
+            thm_put(&map, (kv_t){ .key = key, .value = { .kind = VALUE_NUMBER, .number = i } }, &ctx->alloc);
+        }
+        map_vec.arr[map_vec.size++] = map;
+    }
+
+    // TODO do AST conversion
+    *start_i = last_i;
+    return cons_sexpr(match);
+}
+
 static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
 {
     sexpr_t var = match.arr[*start_i].cons.arr[1];
@@ -704,14 +759,16 @@ static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, sexpr_t de
         else if (pat_type == PAT_TUPLE) {
             TRY(_, compile_tuple_init(match, &current_i, u, &end, ctx));
             continue;
-        }
-        else if (pat_type == PAT_VAR) {
+        } else if (pat_type == PAT_VAR) {
             APPEND_CAP(&bar_expr, compile_var(match, &current_i, u, deflt_fail, ctx));
             APPEND_CAP(end, id_atom(FAIL_NAME));
             goto end;
         } else if (pat_type == PAT_LIST) {
             TRY(list, compile_list(match, &current_i, u, ctx));
             APPEND_CAP(end, list);
+        } else if (pat_type == PAT_RECORD) {
+            TRY(record, compile_record(match, &current_i, ctx));
+            APPEND_CAP(end, record);
         }
 
         end = &end->arr[end->size - 1].cons;

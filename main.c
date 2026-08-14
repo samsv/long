@@ -48,9 +48,9 @@ int main(void)
 
     const char* psample =
         "match x\n"
-        "| [] do 0"
-        "| [x, y] do x\n"
-        "| [x, y, ..xs] do xs\n"
+        "| {x: 1, y: 0} do 0\n"
+        "| {y: 1, x: 0} do 1\n"
+        "| {y: 1, x: 0, ..} do 1\n"
         "end";
 
     {
@@ -64,10 +64,11 @@ int main(void)
     {
         scanner_t s = scanner_init(sv_str_init(psample));
         sexpr_t sexpr = parser_expr(&s, &ctx);
-        sexpr_t ms = match_compile_2(sexpr, &ctx);
         sv_str_t og_fmt = sexpr_format(sexpr, &sv_gpa);
-        sv_str_t fmt = sexpr_format(ms, &sv_gpa);
         printf("%.*s\n", (int)og_fmt.size, og_fmt.chars);
+
+        sexpr_t ms = match_compile_2(sexpr, &ctx);
+        sv_str_t fmt = sexpr_format(ms, &sv_gpa);
         printf("%.*s\n", (int)fmt.size, fmt.chars);
     }
 
