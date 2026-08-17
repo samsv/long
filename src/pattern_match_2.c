@@ -525,7 +525,7 @@ static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* 
 
     cons_t* end = &if_block;
     for (int64_t i = *start_i; i < match.size && PAT_LIST == pattern_class_of(list_cond); *start_i = ++i) {
-        sexpr_t list_cond = match.arr[i].cons.arr[1];
+        list_cond = match.arr[i].cons.arr[1];
         sexpr_t body = match.arr[i].cons.arr[2];
 
         if (list_cond.cons.size > 1)
@@ -596,14 +596,14 @@ static sexpr_t compile_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
     // holds the tuple
     APPEND_CAP(&lower_list_match, cons_sexpr(pat));
     for (int64_t i = *start_i; i < match.size && PAT_LIST == pattern_class_of(list_cond); *start_i = ++i) {
-        sexpr_t list_cond = match.arr[i].cons.arr[1];
+        list_cond = match.arr[i].cons.arr[1];
         sexpr_t body = match.arr[i].cons.arr[2];
         // (tuple x, (list ..))
         INIT_TUPLE(new_pat, 2);
         APPEND_CAP(&new_pat, list_cond.cons.arr[1]);
 
         INIT_CAPACITY(tail, list_cond.cons.size - 1);
-         APPEND_CAP(&tail, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_LIST));
+        APPEND_CAP(&tail, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_LIST));
         for (int64_t i = 2; i < list_cond.cons.size; i++)
             APPEND_CAP(&tail, list_cond.cons.arr[i]);
         if (tail.size == 2 && tail.arr[1].tag == S_CONS && is_dot_dot(tail.arr[1].cons.arr[0])) {
@@ -655,9 +655,8 @@ sv_vec_def(transient_hashmap_t);
 static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
 #define CHECK(cond) if (!(cond)) return error_oom(match.arr[0].atom, ctx)
-    sexpr_t record_cond = match.arr[*start_i].cons.arr[1];
     int last_i = *start_i;
-    for (; last_i < match.size && PAT_RECORD == pattern_class_of(record_cond); last_i++) {}
+    for (; last_i < match.size && PAT_RECORD == pattern_class_of(match.arr[last_i].cons.arr[1]); last_i++) {}
 
     sv_vec_t(transient_hashmap_t) map_vec = sv_vec_init_capacity(transient_hashmap_t, last_i - *start_i, &ctx->alloc);
     CHECK(map_vec.arr != NULL);
@@ -675,7 +674,7 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
             CHECK(key.obj.cell != NULL);
 
             value_t index = { .kind = VALUE_NUMBER, .number = j + 1 };
-            thm_put(&map, (kv_t){ .key = key, .value = index }, &ctx->alloc);
+            CHECK(thm_put(&map, (kv_t){ .key = key, .value = index }, &ctx->alloc));
         }
         max_size += thm_count(map);
         map_vec.arr[map_vec.size++] = map;
@@ -688,7 +687,7 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 
     // create the new match expr
     INIT_MATCH(lower_match, map_vec.size + 1);
-    INIT_TUPLE(tuple, conds_size + 1);
+    INIT_TUPLE(tuple, max_size + 1);
     APPEND_CAP(&lower_match, cons_sexpr(tuple));
     for (int i = 0; i < map_vec.size; i++) {
         INIT_TUPLE(pat_tuple, 2);
@@ -715,7 +714,7 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
             if (exists.is_some)
                 continue;
 
-            thm_put(&visited, kv.value, &ctx->alloc);
+            CHECK(thm_put(&visited, kv.value, &ctx->alloc));
 
             // (get-field? u field-name)
             INIT_CAPACITY(get_field, 3);
@@ -733,10 +732,9 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
             for (int j = 0; j < map_vec.size; j++) {
                 cons_t* cond = &lower_match.arr[2 + j].cons.arr[1].cons;
                 sv_opt_t(value_t) v = thm_get(map_vec.arr[j], kv.value.key);
-                sexpr_t val = GET_KEY(j, v.value.number);
 
                 int success;
-                if (v.is_some) PUSH(cond, val);
+                if (v.is_some) PUSH(cond, GET_KEY(j, v.value.number));
                 else PUSH(cond, id_atom("_"));
             }
 
@@ -777,7 +775,17 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
     APPEND_CAP(&do_block, compiled_match);
 
     *start_i = last_i;
-    return cons_sexpr(do_block);
+
+    // (if (is-record? u) (do ...)) — the else slot is filled by the caller
+    INIT_CAPACITY(pat_cond, 2);
+    APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(PAT_RECORD))));
+    APPEND_CAP(&pat_cond, u);
+
+    INIT_IF(if_block);
+    APPEND_CAP(&if_block, cons_sexpr(pat_cond));
+    APPEND_CAP(&if_block, cons_sexpr(do_block));
+
+    return cons_sexpr(if_block);
 #undef CHECK
 }
 
