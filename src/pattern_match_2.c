@@ -54,6 +54,8 @@ static int temps_used;
     INIT_CAPACITY(name, 3); \
     APPEND_CAP(&name, ATOM_TOKEN_NO_CASE(TOKEN_PIPE))
 
+#define GET_COND(i) (match.arr[(i)].cons.arr[1])
+
 #define WILDCARD_STR { .chars = "$_", .size = 2 }
 static const sv_str_t wildcard_str = WILDCARD_STR;
 static const sexpr_t wildcard = {
@@ -141,6 +143,26 @@ static const char* class_predicate(pattern_class class)
         case PAT_UNKNOWN: return "";
     }
     return "";
+}
+
+static bool literal_eql(literal_t a, literal_t b)
+{
+    if (a.kind != b.kind) return false;
+
+    switch (a.kind) {
+        case LITERAL_FALSE:
+        case LITERAL_TRUE:
+        case LITERAL_NIL:
+            return true;
+        case LITERAL_NUMBER:
+            return a.number == b.number;
+        case LITERAL_STRING:
+            return sv_str_comp(a.str, b.str);
+        case LITERAL_IDENTIFIER:
+            return true;
+    }
+
+    return false;
 }
 
 #define AS_LITERAL(v) (v).atom.literal
@@ -531,10 +553,9 @@ static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* 
         if (list_cond.cons.size > 1)
             break;
 
-        INIT_IF(if_cons);
-        APPEND_CAP(&if_cons, ATOM_TOKEN(TOKEN_LITERAL, .literal = BOOL(true)));
-        APPEND_CAP(&if_cons, body);
-        APPEND_CAP(end, cons_sexpr(if_cons));
+        INIT_PIPE(pipe_cons);
+        APPEND_CAP(&pipe_cons, body);
+        APPEND_CAP(end, cons_sexpr(pipe_cons));
         end = &end->arr[end->size - 1].cons;
     }
 
@@ -812,6 +833,26 @@ static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_
     return close_pipe(bar_expr);
 }
 
+#define IS_NEXT_EQL() \
+    next_expr == NULL \
+    || pat_type != pattern_class_of(*next_expr) \
+    || !literal_eql(AS_LITERAL(GET_COND(i)), AS_LITERAL(*next_expr)) \
+
+static sexpr_t compile_repeated_literals(cons_t match, cons_t* end, int* start_i, pattern_class pat_type, ctx_t* ctx)
+{
+    for (int i = *start_i; i < match.size && pat_type == pattern_class_of(GET_COND(i)); *start_i = ++i) {
+        INIT_PIPE(pipe_block);
+        APPEND_CAP(&pipe_block, match.arr[i].cons.arr[2]);
+        APPEND_CAP(end, cons_sexpr(pipe_block));
+        end = &end->arr[end->size - 1].cons;
+
+        sexpr_t* next_expr = i + 1 < match.size ? &GET_COND(i + 1) : NULL;
+        if (IS_NEXT_EQL()) break;
+    }
+    APPEND_CAP(end, id_atom(FAIL_NAME));
+    return cons_sexpr(*end);
+}
+
 static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_class pat_type, ctx_t* ctx)
 {
     INIT_CAPACITY(pat_cond, 2);
@@ -822,7 +863,7 @@ static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_c
     APPEND_CAP(&if_block, cons_sexpr(pat_cond));
 
     cons_t* end = &if_block;
-    for (int i = *start_i; i < match.size && pat_type == pattern_class_of(match.arr[i].cons.arr[1]); *start_i = ++i) {
+    for (int i = *start_i; i < match.size && pat_type == pattern_class_of(GET_COND(i)); *start_i = ++i) {
         INIT_IF(if_body_block);
 
         INIT_CAPACITY(if_cond, 3);
@@ -831,7 +872,12 @@ static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_c
         APPEND_CAP(&if_cond, match.arr[i].cons.arr[1]);
 
         APPEND_CAP(&if_body_block, cons_sexpr(if_cond));
-        APPEND_CAP(&if_body_block, match.arr[i].cons.arr[2]);
+
+        sexpr_t* next_expr = i + 1 < match.size ? &GET_COND(i + 1) : NULL;
+        if (IS_NEXT_EQL())
+            compile_repeated_literals(match, &if_body_block, &i, pat_type, ctx);
+        else
+            APPEND_CAP(&if_body_block, match.arr[i].cons.arr[2]);
 
         APPEND_CAP(end, cons_sexpr(if_body_block));
         end = &end->arr[end->size - 1].cons;
@@ -840,6 +886,7 @@ static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_c
     APPEND_CAP(end, id_atom(FAIL_NAME));
     return cons_sexpr(if_block);
 }
+#undef IS_NEXT_EQL
 
 static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
 {
