@@ -48,7 +48,7 @@ int main(void)
 
     const char* psample =
         "match x\n"
-        "| 1 do 0"
+        "| 1 when x < 1 do 0"
         "| 1 do 1"
         "| 3 do x\n"
         "| 4 do xs\n"

@@ -54,7 +54,8 @@ static int temps_used;
     INIT_CAPACITY(name, 3); \
     APPEND_CAP(&name, ATOM_TOKEN_NO_CASE(TOKEN_PIPE))
 
-#define GET_COND(i) (match.arr[(i)].cons.arr[1])
+#define GET_COND(match, i) (match.arr[(i)].cons.arr[1])
+#define GET_BODY(match, i) (match.arr[(i)].cons.arr[2])
 
 #define WILDCARD_STR { .chars = "$_", .size = 2 }
 static const sv_str_t wildcard_str = WILDCARD_STR;
@@ -244,6 +245,13 @@ static bool is_fail(sexpr_t e)
         && sv_str_comp(e.atom.literal.literal, sv_str_init(FAIL_NAME));
 }
 
+static bool is_when(sexpr_t e)
+{
+    return e.tag == S_ATOM
+        && e.atom.kind == TOKEN_KEYWORD
+        && e.atom.keyword == KEYWORD_WHEN;
+}
+
  /**
   * Closes a `(| tried otherwise)` built in place. A bar with a fail on either side cannot
   * change what the expression yields, so it is dropped: `a | FAIL = a` and `FAIL | b = b`.
@@ -322,7 +330,7 @@ static int group_tuple(cons_t match, int start)
 {
     int current = start;
     for(; current < match.size; current++) {
-        sexpr_t p = match.arr[current].cons.arr[1];
+        sexpr_t p = GET_COND(match, current);
         if (p.tag != S_CONS || p.cons.arr[0].atom.fn != FN_TUPLE)
             break;
     }
@@ -380,7 +388,7 @@ static sexpr_t match_fail(cons_t* cons, sexpr_t u)
 
 static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u,  sexpr_t deflt_fail, ctx_t* ctx);
 
-#define TUPLE_SIZE(i) match.arr[(i)].cons.arr[1].cons.size - 1
+#define TUPLE_SIZE(i) GET_COND(match, (i)).cons.size - 1
 #define INIT_TUPLE(name, size) \
     INIT_CAPACITY(name, (size) + 1); \
     APPEND_CAP(&name, ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_TUPLE))
@@ -406,7 +414,7 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
     // initialize (match ...)
     INIT_MATCH(lower_match, match.size);
     // u_1
-    APPEND_CAP(&lower_match, match.arr[1].cons.arr[1]);
+    APPEND_CAP(&lower_match, GET_COND(match, 1));
 
     // (tuple u_2 u_3 ...)
     INIT_TUPLE(us, match.arr[1].cons.size - 2);
@@ -417,8 +425,8 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
     sexpr_t fail = id_atom(FAIL_NAME);
     // match conditions
     for (int64_t i = 2; i < match.size; i++) {
-        sexpr_t head = match.arr[i].cons.arr[1].cons.arr[1];
-        sexpr_t row_body = match.arr[i].cons.arr[2];
+        sexpr_t head = GET_COND(match, i).cons.arr[1];
+        sexpr_t row_body = GET_BODY(match, i);
 
         // Make different named variable patterns work by binding the given name to the body
         if (pattern_class_of(head) == PAT_VAR) {
@@ -443,7 +451,7 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
 
         INIT_TUPLE(cond_tuple_pats, TUPLE_SIZE(i) - 1);
         for (int64_t j = 2; j < TUPLE_SIZE(i) + 1; j++)
-            APPEND_CAP(&cond_tuple_pats, match.arr[i].cons.arr[1].cons.arr[j]);
+            APPEND_CAP(&cond_tuple_pats, GET_COND(match, i).cons.arr[j]);
         sexpr_t pats_sexpr = cond_tuple_pats.size > 2 ? cons_sexpr(cond_tuple_pats) : cond_tuple_pats.arr[1];
         APPEND_CAP(&cond_tuple, pats_sexpr);
         APPEND_CAP(&cond_tuple, row_body);
@@ -458,11 +466,11 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
     fuse_tuple_rows(&lower_match);
 
     for (int64_t i = CONDS_START; i < lower_match.size; i++) {
-        cons_t body_match = lower_match.arr[i].cons.arr[2].cons;
+        cons_t body_match = GET_BODY(lower_match, i).cons;
         TRY(cond, us.size > 2 ?
             compile_tuple(body_match, ctx)
             : group_and_compile_pattern(&body_match, fail, ctx));
-        lower_match.arr[i].cons.arr[2] = cond;
+        GET_BODY(lower_match, i) = cond;
     }
 
     int start_i = CONDS_START;
@@ -535,7 +543,7 @@ static sexpr_t compile_tuple_init(cons_t match, int* start_i, sexpr_t u, cons_t*
 
 static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
-    sexpr_t list_cond = match.arr[*start_i].cons.arr[1];
+    sexpr_t list_cond = GET_COND(match, *start_i);
 
     INIT_IF(if_block);
 
@@ -547,8 +555,8 @@ static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* 
 
     cons_t* end = &if_block;
     for (int64_t i = *start_i; i < match.size && PAT_LIST == pattern_class_of(list_cond); *start_i = ++i) {
-        list_cond = match.arr[i].cons.arr[1];
-        sexpr_t body = match.arr[i].cons.arr[2];
+        list_cond = GET_COND(match, i);
+        sexpr_t body = GET_BODY(match, i);
 
         if (list_cond.cons.size > 1)
             break;
@@ -580,7 +588,7 @@ static sexpr_t compile_empty_list(cons_t match, int* start_i, sexpr_t u, ctx_t* 
  */
 static sexpr_t compile_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
-    sexpr_t list_cond = match.arr[*start_i].cons.arr[1];
+    sexpr_t list_cond = GET_COND(match, *start_i);
 
     if (list_cond.cons.size == 1)
         return compile_empty_list(match, start_i, u, ctx);
@@ -617,8 +625,8 @@ static sexpr_t compile_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
     // holds the tuple
     APPEND_CAP(&lower_list_match, cons_sexpr(pat));
     for (int64_t i = *start_i; i < match.size && PAT_LIST == pattern_class_of(list_cond); *start_i = ++i) {
-        list_cond = match.arr[i].cons.arr[1];
-        sexpr_t body = match.arr[i].cons.arr[2];
+        list_cond = GET_COND(match, i);
+        sexpr_t body = GET_BODY(match, i);
         // (tuple x, (list ..))
         INIT_TUPLE(new_pat, 2);
         APPEND_CAP(&new_pat, list_cond.cons.arr[1]);
@@ -677,14 +685,14 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
 #define CHECK(cond) if (!(cond)) return error_oom(match.arr[0].atom, ctx)
     int last_i = *start_i;
-    for (; last_i < match.size && PAT_RECORD == pattern_class_of(match.arr[last_i].cons.arr[1]); last_i++) {}
+    for (; last_i < match.size && PAT_RECORD == pattern_class_of(GET_COND(match, last_i)); last_i++) {}
 
     sv_vec_t(transient_hashmap_t) map_vec = sv_vec_init_capacity(transient_hashmap_t, last_i - *start_i, &ctx->alloc);
     CHECK(map_vec.arr != NULL);
 
     int max_size = 0;
     for (int i = *start_i; i < last_i; ++i) {
-        cons_t record_cond = match.arr[i].cons.arr[1].cons;
+        cons_t record_cond = GET_COND(match, i).cons;
 
         // hashmap where the keys are the literals and the values are the indices of the expression inside match
         transient_hashmap_t map = thm_init(record_cond.size / 2, &ctx->alloc);
@@ -716,13 +724,13 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
         INIT_TUPLE(cond_tuple, 8);
         APPEND_CAP(&pat_tuple, cons_sexpr(cond_tuple));
 
-        sexpr_t body = match.arr[*start_i + i].cons.arr[2];
+        sexpr_t body = GET_BODY(match, *start_i + i);
         APPEND_CAP(&pat_tuple, body);
         APPEND_CAP(&lower_match, cons_sexpr(pat_tuple));
     }
 
     for (int i = 0; i < map_vec.size; i++) {
-#define GET_KEY(i, j) match.arr[*start_i + (i)].cons.arr[1].cons.arr[(int)(j)]
+#define GET_KEY(i, j) GET_COND(match, *start_i + (i)).cons.arr[(int)(j)]
         transient_hashmap_t map = map_vec.arr[i];
 
         map_iter_t iter = thm_iter_init(map);
@@ -751,7 +759,7 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 
             // add value match tuple pattern
             for (int j = 0; j < map_vec.size; j++) {
-                cons_t* cond = &lower_match.arr[2 + j].cons.arr[1].cons;
+                cons_t* cond = &GET_COND(lower_match, 2 + j).cons;
                 sv_opt_t(value_t) v = thm_get(map_vec.arr[j], kv.value.key);
 
                 int success;
@@ -765,8 +773,8 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
     }
 
     for (int i = 0; i < map_vec.size; i++) {
-        cons_t record_cond = match.arr[*start_i + i].cons.arr[1].cons;
-        cons_t* cond = &lower_match.arr[2 + i].cons.arr[1].cons;
+        cons_t record_cond = GET_COND(match, *start_i + i).cons;
+        cons_t* cond = &GET_COND(lower_match, 2 + i).cons;
         int success;
         if (is_dot_dot(sv_vec_last(record_cond))) {
             PUSH(cond, id_atom("_"));
@@ -812,8 +820,8 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 
 static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
 {
-    sexpr_t var = match.arr[*start_i].cons.arr[1];
-    sexpr_t body = match.arr[(*start_i)++].cons.arr[2];
+    sexpr_t var = GET_COND(match, *start_i);
+    sexpr_t body = GET_BODY(match, (*start_i)++);
 
     INIT_PIPE(bar_expr);
     if (sv_str_comp(var.atom.literal.literal, wildcard_str)) {
@@ -836,17 +844,17 @@ static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_
 #define IS_NEXT_EQL() \
     (next_expr != NULL \
     && pat_type == pattern_class_of(*next_expr) \
-    && literal_eql(AS_LITERAL(GET_COND(i)), AS_LITERAL(*next_expr)))
+    && literal_eql(AS_LITERAL(GET_COND(match, i)), AS_LITERAL(*next_expr)))
 
 static sexpr_t compile_repeated_literals(cons_t match, cons_t* end, int* start_i, pattern_class pat_type, ctx_t* ctx)
 {
-    for (int i = *start_i; i < match.size && pat_type == pattern_class_of(GET_COND(i)); *start_i = ++i) {
+    for (int i = *start_i; i < match.size && pat_type == pattern_class_of(GET_COND(match, i)); *start_i = ++i) {
         INIT_PIPE(pipe_block);
-        APPEND_CAP(&pipe_block, match.arr[i].cons.arr[2]);
+        APPEND_CAP(&pipe_block, GET_BODY(match, i));
         APPEND_CAP(end, cons_sexpr(pipe_block));
         end = &end->arr[end->size - 1].cons;
 
-        sexpr_t* next_expr = i + 1 < match.size ? &GET_COND(i + 1) : NULL;
+        sexpr_t* next_expr = i + 1 < match.size ? &GET_COND(match, i + 1) : NULL;
         if (!IS_NEXT_EQL()) break;
     }
     APPEND_CAP(end, id_atom(FAIL_NAME));
@@ -863,21 +871,21 @@ static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_c
     APPEND_CAP(&if_block, cons_sexpr(pat_cond));
 
     cons_t* end = &if_block;
-    for (int i = *start_i; i < match.size && pat_type == pattern_class_of(GET_COND(i)); *start_i = ++i) {
+    for (int i = *start_i; i < match.size && pat_type == pattern_class_of(GET_COND(match, i)); *start_i = ++i) {
         INIT_IF(if_body_block);
 
         INIT_CAPACITY(if_cond, 3);
         APPEND_CAP(&if_cond, ATOM_TOKEN(TOKEN_OPERATOR, .operator = OPERATOR_EQUAL_EQUAL));
         APPEND_CAP(&if_cond, u);
-        APPEND_CAP(&if_cond, match.arr[i].cons.arr[1]);
+        APPEND_CAP(&if_cond, GET_COND(match, i));
 
         APPEND_CAP(&if_body_block, cons_sexpr(if_cond));
 
-        sexpr_t* next_expr = i + 1 < match.size ? &GET_COND(i + 1) : NULL;
+        sexpr_t* next_expr = i + 1 < match.size ? &GET_COND(match, i + 1) : NULL;
         if (IS_NEXT_EQL())
             compile_repeated_literals(match, &if_body_block, &i, pat_type, ctx);
         else
-            APPEND_CAP(&if_body_block, match.arr[i].cons.arr[2]);
+            APPEND_CAP(&if_body_block, GET_BODY(match, i));
 
         APPEND_CAP(end, cons_sexpr(if_body_block));
         end = &end->arr[end->size - 1].cons;
@@ -901,7 +909,7 @@ static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, sexpr_t de
     while (current_i < match.size) {
         // TODO: Check the pattern type, if it's a variable (x, y, etc), constant (1, true, nil, "str", etc) or a
         // more complex pattern (e.g. [x, ..xs], {x, y}, etc)
-        pattern_class pat_type = pattern_class_of(match.arr[current_i].cons.arr[1]);
+        pattern_class pat_type = pattern_class_of(GET_COND(match, current_i));
         // compile literal patterns
         if (pat_type >= PAT_STR && pat_type <= PAT_BOOL)
             APPEND_CAP(end, compile_literals(match, &current_i, u, pat_type, ctx));
@@ -936,6 +944,15 @@ sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
         return discard(&s, ctx);
 
     group(&s.cons);
+    for (int i = CONDS_START; i < s.cons.size; i++) {
+        cons_t* body = &GET_BODY(s.cons, i).cons;
+        if (!is_when(body->arr[0]))
+            continue;
+
+        body->arr[0] = ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_IF);
+        int success = 0;
+        PUSH(body, id_atom(FAIL_NAME));
+    }
 
     cons_t match = s.cons;
 
