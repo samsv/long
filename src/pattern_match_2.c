@@ -834,9 +834,9 @@ static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_
 }
 
 #define IS_NEXT_EQL() \
-    next_expr == NULL \
-    || pat_type != pattern_class_of(*next_expr) \
-    || !literal_eql(AS_LITERAL(GET_COND(i)), AS_LITERAL(*next_expr)) \
+    (next_expr != NULL \
+    && pat_type == pattern_class_of(*next_expr) \
+    && literal_eql(AS_LITERAL(GET_COND(i)), AS_LITERAL(*next_expr)))
 
 static sexpr_t compile_repeated_literals(cons_t match, cons_t* end, int* start_i, pattern_class pat_type, ctx_t* ctx)
 {
@@ -847,7 +847,7 @@ static sexpr_t compile_repeated_literals(cons_t match, cons_t* end, int* start_i
         end = &end->arr[end->size - 1].cons;
 
         sexpr_t* next_expr = i + 1 < match.size ? &GET_COND(i + 1) : NULL;
-        if (IS_NEXT_EQL()) break;
+        if (!IS_NEXT_EQL()) break;
     }
     APPEND_CAP(end, id_atom(FAIL_NAME));
     return cons_sexpr(*end);
@@ -886,7 +886,6 @@ static sexpr_t compile_literals(cons_t match, int* start_i, sexpr_t u, pattern_c
     APPEND_CAP(end, id_atom(FAIL_NAME));
     return cons_sexpr(if_block);
 }
-#undef IS_NEXT_EQL
 
 static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
 {
