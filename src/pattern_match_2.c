@@ -2,6 +2,8 @@
 #include "obj/map.h"
 #include "stable_sort.h"
 #include "compiler.h"
+#include "std/option.h"
+#include "token.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -232,9 +234,9 @@ static bool constructor_eql(sexpr_t a, sexpr_t b)
     return false;
 }
 
-static bool is_dot_dot(sexpr_t e)
+static bool is_dot_dot(sexpr_t s)
 {
-    return e.tag == S_ATOM && e.atom.kind == TOKEN_DOT_DOT;
+    return s.tag == S_ATOM && s.atom.kind == TOKEN_DOT_DOT;
 }
 
 static bool is_fail(sexpr_t e)
@@ -245,11 +247,19 @@ static bool is_fail(sexpr_t e)
         && sv_str_comp(e.atom.literal.literal, sv_str_init(FAIL_NAME));
 }
 
-static bool is_when(sexpr_t e)
+static bool is_when(sexpr_t s)
 {
-    return e.tag == S_ATOM
-        && e.atom.kind == TOKEN_KEYWORD
-        && e.atom.keyword == KEYWORD_WHEN;
+    return s.tag == S_ATOM
+        && s.atom.kind == TOKEN_KEYWORD
+        && s.atom.keyword == KEYWORD_WHEN;
+}
+
+static bool is_wildcard(sexpr_t s)
+{
+    return s.tag == S_ATOM
+        && s.atom.kind == TOKEN_LITERAL
+        && s.atom.literal.kind == LITERAL_IDENTIFIER
+        && sv_str_comp(s.atom.literal.literal, sv_str_init("_"));
 }
 
  /**
@@ -690,31 +700,39 @@ static sexpr_t compile_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 #undef IS_LIST_COND
 
 sv_vec_def(transient_hashmap_t);
-/**
- * Compiles a series of record expressions in the form
- * (match x
- *     (tuple
- *       (record x 1 y 0) body)
- *     (tuple
- *       (record y 1 x 0 ..) body)
- *     ...
- * )
- * into
- * (do
- *      (= $1 (get-field? u x))
- *      (= $2 (get-field? u y))
- *      (= $3 (record-size u))
- *      (match (tuple $1 $2 $3)
- *          (tuple (tuple 1 0 2) body); pre compute record size
- *          (tuple (tuple 0 1 _) body); sort x and y fields. record may have any size
- *      )
- * )
- */
-static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
-{
 #define CHECK(cond) if (!(cond)) return error_oom(match.arr[0].atom, ctx)
+
+static sv_opt_t(value_t) literal_to_value(literal_t l, ctx_t* ctx)
+{
+    switch (l.kind) {
+        case LITERAL_NUMBER: {
+             value_t value = { .kind = VALUE_NUMBER, .number = l.number };
+             return sv_opt_some_t(value_t, value);
+        }
+        case LITERAL_NIL: return sv_opt_some_t(value_t, value_nil);
+        case LITERAL_FALSE: return sv_opt_some_t(value_t, value_false);
+        case LITERAL_TRUE: return sv_opt_some_t(value_t, value_true);
+        case LITERAL_IDENTIFIER: {
+            value_t value = value_init_str_own(l.literal, &ctx->alloc);
+            if (value.obj.cell == NULL) return sv_opt_none_t(value_t);
+            return sv_opt_some_t(value_t, value);
+        }
+        case LITERAL_STRING: {
+            value_t value = value_init_str_own(l.str, &ctx->alloc);
+            if (value.obj.cell == NULL) return sv_opt_none_t(value_t);
+            return sv_opt_some_t(value_t, value);
+        }
+    }
+
+    return sv_opt_none_t(value_t);
+}
+
+// compiles dictionaries/records
+static sexpr_t compile_kv_container(cons_t match, int* start_i, sexpr_t u, pattern_class pat_type,
+                                    sexpr_t get_atom, sexpr_t size_atom, ctx_t* ctx)
+{
     int last_i = *start_i;
-    for (; last_i < match.size && PAT_RECORD == pattern_class_of(GET_COND(match, last_i)); last_i++) {}
+    for (; last_i < match.size && pat_type == pattern_class_of(GET_COND(match, last_i)); last_i++) {}
 
     sv_vec_t(transient_hashmap_t) map_vec = sv_vec_init_capacity(transient_hashmap_t, last_i - *start_i, &ctx->alloc);
     CHECK(map_vec.arr != NULL);
@@ -728,8 +746,9 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
         CHECK(map.set.dense.cell != NULL);
 
         for (int j = 1; j < record_cond.size - 1; j += 2) {
-            value_t key = value_init_str_own(record_cond.arr[j].atom.literal.literal, &ctx->alloc);
-            CHECK(key.obj.cell != NULL);
+            sv_opt_t(value_t) maybe_key = literal_to_value(record_cond.arr[j].atom.literal, ctx);
+            CHECK(maybe_key.is_some);
+            value_t key = maybe_key.value;
 
             value_t index = { .kind = VALUE_NUMBER, .number = j + 1 };
             CHECK(thm_put(&map, (kv_t){ .key = key, .value = index }, &ctx->alloc));
@@ -776,7 +795,7 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 
             // (get-field? u field-name)
             INIT_CAPACITY(get_field, 3);
-            APPEND_CAP(&get_field, id_atom("get-field?"));
+            APPEND_CAP(&get_field, get_atom);
             APPEND_CAP(&get_field, u);
             // the field name token
             APPEND_CAP(&get_field, GET_KEY(i, kv.value.value.number - 1));
@@ -814,7 +833,7 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
     }
     // (= $n (record-size u))
     INIT_CAPACITY(get_size, 2);
-    APPEND_CAP(&get_size, id_atom("record-size"));
+    APPEND_CAP(&get_size, size_atom);
     APPEND_CAP(&get_size, u);
 
     // set as eql
@@ -844,8 +863,58 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
     APPEND_CAP(&if_block, cons_sexpr(do_block));
 
     return cons_sexpr(if_block);
-#undef CHECK
 }
+
+/**
+ * Compiles a series of record expressions in the form
+ * (match x
+ *     (tuple
+ *       (record x 1 y 0) body)
+ *     (tuple
+ *       (record y 1 x 0 ..) body)
+ *     ...
+ * )
+ * into
+ * (do
+ *      (= $1 (get-field? u x))
+ *      (= $2 (get-field? u y))
+ *      (= $3 (record-size u))
+ *      (match (tuple $1 $2 $3)
+ *          (tuple (tuple 1 0 2) body); pre compute record size
+ *          (tuple (tuple 0 1 _) body); sort x and y fields. record may have any size
+ *      )
+ * )
+ */
+static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
+{
+    return compile_kv_container(match, start_i, u, PAT_RECORD, id_atom("get-field?"), id_atom("record-size"), ctx);
+}
+
+/**
+ * Compiles a series of hashmap expressions in the form
+ * (match x
+ *     (tuple
+ *       (hashmap x 1 y 0) body)
+ *     (tuple
+ *       (hashmap y 1 x 0 ..) body)
+ *     ...
+ * )
+ * into
+ * (do
+ *      (= $1 (get-key? u x))
+ *      (= $2 (get-key? u y))
+ *      (= $3 (hashmap-size u))
+ *      (match (tuple $1 $2 $3)
+ *          (tuple (tuple 1 0 2) body); pre compute hashmap size
+ *          (tuple (tuple 0 1 _) body); sort x and y fields. hashmap may have any size
+ *      )
+ * )
+ */
+static sexpr_t compile_hashmap(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
+{
+    return compile_kv_container(match, start_i, u, PAT_HASHMAP, id_atom("get-key?"), id_atom("hashmap-size"), ctx);
+}
+#undef CHECK
 
 static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_fail, ctx_t* ctx)
 {
@@ -853,7 +922,7 @@ static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_
     sexpr_t body = GET_BODY(match, (*start_i)++);
 
     INIT_PIPE(bar_expr);
-    if (sv_str_comp(var.atom.literal.literal, wildcard_str)) {
+    if (sv_str_comp(var.atom.literal.literal, wildcard_str) || is_wildcard(var)) {
         APPEND_CAP(&bar_expr, body);
     } else {
         INIT_DO(do_expr, 2);
@@ -942,13 +1011,15 @@ static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, sexpr_t de
         // more complex pattern (e.g. [x, ..xs], {x, y}, etc)
         pattern_class pat_type = pattern_class_of(GET_COND(match, current_i));
         // compile literal patterns
-        if (pat_type >= PAT_STR && pat_type <= PAT_BOOL)
-            APPEND_CAP(end, compile_literals(match, &current_i, u, pat_type, ctx));
-        else if (pat_type == PAT_TUPLE) {
+        if (pat_type >= PAT_STR && pat_type <= PAT_BOOL) {
+            TRY(literal, compile_literals(match, &current_i, u, pat_type, ctx));
+            APPEND_CAP(end, literal);
+        } else if (pat_type == PAT_TUPLE) {
             TRY(_, compile_tuple_init(match, &current_i, u, &end, ctx));
             continue;
         } else if (pat_type == PAT_VAR) {
-            APPEND_CAP(&bar_expr, compile_var(match, &current_i, u, deflt_fail, ctx));
+            TRY(var, compile_var(match, &current_i, u, deflt_fail, ctx));
+            APPEND_CAP(&bar_expr, var);
             APPEND_CAP(end, id_atom(FAIL_NAME));
             goto end;
         } else if (pat_type == PAT_LIST) {
@@ -956,6 +1027,9 @@ static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u, sexpr_t de
             APPEND_CAP(end, list);
         } else if (pat_type == PAT_RECORD) {
             TRY(record, compile_record(match, &current_i, u, ctx));
+            APPEND_CAP(end, record);
+        } else if (pat_type == PAT_HASHMAP) {
+            TRY(record, compile_hashmap(match, &current_i, u, ctx));
             APPEND_CAP(end, record);
         }
 
