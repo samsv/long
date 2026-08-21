@@ -48,10 +48,9 @@ int main(void)
 
     const char* psample =
         "match x\n"
-        "| [] when true do 0"
-        "| [] do 1"
-        "| [x, y] do x\n"
-        "| [x, y, ..xs] do xs\n"
+        "| ( x, 0 ) do x\n"
+        "| ( 0, y ) do y\n"
+        "| ( x, y ) do x * y\n"
         "end";
 
     {
