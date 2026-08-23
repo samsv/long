@@ -5,7 +5,7 @@
 #include "src/std/allocator_std.h"
 #include "sexpr.h"
 #include "parser.h"
-#include "pattern_match_2.h"
+#include "pattern_match.h"
 
 static const char* sample = "1";
     /**
@@ -61,7 +61,7 @@ int main(void)
         sv_str_t og_fmt = sexpr_format(sexpr, &sv_gpa);
         printf("%.*s\n", (int)og_fmt.size, og_fmt.chars);
 
-        sexpr_t ms = match_compile_2(sexpr, &ctx, &arena);
+        sexpr_t ms = match_compile(sexpr, &ctx, &arena);
         sv_str_t fmt = sexpr_format(ms, &sv_gpa);
         printf("%.*s\n", (int)fmt.size, fmt.chars);
         sv_arena_deinit(&arena);

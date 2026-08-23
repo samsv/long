@@ -1,4 +1,4 @@
-#include "pattern_match_2.h"
+#include "pattern_match.h"
 #include "obj/map.h"
 #include "stable_sort.h"
 #include "compiler.h"
@@ -1048,7 +1048,7 @@ end:
     cons_t name = sv_vec_init_capacity(sexpr_t, (cap), &ctx->alloc);                                                   \
     if (name.arr == NULL) { ret = error_oom(match.arr[0].atom, ctx); goto ret; }
 
-sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
+sexpr_t match_compile(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
 {
     if (s.cons.size <= CONDS_START)
         return error_invalid_pattern(&s);
