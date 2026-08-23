@@ -209,13 +209,6 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
     error_t err;
     int success = 0;
     while (1) switch (vm->chunk.bytecode.arr[vm->ip++]) {
-        case OP_STORE_LOCAL: {
-            uint8_t i = vm->chunk.bytecode.arr[vm->ip++];
-            value_t v = sv_vec_pop(vm->stack);
-            value_free(&vm->locals.arr[i], a);
-            vm->locals.arr[i] = v;
-            break;
-        }
         case OP_SET_LOCAL: SET(vm->locals)
         case OP_SET_GLOBAL: SET(vm->globals)
         case OP_GET_LOCAL: GET(vm->locals)

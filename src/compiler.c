@@ -7,7 +7,7 @@
 #include "sexpr.h"
 #include "parser.h"
 #include "std_native.h"
-#include "pattern_match.h"
+#include "pattern_shape.h"
 
 compiler_t compiler_init(void);
 void compiler_free(compiler_t* c, const sv_allocator_t* a);
@@ -177,7 +177,6 @@ compiler_t compiler_init(void)
         .members = { .depth = 0 },
         .record_fields = NULL,
         .fail_targets = NULL,
-        .body_targets = NULL,
         .builder = { .vm = vm_init(sv_str_init("")) },
     };
 }
@@ -1050,108 +1049,6 @@ static bool compile_fatbar(compiler_t* c, const sexpr_t* args, int64_t n, int64_
 }
 
 /**
- * Jumps to a shared clause body. Pops the locals the decision path opened, the way
- * compile_fail does, so every leaf enters the body at the same depth. The clause's
- * own variables live below that base and survive.
- */
-static bool compile_goto(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
-{
-    body_target_t* target = c->body_targets;
-    if (n != 1 || args[0].tag != S_ATOM || args[0].atom.literal.kind != LITERAL_NUMBER
-        || target == NULL)
-        return compiler_malformed(ctx, "goto", line);
-
-    int64_t label = (int64_t)args[0].atom.literal.number;
-    if (label < 0 || label >= target->n)
-        return compiler_malformed(ctx, "goto", line);
-
-    for (int64_t left = live_locals(c) - target->locals; left > 0; left -= UINT8_MAX) {
-        uint8_t count = left > UINT8_MAX ? UINT8_MAX : (uint8_t)left;
-        TRY(emit2(c, ctx, OP_POP_LOCAL, count, line));
-    }
-
-    int64_t j = 0;
-    TRY(jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &j, line));
-
-    int success;
-    sv_vec_push(&target->jumps[label], j, &success, &ctx->alloc);
-    return success != 0 ? true : compiler_oom(ctx, line);
-}
-
-/**
- * Compiles a decision tree whose leaves jump to bodies emitted once after it. The
- * fall through past the tree is unreachable: every leaf jumps and the default raises.
- */
-static bool compile_match_bodies(compiler_t* c, const sexpr_t* args, int64_t n,
-                                 int64_t line, ctx_t* ctx)
-{
-    if (n < 2)
-        return compiler_malformed(ctx, "match-bodies", line);
-
-    int64_t n_bodies = n - 1;
-    body_target_t target = {
-        .jumps = sv_malloc(&ctx->alloc, sizeof(sv_vec_t(int64_t)) * (size_t)n_bodies),
-        .n = n_bodies,
-        .locals = live_locals(c),
-        .next = c->body_targets,
-    };
-    if (target.jumps == NULL)
-        return compiler_oom(ctx, line);
-    sv_vec_t(int64_t) empty = sv_vec_init(int64_t);
-    for (int64_t i = 0; i < n_bodies; i++)
-        target.jumps[i] = empty;
-
-    c->body_targets = &target;
-    bool ok = compile_sexpr(c, args[0], ctx);
-    c->body_targets = target.next;
-
-    sv_vec_t(int64_t) ends = sv_vec_init(int64_t);
-
-    /* A clause that is not shared has its body inline in the tree, so the tree can
-     * fall through carrying that value and must jump over the shared bodies. */
-    if (ok) {
-        int64_t over = 0;
-        ok = jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &over, line);
-        if (ok) {
-            int success;
-            sv_vec_push(&ends, over, &success, &ctx->alloc);
-            ok = success != 0 ? true : compiler_oom(ctx, line);
-        }
-    }
-    for (int64_t i = 0; i < n_bodies && ok; i++) {
-        sexpr_t form = args[1 + i];
-        if (form.tag != S_CONS || form.cons.size != 3) {
-            ok = compiler_malformed(ctx, "body", line);
-            break;
-        }
-
-        for (int64_t j = 0; j < target.jumps[i].size && ok; j++)
-            ok = patch_jump(c, ctx, target.jumps[i].arr[j], line);
-
-        ok = ok && compile_sexpr(c, form.cons.arr[2], ctx);
-        if (!ok)
-            break;
-
-        int64_t over = 0;
-        ok = jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &over, line);
-        if (ok) {
-            int success;
-            sv_vec_push(&ends, over, &success, &ctx->alloc);
-            ok = success != 0 ? true : compiler_oom(ctx, line);
-        }
-    }
-
-    for (int64_t i = 0; i < ends.size && ok; i++)
-        ok = patch_jump(c, ctx, ends.arr[i], line);
-
-    sv_vec_deinit(&ends, &ctx->alloc);
-    for (int64_t i = 0; i < n_bodies; i++)
-        sv_vec_deinit(&target.jumps[i], &ctx->alloc);
-    sv_free(&ctx->alloc, target.jumps);
-    return ok;
-}
-
-/**
  * `$fail`: unwind the locals bound since the enclosing alternative, then jump to
  * its second arm.
  */
@@ -1280,25 +1177,6 @@ static bool compile_internal(compiler_t* c, sv_str_t name, const sexpr_t* args, 
         return compile_sized_test(c, name, args, n, line, ctx);
     if (is_form(name, "has-field?"))
         return compile_has_field(c, args, n, line, ctx);
-    if (is_form(name, "goto"))
-        return compile_goto(c, args, n, line, ctx);
-    if (is_form(name, "match-bodies"))
-        return compile_match_bodies(c, args, n, line, ctx);
-    if (is_form(name, "store")) {
-        if (n != 2)
-            return compiler_malformed(ctx, "store", line);
-
-        sv_str_t target;
-        TRY(expect_id(args[0], ctx, &target));
-        sv_opt_t(int64_t) idx = locals_get(c->locals, target, ctx);
-        if (!idx.is_some)
-            return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", target);
-
-        TRY(compile_sexpr(c, args[1], ctx));
-        TRY(emit2(c, ctx, OP_STORE_LOCAL, (uint8_t)idx.value, line));
-        /* Leaves the value, as `=` does, so it composes as a block statement. */
-        return emit2(c, ctx, OP_GET_LOCAL, (uint8_t)idx.value, line);
-    }
     if (is_form(name, "match-fail")) {
         if (n != 1)
             return compiler_malformed(ctx, "match-fail", line);
@@ -1472,10 +1350,6 @@ vm_t compile(const char* source_code, ctx_t* ctx)
         }
 
         sexpr_t sexpr = parser_expr(&s, ctx);
-        if (is_error_sexpr(sexpr))
-            ERR_RETURN;
-
-        sexpr = match_lower_tree(sexpr, ctx);
         if (is_error_sexpr(sexpr))
             ERR_RETURN;
 

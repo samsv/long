@@ -39,7 +39,6 @@ static const char* op_name(vm_instructions op)
         case OP_SET_GLOBAL: return "set_global";
         case OP_GET_GLOBAL: return "get_global";
         case OP_SET_LOCAL: return "set_local";
-        case OP_STORE_LOCAL: return "store_local";
         case OP_GET_LOCAL: return "get_local";
         case OP_GET_UPVALUE: return "get_upvalue";
         case OP_POP_LOCAL: return "pop_local";
@@ -117,7 +116,6 @@ void print_chunk(vm_t v)
                 i += 4;
                 break;
             case OP_POP_LOCAL:
-            case OP_STORE_LOCAL:
             case OP_LOAD_CONSTANT:
             case OP_GET_GLOBAL:
             case OP_GET_LOCAL:

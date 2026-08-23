@@ -1,4 +1,5 @@
 #define SV_IMPLEMENTATION
+#include "../src/std/arena.h"
 #include "../src/std/test.h"
 #include "vector.h"
 #include "string.h"
@@ -10,7 +11,6 @@
 #include "record.h"
 #include "tuple.h"
 #include "stable_sort.h"
-#include "pattern_match.h"
 #include "compiler.h"
 #include "parser.h"
 
@@ -28,7 +28,6 @@ int main(void)
     sv_test_record(&t);
     sv_test_tuple(&t);
     sv_test_stable_sort(&t);
-    sv_test_pattern_match(&t);
     sv_test_compiler(&t);
     sv_test_parser(&t);
 
