@@ -69,7 +69,7 @@ static const sexpr_t wildcard = {
     }
 };
 
-static sexpr_t id_atom(const char* name)
+static inline sexpr_t id_atom(const char* name)
 {
     return ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(name));
 }
@@ -352,10 +352,9 @@ static int group_tuple(cons_t match, int start)
 /**
  * Discards an sexpr as an invalid match
  */
-static sexpr_t discard(sexpr_t* s, ctx_t* ctx)
+static sexpr_t error_invalid_pattern(sexpr_t* s)
 {
     int64_t line = s->tag == S_CONS ? s->cons.arr[0].atom.line : s->atom.line;
-    sexpr_free(s, &ctx->alloc);
     return atom_sexpr((token_t){ .kind = TOKEN_ERROR, .line = line });
 }
 
@@ -1043,12 +1042,25 @@ end:
     return close_pipe(bar_expr);
 }
 
-sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
+#undef INIT_CAPACITY
+
+#define INIT_CAPACITY_L(name, cap)                                                                                       \
+    cons_t name = sv_vec_init_capacity(sexpr_t, (cap), &ctx->alloc);                                                   \
+    if (name.arr == NULL) { ret = error_oom(match.arr[0].atom, ctx); goto ret; }
+
+sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
 {
     if (s.cons.size <= CONDS_START)
-        return discard(&s, ctx);
+        return error_invalid_pattern(&s);
+
+    sexpr_t ret;
+    int start_i = CONDS_START;
+    sv_allocator_t default_alloc = ctx->alloc;
+    sv_allocator_t arena = sv_arena_allocator_init(a);
 
     group(&s.cons);
+    cons_t match = s.cons;
+
     for (int i = CONDS_START; i < s.cons.size; i++) {
         cons_t* body = &GET_BODY(s.cons, i).cons;
         if (!is_when(body->arr[0]))
@@ -1056,32 +1068,44 @@ sexpr_t match_compile_2(sexpr_t s, ctx_t* ctx)
 
         body->arr[0] = ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_IF);
         int success = 0;
-        PUSH(body, id_atom(FAIL_NAME));
+        sv_vec_push(body, id_atom(FAIL_NAME), &success, &ctx->alloc);
+        if (!success)  {
+            // use the arena to allocate the error
+            error_set_oom(&ctx->err, C_ERR_OOM, match.arr[0].atom.line, &arena);
+            return ATOM_TOKEN_NO_CASE(TOKEN_ERROR);
+        }
     }
 
-    cons_t match = s.cons;
-
-    int start_i = CONDS_START;
-    INIT_CAPACITY(match_fail_expr, 2);
+    ctx->alloc = arena;
+    INIT_CAPACITY_L(match_fail_expr, 2)
 
     sexpr_t subject = match.arr[1];
     if (subject.tag == S_ATOM &&
         subject.atom.kind == TOKEN_LITERAL &&
         subject.atom.literal.kind == LITERAL_IDENTIFIER
     ) {
-        return compile_pattern(match, &start_i, subject, match_fail(&match_fail_expr, subject), ctx);
+        ret = compile_pattern(match, &start_i, subject, match_fail(&match_fail_expr, subject), ctx);
+        goto ret;
     }
 
-    sexpr_t u = next_u();
-
     // Initialize (do (= u_i x) (| ...))
-    INIT_DO(do_expr, 2);
+    INIT_CAPACITY_L(do_expr, 3);
+    APPEND_CAP(&do_expr, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_DO));
 
-    INIT_CAPACITY(eql_expr, 3);
+    sexpr_t u = next_u();
+    INIT_CAPACITY_L(eql_expr, 3);
     APPEND_CAP(&do_expr, bind_var(&eql_expr, u, match.arr[1]));
 
-    TRY(expr, compile_pattern(match, &start_i, u, match_fail(&match_fail_expr, u), ctx));
+    sexpr_t expr = compile_pattern(match, &start_i, u, match_fail(&match_fail_expr, u), ctx);
+    if (expr.tag == S_ATOM && expr.atom.kind == TOKEN_ERROR) {
+        ret = expr;
+        goto ret;
+    }
     APPEND_CAP(&do_expr, expr);
 
-    return cons_sexpr(do_expr);
+    ret = cons_sexpr(do_expr);
+
+ret:
+    ctx->alloc = default_alloc;
+    return ret;
 }

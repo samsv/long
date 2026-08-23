@@ -3,13 +3,12 @@
 
 #include "ctx.h"
 #include "sexpr.h"
+#include "std/arena.h"
 
 /**
- * Lowers a `(match scrutinee (tuple pattern body)...)` cons into a `do` block
- * that binds the scrutinee and dispatches on the pattern matrix. Takes
- * ownership of the input: on success the input spine is freed, on failure the
- * whole input is freed and an error atom is returned with ctx->err set.
+ * Lowers a `(match val (tuple pattern body)...)` expr into a chain of
+ * `if` `else` comparisons. The sexpr is allocated into the passed arena.
  */
-sexpr_t match_compile_2(sexpr_t, ctx_t*);
+sexpr_t match_compile_2(sexpr_t, ctx_t*, sv_arena_t*);
 
 #endif
