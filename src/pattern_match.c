@@ -792,7 +792,7 @@ static sexpr_t compile_kv_container(cons_t match, int* start_i, sexpr_t u, patte
 
             CHECK(thm_put(&visited, kv.value, &ctx->alloc));
 
-            // (get-field? u field-name)
+            // (record-get? u field-name)
             INIT_CAPACITY(get_field, 3);
             APPEND_CAP(&get_field, get_atom);
             APPEND_CAP(&get_field, u);
@@ -854,7 +854,7 @@ static sexpr_t compile_kv_container(cons_t match, int* start_i, sexpr_t u, patte
 
     // (if (is-record? u) (do ...)) — the else slot is filled by the caller
     INIT_CAPACITY(pat_cond, 2);
-    APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(PAT_RECORD))));
+    APPEND_CAP(&pat_cond, ATOM_TOKEN(TOKEN_LITERAL, .literal = LITERAL(class_predicate(pat_type))));
     APPEND_CAP(&pat_cond, u);
 
     INIT_IF(if_block);
@@ -875,8 +875,8 @@ static sexpr_t compile_kv_container(cons_t match, int* start_i, sexpr_t u, patte
  * )
  * into
  * (do
- *      (= $1 (get-field? u x))
- *      (= $2 (get-field? u y))
+ *      (= $1 (record-get? u x))
+ *      (= $2 (record-get? u y))
  *      (= $3 (record-size u))
  *      (match (tuple $1 $2 $3)
  *          (tuple (tuple 1 0 2) body); pre compute record size
@@ -886,7 +886,10 @@ static sexpr_t compile_kv_container(cons_t match, int* start_i, sexpr_t u, patte
  */
 static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
-    return compile_kv_container(match, start_i, u, PAT_RECORD, id_atom("get-field?"), id_atom("record-size"), ctx);
+    return compile_kv_container(match, start_i, u, PAT_RECORD,
+                                ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_RECORD_GET_OR_NIL),
+                                ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_LENGTH),
+                                ctx);
 }
 
 /**
@@ -911,7 +914,10 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
  */
 static sexpr_t compile_hashmap(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
-    return compile_kv_container(match, start_i, u, PAT_HASHMAP, id_atom("get-key?"), id_atom("hashmap-size"), ctx);
+    return compile_kv_container(match, start_i, u, PAT_HASHMAP,
+                                ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_HASHMAP_GET_OR_NIL),
+                                ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_LENGTH),
+                                ctx);
 }
 #undef CHECK
 

@@ -1455,6 +1455,9 @@ static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
             }
             case FN_MATCH:
                 return parse_match(s, ctx, token);
+            case FN_LENGTH:
+            case FN_RECORD_GET_OR_NIL:
+            case FN_HASHMAP_GET_OR_NIL:
             case FN_CLASS:
             case FN_MAP:
             case FN_HASHMAP:

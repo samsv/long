@@ -6,12 +6,31 @@
 #include "scanner.h"
 #include "sexpr.h"
 #include "parser.h"
+#define SV_ARENA_IMPLEMENTATION
+#include "std/arena.h"
 #include "std_native.h"
 #include "pattern_shape.h"
+#include "pattern_match.h"
 
 compiler_t compiler_init(void);
 void compiler_free(compiler_t* c, const sv_allocator_t* a);
 bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx);
+
+typedef struct {
+    const char* name;
+    vm_instructions op;
+} builtin_t;
+
+static const builtin_t TYPE_TESTS[] = {
+    { "is-str?", OP_IS_STR },
+    { "is-number?", OP_IS_NUMBER },
+    { "is-bool?", OP_IS_BOOL },
+    { "is-nil?", OP_IS_NIL },
+    { "is-list?", OP_IS_LIST },
+    { "is-cons?", OP_IS_CONS },
+};
+
+//static const builtin_t
 
 #define TRY(call) do { if (!(call)) return false; } while (0)
 
@@ -614,6 +633,39 @@ static bool compile_dot(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     return emit2(c, ctx, OP_RECORD_GET, (uint8_t)id, line);
 }
 
+static bool compile_record_get_or_nil(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 2)
+        return compiler_malformed(ctx, "field access", line);
+
+    sv_str_t name;
+    TRY(expect_id(args[1], ctx, &name));
+    uint32_t id = 0;
+    TRY(record_field_id(c, name, line, ctx, &id));
+
+    TRY(compile_sexpr(c, args[0], ctx));
+    return emit2(c, ctx, OP_RECORD_GET_OR_NIL, (uint8_t)id, line);
+}
+
+static bool compile_hashmap_get_or_nil(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 2)
+        return compiler_malformed(ctx, "field access", line);
+
+    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[1], ctx));
+    return emit(c, ctx, OP_HASHMAP_GET_OR_NIL, line);
+}
+
+static bool compile_length(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 1)
+        return compiler_malformed(ctx, "length", line);
+
+    TRY(compile_sexpr(c, args[0], ctx));
+    return emit(c, ctx, OP_LENGTH, line);
+}
+
 static bool compile_binary_op(compiler_t* c, uint8_t instruction, const char* what,
                               const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
@@ -1071,20 +1123,6 @@ static bool compile_fail(compiler_t* c, int64_t line, ctx_t* ctx)
     return success != 0 ? true : compiler_oom(ctx, line);
 }
 
-typedef struct {
-    const char* name;
-    vm_instructions op;
-} type_test_t;
-
-static const type_test_t TYPE_TESTS[] = {
-    { "is-str?", OP_IS_STR },
-    { "is-number?", OP_IS_NUMBER },
-    { "is-bool?", OP_IS_BOOL },
-    { "is-nil?", OP_IS_NIL },
-    { "is-list?", OP_IS_LIST },
-    { "is-cons?", OP_IS_CONS },
-};
-
 static bool is_form(sv_str_t name, const char* form)
 {
     return sv_str_comp(name, sv_str_init(form));
@@ -1262,6 +1300,9 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
             case FN_RECORD: return compile_record(c, cons + 1, n - 1, a.line, ctx);
             case FN_TUPLE: return compile_tuple(c, cons + 1, n - 1, a.line, ctx);
             case FN_FUN: return compile_fun(c, cons + 1, n - 1, a.line, ctx);
+            case FN_LENGTH: return compile_length(c, cons + 1, n - 1, a.line, ctx);
+            case FN_RECORD_GET_OR_NIL: return compile_record_get_or_nil(c, cons + 1, n - 1, a.line, ctx);
+            case FN_HASHMAP_GET_OR_NIL: return compile_hashmap_get_or_nil(c, cons + 1, n - 1, a.line, ctx);
             case FN_CLASS:
             case FN_MAP:
             case FN_MAPF:
@@ -1301,6 +1342,23 @@ bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx)
 {
     if (sexpr.tag == S_ATOM)
         return compile_atom(c, sexpr.atom, ctx);
+
+    if (sexpr.cons.size > 1 && sexpr.cons.arr[0].tag == S_ATOM) {
+        token_t head = sexpr.cons.arr[0].atom;
+        if (head.kind == TOKEN_SP_FUNCTION && head.fn == FN_MATCH) {
+            sv_arena_t arena = sv_arena_init(1 << 16);
+            sexpr_t lower_match = match_compile(sexpr, ctx, &arena);
+            if (is_error_sexpr(lower_match)) {
+                ctx->err.msg = sv_str_copy(ctx->err.msg, &ctx->alloc);
+                sv_arena_deinit(&arena);
+                return false;
+            }
+            bool ret = compile_sexpr(c, lower_match, ctx);
+            sv_arena_deinit(&arena);
+            return ret;
+        }
+    }
+
     return compile_cons(c, sexpr.cons.arr, sexpr.cons.size, ctx);
 }
 

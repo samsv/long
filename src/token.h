@@ -61,6 +61,9 @@ typedef enum {
     FN_REDUCE,
     FN_WHILE,
     FN_IMPORT,
+    FN_LENGTH,
+    FN_RECORD_GET_OR_NIL,
+    FN_HASHMAP_GET_OR_NIL,
 } special_fn_kind;
 
 typedef enum {

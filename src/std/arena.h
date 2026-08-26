@@ -52,7 +52,7 @@ void sv_arena_allocator_deinit(sv_allocator_t*);
  */
 void arena_print(sv_arena_t* a);
 
-#ifdef SV_IMPLEMENTATION
+#ifdef SV_ARENA_IMPLEMENTATION
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -1,14 +1,9 @@
-#include <stdio.h>
 #define SV_IMPLEMENTATION
 #include "src/compiler.h"
 #include "src/debug.h"
 #include "src/std/allocator_std.h"
-#include "sexpr.h"
-#include "parser.h"
-#include "pattern_match.h"
 
-static const char* sample = "1";
-    /**
+static const char* sample =
     "fun \n"
     "| is_even(x)\n"
         "| 0 do true\n"
@@ -19,8 +14,13 @@ static const char* sample = "1";
             "new_x = x - 1\n"
             "is_even(new_x)\n"
     "end\n"
-    "is_even(2)";
-    */
+    "{x, y} = {x: 5, y: 6}\n"
+    "is_even(x + y)\n"
+    "match [1, 2, 3]\n"
+    "| [] do -1\n"
+    "| [1, 2, 4] do 0\n"
+    "| [1, ..xs] do 1\n"
+    "end";
 
 int main(void)
 {
@@ -46,26 +46,6 @@ int main(void)
     }
 
     vm_deinit(&vm, &ctx.alloc);
-
-    const char* psample =
-        "match x\n"
-        "| %{ 0: x, \"y\": 0 } do x\n"
-        "| %{ \"x\": 0, \"y\":y } do y\n"
-        "| %{ \"x\": x, \"y\": y } do x * y\n"
-        "end";
-
-    {
-        sv_arena_t arena = sv_arena_init(1 << 16);
-        scanner_t s = scanner_init(sv_str_init(psample));
-        sexpr_t sexpr = parser_expr(&s, &ctx);
-        sv_str_t og_fmt = sexpr_format(sexpr, &sv_gpa);
-        printf("%.*s\n", (int)og_fmt.size, og_fmt.chars);
-
-        sexpr_t ms = match_compile(sexpr, &ctx, &arena);
-        sv_str_t fmt = sexpr_format(ms, &sv_gpa);
-        printf("%.*s\n", (int)fmt.size, fmt.chars);
-        sv_arena_deinit(&arena);
-    }
 
     return 0;
 }

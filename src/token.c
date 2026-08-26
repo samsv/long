@@ -47,6 +47,9 @@ const char* special_fn_text(special_fn_kind fn)
         case FN_REDUCE: return "reduce";
         case FN_WHILE: return "while";
         case FN_IMPORT: return "import";
+        case FN_LENGTH: return "length";
+        case FN_RECORD_GET_OR_NIL: return "record-get?";
+        case FN_HASHMAP_GET_OR_NIL: return "hashmap-get?";
     }
     return "";
 }

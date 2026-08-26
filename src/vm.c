@@ -2,6 +2,7 @@
 #include "obj/list.h"
 #include "obj/map.h"
 #include "std/logger.h"
+#include "value.h"
 
 static void arr_remove(value_arr* arr, const sv_allocator_t* a)
 {
@@ -129,7 +130,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
     sv_vec_push(&vm->stack, v, &success, a);                                                                  \
     TRY_OR(success, value_free(&v, a), "OOM when appending to vector")
 
-#define OP_ERR_1(code, v, err_msg) {                                                                          \
+#define OP_ERR_1(code, v, err_msg) do {                                                                       \
     vm_op_err* op_err_payload = sv_malloc(a, sizeof(vm_op_err));                                              \
     if (op_err_payload != NULL)                                                                               \
         *op_err_payload = (vm_op_err){                                                                        \
@@ -140,7 +141,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
                       .payload = op_err_payload,                                                              \
                       .msg = sv_str_init(err_msg) };                                                          \
     value_free(&v, a);                                                                                        \
-    goto error; }
+    goto error; } while (0)
 
 #define UNSUPPORTED_1(v, err_msg) OP_ERR_1(VM_ERR_OP_UNSUPPORTED_ARGS, v, err_msg)
 
@@ -188,7 +189,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 #define NUM_BIN_OP(op, res_kind, res_field) {                                                                 \
     value_t v2 = sv_vec_pop(vm->stack);                                                                       \
     value_t v1 = sv_vec_pop(vm->stack);                                                                       \
-    if (!IS_NUMBER(v1) || !IS_NUMBER(v2))                                                   \
+    if (!IS_NUMBER(v1) || !IS_NUMBER(v2))                                                                     \
         UNSUPPORTED_2(v1, v2, "Unsupported args for " #op)                                                    \
     value_t res = {.kind = res_kind, .res_field = v1.number op v2.number};                                    \
     TRY_PUSH_STACK(res);                                                                                      \
@@ -237,7 +238,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         case OP_NEGATE: {
             value_t v = sv_vec_pop(vm->stack);
             if (!IS_NUMBER(v))
-                UNSUPPORTED_1(v, "Unsupported args for negate")
+                UNSUPPORTED_1(v, "Unsupported args for negate");
             value_t res = {.kind = VALUE_NUMBER, .number = -v.number};
             TRY_PUSH_STACK(res);
             break;
@@ -321,28 +322,67 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             TRY_PUSH_OWNED(out);
             break;
         }
-        case OP_RECORD_GET: {
-            value_t maybe_tuple = sv_vec_pop(vm->stack);
-            uint8_t id = vm->chunk.bytecode.arr[vm->ip++];
-            if (!IS_RECORD(maybe_tuple))
-                UNSUPPORTED_1(maybe_tuple, "Type is not subscriptable");
+        case OP_HASHMAP_GET_OR_NIL: {
+            value_t key = sv_vec_pop(vm->stack);
+            value_t container = sv_vec_pop(vm->stack);
+            if (!IS_MAP(container))
+                UNSUPPORTED_2(container, key, "Type is not indexable")
 
-            record_t tuple = AS_RECORD(maybe_tuple);
-            sv_opt_t(value_t) v = record_get(tuple, id);
-            if (!v.is_some) {
-                value_t n = {.kind = VALUE_NUMBER, .number = (double)id};
-                OP_ERR_2(VM_ERR_KEY_NOT_FOUND, maybe_tuple, n, "Key not found");
-            }
+            sv_opt_t(value_t) res;
+            if (IS_MAP(container))
+                res = map_get(AS_MAP(container), key);
 
-            value_t out = value_borrow(v.value);
-            value_free(&maybe_tuple, a);
+            value_t out = res.is_some ? value_borrow(res.value) : value_nil;
+            value_free(&container, a);
+            value_free(&key, a);
             TRY_PUSH_OWNED(out);
+            break;
+        }
+#define RECORD_GET(...) do {                                                                                  \
+    value_t maybe_tuple = sv_vec_pop(vm->stack);                                                              \
+    uint8_t id = vm->chunk.bytecode.arr[vm->ip++];                                                            \
+    if (!IS_RECORD(maybe_tuple))                                                                              \
+        UNSUPPORTED_1(maybe_tuple, "Type is not subscriptable");                                              \
+    record_t tuple = AS_RECORD(maybe_tuple);                                                                  \
+    sv_opt_t(value_t) v = record_get(tuple, id);                                                              \
+    if (!v.is_some) {                                                                                         \
+        __VA_ARGS__;                                                                                          \
+    }                                                                                                         \
+    value_t out = value_borrow(v.value);                                                                      \
+    value_free(&maybe_tuple, a);                                                                              \
+    TRY_PUSH_OWNED(out);                                                                                      \
+} while (0)
+        case OP_RECORD_GET:
+            RECORD_GET({
+                value_t n = {.kind = VALUE_NUMBER, .number = (double)id};
+                OP_ERR_2(VM_ERR_FIELD_NOT_FOUND, maybe_tuple, n, "Field not found");
+            });
+            break;
+        case OP_RECORD_GET_OR_NIL:
+            RECORD_GET(v = sv_opt_some_t(value_t, value_nil));
+            break;
+#undef RECORD_GET
+        case OP_LENGTH: {
+            value_t val = sv_vec_pop(vm->stack);
+            value_t ret = { .kind = VALUE_NUMBER };
+            if (IS_RECORD(val))
+                ret.number = AS_RECORD(val).size;
+            else if (IS_STR(val))
+                ret.number = AS_STR(val).size;
+            else if (IS_LIST(val))
+                ret.number = AS_LIST(val).cell->count;
+            else if (IS_MAP(val))
+                ret.number =  map_count(AS_MAP(val));
+            else
+                UNSUPPORTED_1(val, "Type has no length");
+            value_free(&val, a);
+            TRY_PUSH_STACK(ret);
             break;
         }
         case OP_ITER_CREATE: {
             value_t v = sv_vec_pop(vm->stack);
             if (!IS_LIST(v) && !IS_STR(v))
-                UNSUPPORTED_1(v, "Type is not iterable")
+                UNSUPPORTED_1(v, "Type is not iterable");
             value_t iter = value_init_iter(v, a);
             value_free(&v, a);
             TRY_NOT_NULL(iter.obj.cell, "OOM when creating iterator");
@@ -352,7 +392,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         case OP_ITER_NEXT: {
             value_t v = sv_vec_pop(vm->stack);
             if (!IS_ITER(v))
-                UNSUPPORTED_1(v, "Type is not an iterator")
+                UNSUPPORTED_1(v, "Type is not an iterator");
             value_t res = iter_next(&AS_ITER(v), a);
             value_free(&v, a);
             TRY_OR(!(res.kind == VALUE_OBJ && res.obj.cell == NULL), (void)0,
@@ -449,7 +489,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             uint8_t arg_count = vm->chunk.bytecode.arr[vm->ip++];
 
             if (!IS_CLOSURE(value) && !IS_NATIVE(value) && !IS_CLOSURE_MEMBER(value))
-                UNSUPPORTED_1(value, "Type is not callable")
+                UNSUPPORTED_1(value, "Type is not callable");
 
             value_arr args = (value_arr)sv_vec_init_capacity(value_t, arg_count + 1, a);
             TRY_OR(args.arr != NULL, value_free(&value, a), "OOM when passing arguments")
@@ -564,7 +604,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         case OP_LIST_UNCONS: {
             value_t v = sv_vec_pop(vm->stack);
             if (!IS_CONS(v))
-                UNSUPPORTED_1(v, "Cannot take the head of an empty list")
+                UNSUPPORTED_1(v, "Cannot take the head of an empty list");
 
             list_t rest = ll_tail(AS_LIST(v), a);
             TRY_OR(rest.cell != NULL, value_free(&v, a), "OOM when taking a list tail")
@@ -586,11 +626,11 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
                 break;
 
             value_t subject = value_borrow(sv_vec_last(vm->stack));
-            OP_ERR_1(VM_ERR_MATCH_FAILED, subject, "Value does not match the pattern")
+            OP_ERR_1(VM_ERR_MATCH_FAILED, subject, "Value does not match the pattern");
         }
         case OP_NO_MATCH: {
             value_t subject = value_borrow(sv_vec_last(vm->stack));
-            OP_ERR_1(VM_ERR_NO_CLAUSE, subject, "No clause matched")
+            OP_ERR_1(VM_ERR_NO_CLAUSE, subject, "No clause matched");
         }
         case OP_RETURN:
             return sv_opt_none_t(error_t);
