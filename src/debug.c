@@ -67,6 +67,7 @@ static const char* op_name(vm_instructions op)
         case OP_IS_BOOL: return "is_bool";
         case OP_IS_NIL: return "is_nil";
         case OP_IS_LIST: return "is_list";
+        case OP_IS_NIL_LIST: return "is_nil_list";
         case OP_IS_CONS: return "is_cons";
         case OP_IS_TUPLE: return "is_tuple";
         case OP_IS_RECORD: return "is_record";
@@ -162,6 +163,7 @@ void print_chunk(vm_t v)
             case OP_IS_BOOL:
             case OP_IS_NIL:
             case OP_IS_LIST:
+            case OP_IS_NIL_LIST:
             case OP_IS_CONS:
             case OP_IS_RECORD_ANY:
             case OP_IS_HASHMAP:

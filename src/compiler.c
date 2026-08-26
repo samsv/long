@@ -28,6 +28,7 @@ static const builtin_t TYPE_TESTS[] = {
     { "is-nil?", OP_IS_NIL },
     { "is-list?", OP_IS_LIST },
     { "is-cons?", OP_IS_CONS },
+    { "is-nil-list?", OP_IS_NIL_LIST },
 };
 
 //static const builtin_t

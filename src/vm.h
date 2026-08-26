@@ -97,6 +97,7 @@ typedef enum {
     OP_IS_BOOL,
     OP_IS_NIL,
     OP_IS_LIST,
+    OP_IS_NIL_LIST,
     OP_IS_CONS,
     /* The size is a bytecode operand because tuple_t.size and record_t.size are
      * both uint8_t, so a pattern can never need a larger one. */
