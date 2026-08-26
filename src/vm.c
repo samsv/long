@@ -603,7 +603,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             break;
         }
         case OP_LIST_UNCONS: {
-            value_t v = sv_vec_pop(vm->stack);
+            value_t v = sv_vec_last(vm->stack);
             if (!IS_CONS(v))
                 UNSUPPORTED_1(v, "Cannot take the head of an empty list");
 
@@ -614,7 +614,6 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
                    "OOM when taking a list tail")
 
             value_t first = value_borrow(ll_head(AS_LIST(v)).value);
-            value_free(&v, a);
             TRY_PUSH_OWNED(tail);
             TRY_PUSH_OWNED(first);
             break;

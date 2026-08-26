@@ -1173,7 +1173,7 @@ static bool compile_has_field(compiler_t* c, const sexpr_t* args, int64_t n, int
  */
 static bool compile_uncons(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
-    if (n != 4)
+    if (n != 3)
         return compiler_malformed(ctx, "list-uncons", line);
 
     sv_str_t head;
@@ -1181,17 +1181,22 @@ static bool compile_uncons(compiler_t* c, const sexpr_t* args, int64_t n, int64_
     TRY(expect_id(args[1], ctx, &head));
     TRY(expect_id(args[2], ctx, &tail));
 
-    TRY(init_scope(c, ctx, line));
     TRY(compile_sexpr(c, args[0], ctx));
     TRY(emit(c, ctx, OP_LIST_UNCONS, line));
 
-    TRY(emit(c, ctx, OP_SET_LOCAL, line));
-    TRY(locals_add(c->locals, head, ctx, line));
-    TRY(emit(c, ctx, OP_SET_LOCAL, line));
-    TRY(locals_add(c->locals, tail, ctx, line));
+    if (c->locals) {
+        TRY(emit(c, ctx, OP_SET_LOCAL, line));
+        TRY(locals_add(c->locals, head, ctx, line));
+        TRY(emit(c, ctx, OP_SET_LOCAL, line));
+        TRY(locals_add(c->locals, tail, ctx, line));
+    } else {
+        TRY(emit(c, ctx, OP_SET_GLOBAL, line));
+        TRY(globals_add(&c->globals, head, ctx, line));
+        TRY(emit(c, ctx, OP_SET_GLOBAL, line));
+        TRY(globals_add(&c->globals, tail, ctx, line));
+    }
 
-    TRY(compile_sexpr(c, args[3], ctx));
-    return deinit_scope(c, ctx);
+    return true;
 }
 
 /**
