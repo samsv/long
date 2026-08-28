@@ -1,7 +1,8 @@
 # Modules
 
 Each `lóng` file is a module which can be imported by another `lóng` file. The compiler takes care of name mangling
-such that no two values from different modules colide. Imports can not be circular.
+such that no two values from different modules colide. Imports can not be circular and they must be at the top level
+of each file.
 
 ## Syntax
 Given an example file
@@ -88,3 +89,29 @@ the compiler as `y = $FULL_PATH/m2.long$y` and `m1::add_y(y)` to `$FULL_PATH/m1.
 `$FULL_PATH` is full path of the folder containing the file. E.g. `home/user/folder/m1.long`.
 
 ## Implementation
+The compiler will need a few new structure
+```c
+typedef hashmap_t module_variables_t; // maps the mangled name to the compilers global array
+
+typedef struct compile_queue_t {
+    const char* module_name;
+    struct compile_queue_t* next;
+} compile_queue_t;
+
+typedef struct {
+    transient_hashmap_t compiled_modules; // holds as keys the full path name of the module to the compiled module_t
+    compile_queue_t* compile_queue; // the modules queue to compile
+} module_map_t;
+```
+Then, inside the `compiler_t` struct
+```c
+typedef struct {
+    module_map_t modules;
+    // maps module names from `import name("module.long")` to its compiled_modules key. e.g. name -> $FULL_PATH/module.long
+    // whenever a new module enters the compile queue a new transient hashmap must be created and replace the old one
+    // in the compiler. After compilation is completed, the old var_to_modules map may be restored.
+    transient_hash_map_t var_to_modules;
+    // rest of the struct
+    // ...
+} compiler_t;
+```
