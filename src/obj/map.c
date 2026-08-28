@@ -206,6 +206,7 @@ static uint32_t value_hash(value_t v)
 {
     switch (v.kind) {
         case VALUE_NUMBER: return number_hash(v.number);
+        case VALUE_UNDEFINED: return 0;
         case VALUE_NIL: return 1;
         case VALUE_BOOL: return v.boolean ? 2 : 3;
         case VALUE_OBJ:

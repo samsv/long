@@ -27,6 +27,7 @@ static void arr_deinit(value_arr* arr, const sv_allocator_t* a)
 static bool value_is_truthy(value_t v)
 {
     switch (v.kind) {
+        case VALUE_UNDEFINED:
         case VALUE_NIL: return false;
         case VALUE_BOOL: return v.boolean;
         case VALUE_NUMBER:
@@ -322,7 +323,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             TRY_PUSH_OWNED(out);
             break;
         }
-        case OP_HASHMAP_GET_OR_NIL: {
+        case OP_HASHMAP_GET_OR_UNDEF: {
             value_t key = sv_vec_pop(vm->stack);
             value_t container = sv_vec_pop(vm->stack);
             if (!IS_MAP(container))
@@ -332,7 +333,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             if (IS_MAP(container))
                 res = map_get(AS_MAP(container), key);
 
-            value_t out = res.is_some ? value_borrow(res.value) : value_nil;
+            value_t out = res.is_some ? value_borrow(res.value) : value_undefined;
             value_free(&container, a);
             value_free(&key, a);
             TRY_PUSH_OWNED(out);
@@ -358,8 +359,8 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
                 OP_ERR_2(VM_ERR_FIELD_NOT_FOUND, maybe_tuple, n, "Field not found");
             });
             break;
-        case OP_RECORD_GET_OR_NIL:
-            RECORD_GET(v = sv_opt_some_t(value_t, value_nil));
+        case OP_RECORD_GET_OR_UNDEF:
+            RECORD_GET(v = sv_opt_some_t(value_t, value_undefined));
             break;
 #undef RECORD_GET
         case OP_LENGTH: {

@@ -28,6 +28,7 @@ value_t value_borrow(value_t v)
         case VALUE_NIL:
         case VALUE_BOOL:
         case VALUE_NUMBER:
+        case VALUE_UNDEFINED:
         default:
             return v;
     }
@@ -68,6 +69,7 @@ bool value_eql(value_t x, value_t y)
         return false;
     switch (x.kind) {
         case VALUE_NUMBER: return x.number == y.number;
+        case VALUE_UNDEFINED: return false;
         case VALUE_NIL: return true;
         case VALUE_BOOL: return x.boolean == y.boolean;
         case VALUE_OBJ: {
@@ -252,6 +254,7 @@ value_t value_init_tuple(const value_t* vs, uint8_t n, const sv_allocator_t* a)
 const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
 {
     switch (v_kind) {
+        case VALUE_UNDEFINED: return "undefined";
         case VALUE_BOOL: return "bool";
         case VALUE_NIL: return "nil";
         case VALUE_NUMBER: return "number";
@@ -278,6 +281,7 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
 #define CHECK(expr) if (!(expr)) return false
     switch (v.kind) {
         case VALUE_NIL: return sv_strb_add(b, "nil", 3, a) >= 0;
+        case VALUE_UNDEFINED: return sv_strb_add(b, "undefined", 3, a) >= 0;
         case VALUE_BOOL:
             return v.boolean ? sv_strb_add(b, "true", 4, a) >= 0 : sv_strb_add(b, "false", 5, a) >= 0;
         case VALUE_NUMBER: {

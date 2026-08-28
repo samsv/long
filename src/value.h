@@ -17,6 +17,7 @@ typedef enum {
     VALUE_NUMBER,
     VALUE_NIL,
     VALUE_BOOL,
+    VALUE_UNDEFINED,
     VALUE_OBJ,
 } value_kind;
 
@@ -56,6 +57,7 @@ typedef struct value_t {
 #define AS_MAP(v) ((v).obj.cell->value.map)
 
 static const value_t value_nil = { .kind = VALUE_NIL };
+static const value_t value_undefined = { .kind = VALUE_UNDEFINED };
 static const value_t value_true = { .kind = VALUE_BOOL, .boolean = true };
 static const value_t value_false = { .kind = VALUE_BOOL, .boolean = false };
 

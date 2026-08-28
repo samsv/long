@@ -247,11 +247,11 @@ static bool is_fail(sexpr_t e)
         && sv_str_comp(e.atom.literal.literal, sv_str_init(FAIL_NAME));
 }
 
-static bool is_when(sexpr_t s)
+static bool is_when(sexpr_t e)
 {
-    return s.tag == S_ATOM
-        && s.atom.kind == TOKEN_KEYWORD
-        && s.atom.keyword == KEYWORD_WHEN;
+    return e.tag == S_ATOM
+        && e.atom.kind == TOKEN_KEYWORD
+        && e.atom.keyword == KEYWORD_WHEN;
 }
 
 static bool is_wildcard(sexpr_t s)
@@ -352,9 +352,10 @@ static int group_tuple(cons_t match, int start)
 /**
  * Discards an sexpr as an invalid match
  */
-static sexpr_t error_invalid_pattern(sexpr_t* s)
+static sexpr_t error_invalid_pattern(sexpr_t* s, ctx_t* ctx)
 {
     int64_t line = s->tag == S_CONS ? s->cons.arr[0].atom.line : s->atom.line;
+    error_set(&ctx->err, C_ERR_UNEXPECTED_SEXPR, "Invalid match expression. A match must have clauses.", &ctx->alloc);
     return atom_sexpr((token_t){ .kind = TOKEN_ERROR, .line = line });
 }
 
@@ -467,7 +468,7 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
         sexpr_t row_body = GET_BODY(match, i);
 
         // Make different named variable patterns work by binding the given name to the body
-        if (pattern_class_of(head) == PAT_VAR) {
+        if (pattern_class_of(head) == PAT_VAR && !is_wildcard(head)) {
             INIT_CAPACITY(alias, 3);
             INIT_DO(do_block, 2);
             APPEND_CAP(&do_block, bind_var(&alias, head, lower_match.arr[1]));
@@ -726,9 +727,33 @@ static sv_opt_t(value_t) literal_to_value(literal_t l, ctx_t* ctx)
     return sv_opt_none_t(value_t);
 }
 
+static sexpr_t patch_when(cons_t match, sexpr_t body, sexpr_t cond, ctx_t* ctx)
+{
+    // (when cond body)
+    INIT_IF(guard);
+    if (body.tag == S_ATOM || !is_when(body.cons.arr[0])) {
+        APPEND_CAP(&guard, cond);
+        APPEND_CAP(&guard, body);
+        APPEND_CAP(&guard, id_atom(FAIL_NAME));
+        return cons_sexpr(guard);
+    }
+
+    // we already have a when cond
+    sexpr_t when_cond = body.cons.arr[1];
+    INIT_CAPACITY(and_block, 3);
+    APPEND_CAP(&and_block, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_AND));
+    APPEND_CAP(&and_block, cond);
+    APPEND_CAP(&and_block, when_cond);
+
+    APPEND_CAP(&guard, cons_sexpr(and_block));
+    APPEND_CAP(&guard, body);
+    APPEND_CAP(&guard, id_atom(FAIL_NAME));
+    return cons_sexpr(guard);
+}
+
 // compiles dictionaries/records
 static sexpr_t compile_kv_container(cons_t match, int* start_i, sexpr_t u, pattern_class pat_type,
-                                    sexpr_t get_atom, sexpr_t size_atom, ctx_t* ctx)
+                                    sexpr_t get_atom, sexpr_t exists_atom, sexpr_t size_atom, ctx_t* ctx)
 {
     int last_i = *start_i;
     for (; last_i < match.size && pat_type == pattern_class_of(GET_COND(match, last_i)); last_i++) {}
@@ -810,7 +835,20 @@ static sexpr_t compile_kv_container(cons_t match, int* start_i, sexpr_t u, patte
                 sv_opt_t(value_t) v = thm_get(map_vec.arr[j], kv.value.key);
 
                 int success;
-                if (v.is_some) PUSH(cond, GET_KEY(j, v.value.number));
+                if (v.is_some) {
+                    sexpr_t pat = GET_KEY(j, v.value.number);
+                    if (pattern_class_of(pat) == PAT_VAR) {
+                        // need to check if the variable actually exists
+                        INIT_CAPACITY(exists, 3);
+                        APPEND_CAP(&exists, exists_atom);
+                        APPEND_CAP(&exists, u);
+                        APPEND_CAP(&exists, GET_KEY(i, kv.value.value.number - 1));
+                        sexpr_t body = GET_BODY(lower_match, 2 + j);
+                        sexpr_t when_cond = patch_when(match, body, cons_sexpr(exists), ctx);
+                        GET_BODY(lower_match, 2 + j) = when_cond;
+                    }
+                    PUSH(cond, pat);
+                }
                 else PUSH(cond, id_atom("_"));
             }
 
@@ -888,6 +926,7 @@ static sexpr_t compile_record(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 {
     return compile_kv_container(match, start_i, u, PAT_RECORD,
                                 ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_RECORD_GET_OR_NIL),
+                                id_atom("has-field?"),
                                 ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_LENGTH),
                                 ctx);
 }
@@ -916,6 +955,7 @@ static sexpr_t compile_hashmap(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx
 {
     return compile_kv_container(match, start_i, u, PAT_HASHMAP,
                                 ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_HASHMAP_GET_OR_NIL),
+                                id_atom("has-key?"),
                                 ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_LENGTH),
                                 ctx);
 }
@@ -1050,19 +1090,24 @@ end:
 
 #undef INIT_CAPACITY
 
-#define INIT_CAPACITY_L(name, cap)                                                                                       \
+#define INIT_CAPACITY_L(name, cap)                                                                                     \
     cons_t name = sv_vec_init_capacity(sexpr_t, (cap), &ctx->alloc);                                                   \
     if (name.arr == NULL) { ret = error_oom(match.arr[0].atom, ctx); goto ret; }
 
 sexpr_t match_compile(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
 {
-    if (s.cons.size <= CONDS_START)
-        return error_invalid_pattern(&s);
-
     sexpr_t ret;
     int start_i = CONDS_START;
     sv_allocator_t default_alloc = ctx->alloc;
     sv_allocator_t arena = sv_arena_allocator_init(a);
+
+    if (s.cons.size <= CONDS_START) {
+        // all errors must live in the arena
+        ctx->alloc = arena;
+        sexpr_t err = error_invalid_pattern(&s, ctx);
+        ctx->alloc = default_alloc;
+        return err;
+    }
 
     group(&s.cons);
     cons_t match = s.cons;

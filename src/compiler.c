@@ -434,6 +434,7 @@ static bool bind_list(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
         TRY(emit(c, ctx, OP_DUP, line));
         TRY(emit(c, ctx, OP_LIST_UNCONS, line));
         TRY(bind_part(c, pattern.cons.arr[1 + i], seen, line, ctx));
+        TRY(emit(c, ctx, OP_POP, line));
     }
 
     if (list_has_tail(pattern)) {
@@ -445,9 +446,6 @@ static bool bind_list(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
         TRY(emit(c, ctx, OP_NOT, line));
         TRY(emit_assert(c, line, ctx));
     }
-
-    for (int64_t i = 0; i < fixed; i++)
-        TRY(emit(c, ctx, OP_POP, line));
 
     return true;
 }
@@ -645,7 +643,7 @@ static bool compile_record_get_or_nil(compiler_t* c, const sexpr_t* args, int64_
     TRY(record_field_id(c, name, line, ctx, &id));
 
     TRY(compile_sexpr(c, args[0], ctx));
-    return emit2(c, ctx, OP_RECORD_GET_OR_NIL, (uint8_t)id, line);
+    return emit2(c, ctx, OP_RECORD_GET_OR_UNDEF, (uint8_t)id, line);
 }
 
 static bool compile_hashmap_get_or_nil(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -655,7 +653,7 @@ static bool compile_hashmap_get_or_nil(compiler_t* c, const sexpr_t* args, int64
 
     TRY(compile_sexpr(c, args[0], ctx));
     TRY(compile_sexpr(c, args[1], ctx));
-    return emit(c, ctx, OP_HASHMAP_GET_OR_NIL, line);
+    return emit(c, ctx, OP_HASHMAP_GET_OR_UNDEF, line);
 }
 
 static bool compile_length(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)

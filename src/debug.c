@@ -58,8 +58,8 @@ static const char* op_name(vm_instructions op)
         case OP_INDEX: return "index";
         case OP_LENGTH: return "length";
         case OP_RECORD_GET: return "record_get";
-        case OP_RECORD_GET_OR_NIL: return "record_get?";
-        case OP_HASHMAP_GET_OR_NIL: return "hashmap_get?";
+        case OP_RECORD_GET_OR_UNDEF: return "record_get?";
+        case OP_HASHMAP_GET_OR_UNDEF: return "hashmap_get?";
         case OP_NOT: return "not";
         case OP_DUP: return "dup";
         case OP_IS_STR: return "is_str";
@@ -128,7 +128,7 @@ void print_chunk(vm_t v)
             case OP_RECORD_GET:
             case OP_GET_MEMBER:
             case OP_LENGTH:
-            case OP_RECORD_GET_OR_NIL:
+            case OP_RECORD_GET_OR_UNDEF:
             case OP_IS_TUPLE:
             case OP_IS_RECORD:
             case OP_HAS_FIELD:
@@ -168,7 +168,7 @@ void print_chunk(vm_t v)
             case OP_IS_RECORD_ANY:
             case OP_IS_HASHMAP:
             case OP_IS_HASHMAP_ANY:
-            case OP_HASHMAP_GET_OR_NIL:
+            case OP_HASHMAP_GET_OR_UNDEF:
             case OP_HAS_KEY:
             case OP_LIST_UNCONS:
             case OP_ASSERT_MATCH:
