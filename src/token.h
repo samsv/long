@@ -47,7 +47,6 @@ typedef enum {
 } operator_kind;
 
 typedef enum {
-    FN_CLASS,
     FN_FUN,
     FN_FOR,
     FN_IF,
@@ -60,7 +59,9 @@ typedef enum {
     FN_MATCH,
     FN_REDUCE,
     FN_WHILE,
-    FN_IMPORT,
+    FN_IMPORT, // must be last
+
+    // ignored by parse
     FN_LENGTH,
     FN_RECORD_GET_OR_NIL,
     FN_HASHMAP_GET_OR_NIL,

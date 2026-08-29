@@ -9,7 +9,7 @@ TEST_FLAGS = $(STD) $(WARN) -O0 -g -fno-omit-frame-pointer $(SAN)
 DEBUG_FLAGS = $(STD) $(WARN) -O0 -g -fno-omit-frame-pointer $(SAN)
 DEPFLAGS = -MMD -MP
 
-LIB_SRC = $(wildcard src/*.c) $(wildcard src/obj/*.c)
+LIB_SRC = $(wildcard src/*.c) $(wildcard src/obj/*.c) $(wildcard src/deps/*.c)
 TEST_SRC = $(wildcard tests/*.c)
 
 OBJ = $(LIB_SRC:src/%.c=build/release/%.o) build/release/main.o
@@ -45,25 +45,28 @@ $(TEST_BIN): $(TEST_OBJ)
 $(DEBUG_BIN): $(DEBUG_OBJ)
 	$(CC) $(DEBUG_FLAGS) $^ -o $@ -lm
 
-build/release/main.o: main.c | build/release
+build/release/main.o: main.c
+	@mkdir -p $(@D)
 	$(CC) $(RELEASE_FLAGS) $(DEPFLAGS) -Isrc -c $< -o $@
 
-build/release/%.o: src/%.c | build/release
+build/release/%.o: src/%.c
+	@mkdir -p $(@D)
 	$(CC) $(RELEASE_FLAGS) $(DEPFLAGS) -c $< -o $@
 
-build/test/tests_%.o: tests/%.c | build/test
+build/test/tests_%.o: tests/%.c
+	@mkdir -p $(@D)
 	$(CC) $(TEST_FLAGS) $(DEPFLAGS) -Isrc -c $< -o $@
 
-build/test/%.o: src/%.c | build/test
+build/test/%.o: src/%.c
+	@mkdir -p $(@D)
 	$(CC) $(TEST_FLAGS) $(DEPFLAGS) -c $< -o $@
 
-build/debug/main.o: main.c | build/debug
+build/debug/main.o: main.c
+	@mkdir -p $(@D)
 	$(CC) $(DEBUG_FLAGS) $(DEPFLAGS) -Isrc -c $< -o $@
 
-build/debug/%.o: src/%.c | build/debug
+build/debug/%.o: src/%.c
+	@mkdir -p $(@D)
 	$(CC) $(DEBUG_FLAGS) $(DEPFLAGS) -c $< -o $@
-
-build/release build/test build/debug:
-	mkdir -p $@ $@/obj
 
 -include $(OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(DEBUG_OBJ:.o=.d)

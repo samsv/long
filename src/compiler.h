@@ -22,6 +22,16 @@ typedef struct fail_target_t {
     struct fail_target_t* next;
 } fail_target_t;
 
+typedef struct compile_queue_t {
+    const char* module_name;
+    struct compile_queue_t* next;
+} compile_queue_t;
+
+typedef struct {
+    transient_hashmap_t compiled_modules; // holds as keys the full path name of the module to the compiled module_t
+    compile_queue_t* compile_queue; // the modules queue to compile
+} module_map_t;
+
 typedef struct {
     globals_t globals;
     locals_t upvalues;
@@ -29,10 +39,19 @@ typedef struct {
     transient_hashmap_t members;
     transient_hashmap_t* record_fields;
     fail_target_t* fail_targets;
+
+    const char* current_path;
+    module_map_t modules;
+    // maps module names from `import name("module.long")` to its compiled_modules key. e.g. name -> $FULL_PATH/module.long
+    // whenever a new module enters the compile queue a new transient hashmap must be created and replace the old one
+    // in the compiler. After compilation is completed, the old var_to_modules map may be restored.
+    transient_hashmap_t var_to_modules;
+
     vm_builder_t builder;
 } compiler_t;
 
-vm_t compile(const char* source_code, ctx_t*);
+char* read_file(const char* path);
+vm_t compile(const char* base_path, const char* source_code, ctx_t*);
 bool add_native_fn(compiler_t*, native_fn_t, ctx_t*);
 
 typedef enum {

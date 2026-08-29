@@ -237,7 +237,7 @@ static token_t scan_literal(scanner_t* s, int64_t initial_i)
             return (token_t){ .kind = TOKEN_KEYWORD, .line = s->line, .keyword = (keyword_kind)k };
     }
 
-    for (int k = FN_CLASS; k <= FN_IMPORT; k++) {
+    for (int k = 0; k <= FN_IMPORT; k++) {
         if (sv_str_comp(str, sv_str_init(special_fn_text((special_fn_kind)k))))
             return (token_t){ .kind = TOKEN_SP_FUNCTION, .line = s->line, .fn = (special_fn_kind)k };
     }

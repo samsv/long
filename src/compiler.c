@@ -12,16 +12,15 @@
 #include "pattern_shape.h"
 #include "pattern_match.h"
 
-compiler_t compiler_init(void);
 void compiler_free(compiler_t* c, const sv_allocator_t* a);
 bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx);
 
 typedef struct {
     const char* name;
     vm_instructions op;
-} builtin_t;
+} type_test_t;
 
-static const builtin_t TYPE_TESTS[] = {
+static const type_test_t TYPE_TESTS[] = {
     { "is-str?", OP_IS_STR },
     { "is-number?", OP_IS_NUMBER },
     { "is-bool?", OP_IS_BOOL },
@@ -31,9 +30,47 @@ static const builtin_t TYPE_TESTS[] = {
     { "is-nil-list?", OP_IS_NIL_LIST },
 };
 
-//static const builtin_t
-
 #define TRY(call) do { if (!(call)) return false; } while (0)
+
+compiler_t compiler_init(const char* base_path)
+{
+    return (compiler_t){
+        .globals = { .name_indexes = { .depth = 0 } },
+        .upvalues = { .name_indexes = { .depth = 0 }, .next = NULL, .offset = 0 },
+        .locals = NULL,
+        .members = { .depth = 0 },
+        .record_fields = NULL,
+        .fail_targets = NULL,
+        .builder = { .vm = vm_init(sv_str_init("")) },
+        .current_path = base_path,
+    };
+}
+
+char* read_file(const char* path)
+{
+    FILE* file = fopen(path, "r");
+    if (file == NULL) {
+        return NULL;
+    }
+
+    fseek(file, 0L, SEEK_END);
+    size_t fileSize = ftell(file);
+    rewind(file);
+
+    char* buffer = malloc(fileSize + 1);
+    if (buffer == NULL) {
+        return NULL;
+    }
+    size_t bytesRead = fread(buffer, sizeof(char), fileSize, file);
+    if (bytesRead < fileSize) {
+        return NULL;
+    }
+    buffer[bytesRead] = '\0';
+
+    fclose(file);
+    return buffer;
+}
+
 
 static bool compiler_error(ctx_t* ctx, compiler_error_kind kind, const char* msg)
 {
@@ -186,19 +223,6 @@ static bool expect_id(sexpr_t e, ctx_t* ctx, sv_str_t* out)
     }
     *out = e.atom.literal.literal;
     return true;
-}
-
-compiler_t compiler_init(void)
-{
-    return (compiler_t){
-        .globals = { .name_indexes = { .depth = 0 } },
-        .upvalues = { .name_indexes = { .depth = 0 }, .next = NULL, .offset = 0 },
-        .locals = NULL,
-        .members = { .depth = 0 },
-        .record_fields = NULL,
-        .fail_targets = NULL,
-        .builder = { .vm = vm_init(sv_str_init("")) },
-    };
 }
 
 void compiler_free(compiler_t* c, const sv_allocator_t* a)
@@ -879,7 +903,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
                           sv_str_t name, int64_t upvalue_offset, transient_hashmap_t members, int64_t line,
                           ctx_t* ctx, vm_t* out)
 {
-    compiler_t fc = compiler_init();
+    compiler_t fc = compiler_init("");
     fc.members = members;
     fc.globals = c->globals;
     fc.record_fields = c->record_fields;
@@ -1307,16 +1331,15 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
             case FN_LENGTH: return compile_length(c, cons + 1, n - 1, a.line, ctx);
             case FN_RECORD_GET_OR_NIL: return compile_record_get_or_nil(c, cons + 1, n - 1, a.line, ctx);
             case FN_HASHMAP_GET_OR_NIL: return compile_hashmap_get_or_nil(c, cons + 1, n - 1, a.line, ctx);
-            case FN_CLASS:
-            case FN_MAP:
-            case FN_MAPF:
             case FN_MATCH: return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR,
                                                  "Unlowered match expression");
+            case FN_MAP:
+            case FN_MAPF:
             case FN_REDUCE:
             case FN_WHILE:
             case FN_IMPORT: {
                 char msg[96];
-                snprintf(msg, sizeof(msg), "'%s' not implemented at line %" PRId64, special_fn_text(a.fn), a.line);
+                snprintf(msg, sizeof(msg), "Compiler '%s' not implemented at line %" PRId64, special_fn_text(a.fn), a.line);
                 return compiler_error(ctx, C_ERR_NOT_IMPLEMENTED, msg);
             }
         }
@@ -1374,16 +1397,16 @@ bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
     return vmb_add_global(&c->builder, fn_val, &ctx->alloc);
 }
 
-vm_t compile(const char* source_code, ctx_t* ctx)
+vm_t compile(const char* base_path, const char* source_code, ctx_t* ctx)
 {
 #define ERR_RETURN do {                                                                                       \
-    compiler_free(&compiler, &ctx->alloc);                                                                    \
-    vm_deinit(&compiler.builder.vm, &ctx->alloc);                                                             \
-    thm_deinit(&record_fields, &ctx->alloc);                                                                  \
-    return (vm_t){0}; } while (0)
+        compiler_free(&compiler, &ctx->alloc);                                                                \
+        vm_deinit(&compiler.builder.vm, &ctx->alloc);                                                         \
+        thm_deinit(&record_fields, &ctx->alloc);                                                              \
+        return (vm_t){0}; } while (0)
 
     scanner_t s = scanner_init(sv_str_init(source_code));
-    compiler_t compiler = compiler_init();
+    compiler_t compiler = compiler_init(base_path);
     transient_hashmap_t record_fields = { .depth = 0 };
     compiler.record_fields = &record_fields;
 

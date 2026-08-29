@@ -171,23 +171,34 @@ static token_t parser_expect_close(scanner_t* s, ctx_t* ctx, token_t open, token
     return parser_error_at(ctx, kind, token.line, msg);
 }
 
-static token_t parser_expect_id(scanner_t* s, ctx_t* ctx)
+
+static token_t parser_expect_literal(scanner_t* s, ctx_t* ctx, literal_kind literal_kind, const char* literal_name)
 {
     token_t token = scanner_next(s, ctx);
     if (token.kind == TOKEN_ERROR)
         return token;
-    if (token.kind == TOKEN_LITERAL && token.literal.kind == LITERAL_IDENTIFIER)
+    if (token.kind == TOKEN_LITERAL && token.literal.kind == literal_kind)
         return token;
 
     char got[64];
     token_text(token, got, sizeof(got), ctx);
 
     char msg[320];
-    snprintf(msg, sizeof(msg), "Expected identifier, got '%s' at line %" PRId64,
-             got, token.line);
+    snprintf(msg, sizeof(msg), "Expected %s, got '%s' at line %" PRId64,
+             literal_name, got, token.line);
     parser_error_kind kind =
         token.kind == TOKEN_EOF ? PARSER_ERROR_EOF : PARSER_ERROR_UNEXPECTED_TOKEN;
     return parser_error_at(ctx, kind, token.line, msg);
+}
+
+static token_t parser_expect_id(scanner_t* s, ctx_t* ctx)
+{
+    return parser_expect_literal(s, ctx, LITERAL_IDENTIFIER, "literal");
+}
+
+static token_t parser_expect_str(scanner_t* s, ctx_t* ctx)
+{
+    return parser_expect_literal(s, ctx, LITERAL_STRING, "string");
 }
 
 static bool parser_check(scanner_t* s, ctx_t* ctx, token_pattern p, token_t* out)
@@ -908,6 +919,37 @@ static sexpr_t parse_fun(scanner_t* s, ctx_t* ctx, token_t fun_token)
     return cons_sexpr(list);
 }
 
+/**
+ * Parses `import name("file.long")` to (import name "file.long")
+ */
+static sexpr_t parse_import(scanner_t* s, ctx_t* ctx, token_t import_token)
+{
+#define CHECK_TOKEN(token) if (token.kind == TOKEN_ERROR) return free_list_error(&list, ctx, atom_sexpr(token))
+
+    sv_vec_t(sexpr_t) list = sv_vec_init_capacity(sexpr_t, 3, &ctx->alloc);
+    if (list.arr == NULL) {
+        return atom_sexpr(oom_error(ctx, import_token.line));
+    }
+
+    list.arr[list.size++] = atom_sexpr(import_token);
+    token_t name = parser_expect_id(s, ctx);
+    CHECK_TOKEN(name);
+    list.arr[list.size++] = atom_sexpr(name);
+
+    token_t paren = parser_expect(s, ctx, op_pattern(OPERATOR_LEFT_PAREN));
+    CHECK_TOKEN(paren);
+
+    token_t path = parser_expect_str(s, ctx);
+    CHECK_TOKEN(path);
+    list.arr[list.size++] = atom_sexpr(path);
+
+    token_t right_paren = parser_expect(s, ctx, kind_pattern(TOKEN_RIGHT_PAREN));
+    CHECK_TOKEN(right_paren);
+
+    return cons_sexpr(list);
+#undef CHECK_TOKEN
+}
+
 static sexpr_t parse_if(scanner_t* s, ctx_t* ctx, token_t if_token)
 {
     sexpr_t cond = parse_expr(s, ctx, 0);
@@ -1455,20 +1497,20 @@ static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
             }
             case FN_MATCH:
                 return parse_match(s, ctx, token);
+            case FN_IMPORT:
+                return parse_import(s, ctx, token);
             case FN_LENGTH:
             case FN_RECORD_GET_OR_NIL:
             case FN_HASHMAP_GET_OR_NIL:
-            case FN_CLASS:
             case FN_MAP:
             case FN_HASHMAP:
             case FN_RECORD:
             case FN_TUPLE:
             case FN_MAPF:
             case FN_REDUCE:
-            case FN_WHILE:
-            case FN_IMPORT: {
+            case FN_WHILE: {
                 char msg[128];
-                snprintf(msg, sizeof(msg), "'%s' is not implemented yet at line %" PRId64,
+                snprintf(msg, sizeof(msg), "Parser '%s' is not implemented yet at line %" PRId64,
                          special_fn_text(token.fn), token.line);
                 return atom_sexpr(parser_error_at(ctx, PARSER_ERROR_NOT_IMPLEMENTED,
                                                    token.line, msg));
