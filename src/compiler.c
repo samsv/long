@@ -46,8 +46,14 @@ static bool compiler_oom(ctx_t* ctx, int64_t line)
 
 compiler_t compiler_init(const char* base_path, ctx_t* ctx, bool* success)
 {
-    module_map_t modules = { .compile_queue = NULL, .compiled_modules = thm_init(8, &ctx->alloc) };
-    if (modules.compiled_modules.set.dense.cell == NULL) {
+    module_map_t modules = {
+        .compile_queue = NULL,
+        .compiled_modules = thm_init(8, &ctx->alloc),
+        .to_be_compiled_modules = thm_init(8, &ctx->alloc),
+    };
+    if (modules.compiled_modules.set.dense.cell == NULL
+        || modules.to_be_compiled_modules.set.dense.cell == NULL
+    ) {
         compiler_oom(ctx, 0);
         *success = false;
         return (compiler_t){0};
@@ -1415,6 +1421,11 @@ static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx
         sv_free(&ctx->alloc, import_path);
         return true;
     }
+    // add it to modules to be compiled
+    if (thm_get(c->modules.to_be_compiled_modules, path_value).is_some)
+        return compiler_error(ctx, (int)C_ERR_IMPORT_CICLE, "Import cicle detected");
+    if (!thm_put(&c->modules.to_be_compiled_modules, (kv_t){ .key = path_value }, &ctx->alloc))
+        goto error_oom;
 
     // read and compile file
     source_code = read_file(import_full_path, &ctx->alloc);
@@ -1428,14 +1439,15 @@ static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx
     }
     c->current_path = current_path;
 
-    // insert file into compiled modules
+    // insert file into compiled modules and remove it from to be compiled
     if (!thm_put(&c->modules.compiled_modules, (kv_t){ .key = path_value }, &ctx->alloc))
         goto error_oom;
+    thm_delete(&c->modules.to_be_compiled_modules, path_value, &ctx->alloc);
 
     sv_free(&ctx->alloc, source_code);
     sv_free(&ctx->alloc, import_path);
-    return true;
 
+    return add_const(c, ctx, value_nil, line);
 error_oom:
     sv_free(&ctx->alloc, source_code);
     sv_free(&ctx->alloc, import_path);

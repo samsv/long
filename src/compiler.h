@@ -29,6 +29,7 @@ typedef struct compile_queue_t {
 
 typedef struct {
     transient_hashmap_t compiled_modules; // holds as keys the full path name of the module to the compiled module_t
+    transient_hashmap_t to_be_compiled_modules;
     compile_queue_t* compile_queue; // the modules queue to compile
 } module_map_t;
 
@@ -59,6 +60,7 @@ typedef enum {
     C_ERR_UNDEFINED_VARIABLE,
     C_ERR_REDEFINED,
     C_ERR_UNEXPECTED_SEXPR,
+    C_ERR_IMPORT_CICLE,
     C_ERR_NOT_CALLABLE,
     C_ERR_NOT_IMPLEMENTED,
     C_ERR_JUMP_TOO_LONG,
