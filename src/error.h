@@ -32,6 +32,8 @@ void error_reset(error_t*);
 bool error_set(error_t*, int code, const char* msg, const sv_allocator_t*);
 /**
  * Stores an out of memory error naming the line. Always returns false.
+ *
+ * Note: the fact that an OOM error allocates is quite odd. We should fix this in the future.
  */
 bool error_set_oom(error_t*, int code, int64_t line, const sv_allocator_t*);
 

@@ -1,5 +1,6 @@
-import m1("m1.lox")
+import m1("m1.long")
 
+# check it does not overwrite
 x = 5
 
 m1::add_x(5)

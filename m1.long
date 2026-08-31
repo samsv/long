@@ -1,5 +1,5 @@
 x = 1
 y = 2
 
-fun add_x[x](y) # module closure
+fun add_x(y)
     x + y

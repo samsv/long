@@ -29,16 +29,16 @@ static int run(vm_t vm, ctx_t ctx)
 
 static int run_file(const char* path)
 {
-    const char* source = read_file(path);
-    if (source == NULL) {
-        return 1;
-    }
-
     ctx_t ctx = {
         .alloc = sv_gpa,
         .logger = sv_std_logger,
         .err = { 0 },
     };
+
+    const char* source = read_file(path, &ctx.alloc);
+    if (source == NULL) {
+        return 1;
+    }
 
     scanner_t s = scanner_init(sv_str_init(source));
     sexpr_t sexpr = parser_expr(&s, &ctx);

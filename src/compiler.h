@@ -50,7 +50,7 @@ typedef struct {
     vm_builder_t builder;
 } compiler_t;
 
-char* read_file(const char* path);
+char* read_file(const char*, const sv_allocator_t*);
 vm_t compile(const char* base_path, const char* source_code, ctx_t*);
 bool add_native_fn(compiler_t*, native_fn_t, ctx_t*);
 

@@ -6,11 +6,13 @@
 #include "scanner.h"
 #include "sexpr.h"
 #include "parser.h"
+#include "std/string.h"
 #define SV_ARENA_IMPLEMENTATION
 #include "std/arena.h"
 #include "std_native.h"
 #include "pattern_shape.h"
 #include "pattern_match.h"
+#include "deps/cwalk.h"
 
 void compiler_free(compiler_t* c, const sv_allocator_t* a);
 bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx);
@@ -32,8 +34,26 @@ static const type_test_t TYPE_TESTS[] = {
 
 #define TRY(call) do { if (!(call)) return false; } while (0)
 
-compiler_t compiler_init(const char* base_path)
+static bool compiler_error(ctx_t* ctx, compiler_error_kind kind, const char* msg)
 {
+    return error_set(&ctx->err, (int)kind, msg, &ctx->alloc);
+}
+
+static bool compiler_oom(ctx_t* ctx, int64_t line)
+{
+    return error_set_oom(&ctx->err, (int)C_ERR_OOM, line, &ctx->alloc);
+}
+
+compiler_t compiler_init(const char* base_path, ctx_t* ctx, bool* success)
+{
+    module_map_t modules = { .compile_queue = NULL, .compiled_modules = thm_init(8, &ctx->alloc) };
+    if (modules.compiled_modules.set.dense.cell == NULL) {
+        compiler_oom(ctx, 0);
+        *success = false;
+        return (compiler_t){0};
+    }
+
+    *success = true;
     return (compiler_t){
         .globals = { .name_indexes = { .depth = 0 } },
         .upvalues = { .name_indexes = { .depth = 0 }, .next = NULL, .offset = 0 },
@@ -43,10 +63,11 @@ compiler_t compiler_init(const char* base_path)
         .fail_targets = NULL,
         .builder = { .vm = vm_init(sv_str_init("")) },
         .current_path = base_path,
+        .modules = modules,
     };
 }
 
-char* read_file(const char* path)
+char* read_file(const char* path, const sv_allocator_t* a)
 {
     FILE* file = fopen(path, "r");
     if (file == NULL) {
@@ -57,7 +78,7 @@ char* read_file(const char* path)
     size_t fileSize = ftell(file);
     rewind(file);
 
-    char* buffer = malloc(fileSize + 1);
+    char* buffer = sv_malloc(a, fileSize + 1);
     if (buffer == NULL) {
         return NULL;
     }
@@ -69,17 +90,6 @@ char* read_file(const char* path)
 
     fclose(file);
     return buffer;
-}
-
-
-static bool compiler_error(ctx_t* ctx, compiler_error_kind kind, const char* msg)
-{
-    return error_set(&ctx->err, (int)kind, msg, &ctx->alloc);
-}
-
-static bool compiler_oom(ctx_t* ctx, int64_t line)
-{
-    return error_set_oom(&ctx->err, (int)C_ERR_OOM, line, &ctx->alloc);
 }
 
 static bool compiler_error_name(ctx_t* ctx, compiler_error_kind kind, int64_t line, const char* what, sv_str_t id)
@@ -107,6 +117,44 @@ static bool emit2(compiler_t* c, ctx_t* ctx, uint8_t b1, uint8_t b2, int64_t lin
 {
     if (!vmb_add_bytes(&c->builder, b1, b2, line, &ctx->alloc))
         return compiler_oom(ctx, line);
+    return true;
+}
+
+static bool compile_source(compiler_t* c, const char* source_code, ctx_t* ctx)
+{
+    scanner_t s = scanner_init(sv_str_init(source_code));
+
+    token_t token;
+    bool first = true;
+    for (;;) {
+        parser_skip_semicolons(&s, ctx);
+        token = scanner_peek(&s, ctx);
+        if (token.kind == TOKEN_EOF || token.kind == TOKEN_ERROR)
+            break;
+
+        if (!first && !vmb_add_byte(&c->builder, OP_POP, token.line, &ctx->alloc)) {
+            compiler_oom(ctx, token.line);
+            return false;
+        }
+
+        sexpr_t sexpr = parser_expr(&s, ctx);
+        if (is_error_sexpr(sexpr))
+            return false;
+
+        bool ok = compile_sexpr(c, sexpr, ctx);
+        sexpr_free(&sexpr, &ctx->alloc);
+        if (!ok)
+            return false;
+        first = false;
+    }
+    if (token.kind == TOKEN_ERROR)
+        false;
+
+    if (!vmb_add_byte(&c->builder, OP_RETURN, token.line, &ctx->alloc)) {
+        compiler_oom(ctx, token.line);
+        return false;
+    }
+
     return true;
 }
 
@@ -183,14 +231,46 @@ static bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool*
     return ok;
 }
 
-static bool globals_add(globals_t* g, sv_str_t id, ctx_t* ctx, int64_t line)
+static sv_str_t append_prefix(sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t line)
 {
+#define CHECK_OOM(cond) do { if (!(cond)) { \
+    sv_strb_deinit(&b, &ctx->alloc); \
+    compiler_oom(ctx, line); \
+    return (sv_str_t){0}; \
+} } while (0)
+
+    sv_str_builder b = sv_strb_init();
+    CHECK_OOM(sv_strb_add(&b, prefix.chars, prefix.size, &ctx->alloc) > -1);
+    CHECK_OOM(sv_strb_add_char(&b, '$', &ctx->alloc) > -1);
+    CHECK_OOM(sv_strb_add(&b, id.chars, id.size, &ctx->alloc) > -1);
+    sv_str_t name = sv_strb_to_str(&b);
+    return name;
+#undef CHECK_OOM
+}
+
+static bool globals_add(globals_t* g, sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t line)
+{
+    sv_str_t name = append_prefix(id, prefix, ctx, line);
+    if (name.chars == NULL)
+        return compiler_oom(ctx, line);
+
     bool existed = false;
-    if (!names_add(&g->name_indexes, id, ctx, &existed))
+    if (!names_add(&g->name_indexes, name, ctx, &existed))
         return compiler_oom(ctx, line);
     if (existed)
-        return compiler_error_name(ctx, C_ERR_REDEFINED, line, "Global", id);
+        return compiler_error_name(ctx, C_ERR_REDEFINED, line, "Global redefined", id);
+
+    sv_str_deinit(&name, &ctx->alloc);
     return true;
+}
+
+static sv_opt_t(int64_t) globals_get(const globals_t g, sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t line)
+{
+    sv_str_t name = append_prefix(id, prefix, ctx, line);
+    if (name.chars == NULL)
+        return sv_opt_none_t(int64_t);
+
+    return names_get(g.name_indexes, name, ctx);
 }
 
 static bool locals_add(locals_t* l, sv_str_t id, ctx_t* ctx, int64_t line)
@@ -199,7 +279,7 @@ static bool locals_add(locals_t* l, sv_str_t id, ctx_t* ctx, int64_t line)
     if (!names_add(&l->name_indexes, id, ctx, &existed))
         return compiler_oom(ctx, line);
     if (existed)
-        return compiler_error_name(ctx, C_ERR_REDEFINED, line, "Local", id);
+        return compiler_error_name(ctx, C_ERR_REDEFINED, line, "Local redefined", id);
     return true;
 }
 
@@ -255,7 +335,7 @@ static bool compile_id(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
     if (idx.is_some)
         return emit2(c, ctx, OP_GET_UPVALUE, (uint8_t)idx.value, line);
 
-    idx = names_get(c->globals.name_indexes, id, ctx);
+    idx = globals_get(c->globals, id, sv_str_init(c->current_path), ctx, line);
     if (idx.is_some)
         return emit2(c, ctx, OP_GET_GLOBAL, (uint8_t)idx.value, line);
 
@@ -275,8 +355,8 @@ static bool add_var(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
         return emit2(c, ctx, OP_GET_LOCAL, (uint8_t)idx.value, line);
     }
     TRY(emit(c, ctx, OP_SET_GLOBAL, line));
-    TRY(globals_add(&c->globals, id, ctx, line));
-    sv_opt_t(int64_t) idx = names_get(c->globals.name_indexes, id, ctx);
+    TRY(globals_add(&c->globals, id, sv_str_init(c->current_path), ctx, line));
+    sv_opt_t(int64_t) idx = globals_get(c->globals, id, sv_str_init(c->current_path), ctx, line);
     return emit2(c, ctx, OP_GET_GLOBAL, (uint8_t)idx.value, line);
 }
 
@@ -903,7 +983,10 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
                           sv_str_t name, int64_t upvalue_offset, transient_hashmap_t members, int64_t line,
                           ctx_t* ctx, vm_t* out)
 {
-    compiler_t fc = compiler_init("");
+    bool success;
+    compiler_t fc = compiler_init(c->current_path, ctx, &success);
+    if (!success)
+        return success;
     fc.members = members;
     fc.globals = c->globals;
     fc.record_fields = c->record_fields;
@@ -1213,9 +1296,9 @@ static bool compile_uncons(compiler_t* c, const sexpr_t* args, int64_t n, int64_
         TRY(locals_add(c->locals, tail, ctx, line));
     } else {
         TRY(emit(c, ctx, OP_SET_GLOBAL, line));
-        TRY(globals_add(&c->globals, head, ctx, line));
+        TRY(globals_add(&c->globals, head, sv_str_init(c->current_path), ctx, line));
         TRY(emit(c, ctx, OP_SET_GLOBAL, line));
-        TRY(globals_add(&c->globals, tail, ctx, line));
+        TRY(globals_add(&c->globals, tail, sv_str_init(c->current_path), ctx, line));
     }
 
     return true;
@@ -1303,6 +1386,62 @@ static bool compile_atom(compiler_t* c, token_t token, ctx_t* ctx)
     return compile_literal(c, token.literal, token.line, ctx);
 }
 
+static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx_t* ctx)
+{
+    char* source_code = NULL;
+    char* import_path = NULL;
+
+    // get import file name
+    char current_dir[FILENAME_MAX];
+    size_t length;
+    cwk_path_get_dirname(c->current_path, &length);
+    current_dir[length] = '\0';
+    memcpy(current_dir, c->current_path, length);
+
+    import_path = sv_str_to_c_str(args[1].atom.literal.str, &ctx->alloc);
+    if (import_path == NULL)
+        goto error_oom;
+
+    char import_full_path[FILENAME_MAX];
+    cwk_path_join(current_dir, import_path, import_full_path, sizeof(import_full_path));
+
+    // check if module has already been compiled
+    sv_str_t full_path_str = sv_str_init(import_full_path);
+    value_t path_value = value_init_str_own(full_path_str, &ctx->alloc);
+    if (path_value.obj.cell == NULL)
+        goto error_oom;
+
+    if (thm_get(c->modules.compiled_modules, path_value).is_some) {
+        sv_free(&ctx->alloc, import_path);
+        return true;
+    }
+
+    // read and compile file
+    source_code = read_file(import_full_path, &ctx->alloc);
+    if (source_code == NULL)
+        goto error_oom;
+
+    const char* current_path = c->current_path;
+    c->current_path = import_full_path;
+    if (!compile_source(c, source_code, ctx)) {
+        return false;
+    }
+    c->current_path = current_path;
+
+    // insert file into compiled modules
+    if (!thm_put(&c->modules.compiled_modules, (kv_t){ .key = path_value }, &ctx->alloc))
+        goto error_oom;
+
+    sv_free(&ctx->alloc, source_code);
+    sv_free(&ctx->alloc, import_path);
+    return true;
+
+error_oom:
+    sv_free(&ctx->alloc, source_code);
+    sv_free(&ctx->alloc, import_path);
+    return compiler_oom(ctx, line);
+}
+
 static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* ctx)
 {
     if (n == 0)
@@ -1331,13 +1470,13 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
             case FN_LENGTH: return compile_length(c, cons + 1, n - 1, a.line, ctx);
             case FN_RECORD_GET_OR_NIL: return compile_record_get_or_nil(c, cons + 1, n - 1, a.line, ctx);
             case FN_HASHMAP_GET_OR_NIL: return compile_hashmap_get_or_nil(c, cons + 1, n - 1, a.line, ctx);
+            case FN_IMPORT: return compile_import(c, cons + 1, a.line, ctx);
             case FN_MATCH: return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR,
                                                  "Unlowered match expression");
             case FN_MAP:
             case FN_MAPF:
             case FN_REDUCE:
-            case FN_WHILE:
-            case FN_IMPORT: {
+            case FN_WHILE: {
                 char msg[96];
                 snprintf(msg, sizeof(msg), "Compiler '%s' not implemented at line %" PRId64, special_fn_text(a.fn), a.line);
                 return compiler_error(ctx, C_ERR_NOT_IMPLEMENTED, msg);
@@ -1391,7 +1530,7 @@ bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx)
 
 bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
 {
-    TRY(globals_add(&c->globals, sv_str_init(fn.name), ctx, 0));
+    TRY(globals_add(&c->globals, sv_str_init(fn.name), sv_str_init(""), ctx, 0));
     value_t fn_val = value_init_native(fn, &ctx->alloc);
     TRY(fn_val.obj.cell != NULL);
     return vmb_add_global(&c->builder, fn_val, &ctx->alloc);
@@ -1405,8 +1544,11 @@ vm_t compile(const char* base_path, const char* source_code, ctx_t* ctx)
         thm_deinit(&record_fields, &ctx->alloc);                                                              \
         return (vm_t){0}; } while (0)
 
-    scanner_t s = scanner_init(sv_str_init(source_code));
-    compiler_t compiler = compiler_init(base_path);
+    bool success;
+    compiler_t compiler = compiler_init(base_path, ctx, &success);
+    if (!success)
+        return (vm_t){0};
+
     transient_hashmap_t record_fields = { .depth = 0 };
     compiler.record_fields = &record_fields;
 
@@ -1421,34 +1563,9 @@ vm_t compile(const char* base_path, const char* source_code, ctx_t* ctx)
             ERR_RETURN;
 #undef FNS_SIZE
 
-    token_t token;
-    bool first = true;
-    for (;;) {
-        parser_skip_semicolons(&s, ctx);
-        token = scanner_peek(&s, ctx);
-        if (token.kind == TOKEN_EOF || token.kind == TOKEN_ERROR)
-            break;
-
-        if (!first && !vmb_add_byte(&compiler.builder, OP_POP, token.line, &ctx->alloc)) {
-            compiler_oom(ctx, token.line);
-            ERR_RETURN;
-        }
-
-        sexpr_t sexpr = parser_expr(&s, ctx);
-        if (is_error_sexpr(sexpr))
-            ERR_RETURN;
-
-        bool ok = compile_sexpr(&compiler, sexpr, ctx);
-        sexpr_free(&sexpr, &ctx->alloc);
-        if (!ok)
-            ERR_RETURN;
-        first = false;
+    if (!compile_source(&compiler, source_code, ctx)) {
+        ERR_RETURN;
     }
-    if (token.kind == TOKEN_ERROR)
-        ERR_RETURN;
-
-    if (!vmb_add_byte(&compiler.builder, OP_RETURN, token.line, &ctx->alloc))
-        ERR_RETURN;
 
     compiler_free(&compiler, &ctx->alloc);
     vm_t vm = vmb_build(&compiler.builder);
