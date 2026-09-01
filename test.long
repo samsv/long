@@ -1,10 +1,11 @@
 import m1("m1.long")
 
-# check it does not overwrite
 x = 5
 
 m1::add_x(5)
-|> println() # 6
+|> println()
 
-println(m1::x == x) #false
-y = m1::y # y = 2
+println(m1::x == x)
+y = m1::y
+
+m1::point.x |> println()

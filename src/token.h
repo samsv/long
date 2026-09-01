@@ -28,6 +28,7 @@ typedef enum {
 
 typedef enum {
     OPERATOR_DOT,
+    OPERATOR_DOUBLE_COLON,
     OPERATOR_MINUS,
     OPERATOR_PLUS,
     OPERATOR_PIPE_FORWARD,

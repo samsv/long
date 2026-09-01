@@ -22,15 +22,9 @@ typedef struct fail_target_t {
     struct fail_target_t* next;
 } fail_target_t;
 
-typedef struct compile_queue_t {
-    const char* module_name;
-    struct compile_queue_t* next;
-} compile_queue_t;
-
 typedef struct {
     transient_hashmap_t compiled_modules; // holds as keys the full path name of the module to the compiled module_t
     transient_hashmap_t to_be_compiled_modules;
-    compile_queue_t* compile_queue; // the modules queue to compile
 } module_map_t;
 
 typedef struct {

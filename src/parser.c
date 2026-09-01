@@ -237,6 +237,7 @@ static precedence infix_prec(operator_kind op)
         case OPERATOR_STAR:
         case OPERATOR_SLASH:
             return (precedence){ .left = 11, .right = 12, .has_right = true };
+        case OPERATOR_DOUBLE_COLON:
         case OPERATOR_DOT:
             return (precedence){ .left = 18, .right = 19, .has_right = true };
         case OPERATOR_LEFT_PAREN:

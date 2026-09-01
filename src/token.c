@@ -26,6 +26,7 @@ static const char* operator_text(operator_kind op)
         case OPERATOR_GREATER_EQUAL: return ">=";
         case OPERATOR_LESS: return "<";
         case OPERATOR_LESS_EQUAL: return "<=";
+        case OPERATOR_DOUBLE_COLON: return "::";
     }
     return "";
 }

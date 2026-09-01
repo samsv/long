@@ -307,7 +307,10 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
             return operator_of(s, OPERATOR_DOT);
         case ',': return token_of(s, TOKEN_COMMA);
         case ';': return token_of(s, TOKEN_SEMICOLON);
-        case ':': return token_of(s, TOKEN_COLON);
+        case ':':
+            if (next_char_if_eq(s, ':'))
+                return operator_of(s, OPERATOR_DOUBLE_COLON);
+            return token_of(s, TOKEN_COLON);
         case '%':
             if (next_char_if_eq(s, '{'))
                 return token_of(s, TOKEN_PERCENT_BRACE);

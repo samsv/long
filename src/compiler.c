@@ -47,7 +47,6 @@ static bool compiler_oom(ctx_t* ctx, int64_t line)
 compiler_t compiler_init(const char* base_path, ctx_t* ctx, bool* success)
 {
     module_map_t modules = {
-        .compile_queue = NULL,
         .compiled_modules = thm_init(8, &ctx->alloc),
         .to_be_compiled_modules = thm_init(8, &ctx->alloc),
     };
@@ -129,6 +128,10 @@ static bool emit2(compiler_t* c, ctx_t* ctx, uint8_t b1, uint8_t b2, int64_t lin
 static bool compile_source(compiler_t* c, const char* source_code, ctx_t* ctx)
 {
     scanner_t s = scanner_init(sv_str_init(source_code));
+    c->var_to_modules = thm_init(8, &ctx->alloc);
+    if (c->var_to_modules.set.dense.cell == NULL) {
+        return compiler_oom(ctx, 0);
+    }
 
     token_t token;
     bool first = true;
@@ -140,28 +143,28 @@ static bool compile_source(compiler_t* c, const char* source_code, ctx_t* ctx)
 
         if (!first && !vmb_add_byte(&c->builder, OP_POP, token.line, &ctx->alloc)) {
             compiler_oom(ctx, token.line);
-            return false;
+            goto fail;
         }
 
         sexpr_t sexpr = parser_expr(&s, ctx);
         if (is_error_sexpr(sexpr))
-            return false;
+            goto fail;
 
         bool ok = compile_sexpr(c, sexpr, ctx);
         sexpr_free(&sexpr, &ctx->alloc);
         if (!ok)
-            return false;
+            goto fail;
         first = false;
     }
     if (token.kind == TOKEN_ERROR)
-        false;
+        goto fail;
 
-    if (!vmb_add_byte(&c->builder, OP_RETURN, token.line, &ctx->alloc)) {
-        compiler_oom(ctx, token.line);
-        return false;
-    }
-
+    thm_deinit(&c->var_to_modules, &ctx->alloc);
     return true;
+
+fail:
+    thm_deinit(&c->var_to_modules, &ctx->alloc);
+    return false;
 }
 
 static bool add_const(compiler_t* c, ctx_t* ctx, value_t v, int64_t line)
@@ -245,6 +248,9 @@ static sv_str_t append_prefix(sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t 
     return (sv_str_t){0}; \
 } } while (0)
 
+    if (prefix.size == 0)
+        return sv_str_copy(id, &ctx->alloc);
+
     sv_str_builder b = sv_strb_init();
     CHECK_OOM(sv_strb_add(&b, prefix.chars, prefix.size, &ctx->alloc) > -1);
     CHECK_OOM(sv_strb_add_char(&b, '$', &ctx->alloc) > -1);
@@ -276,7 +282,11 @@ static sv_opt_t(int64_t) globals_get(const globals_t g, sv_str_t id, sv_str_t pr
     if (name.chars == NULL)
         return sv_opt_none_t(int64_t);
 
-    return names_get(g.name_indexes, name, ctx);
+    sv_opt_t(int64_t) maybe = names_get(g.name_indexes, name, ctx);
+    if (maybe.is_some)
+        return maybe;
+
+    return names_get(g.name_indexes, id, ctx);
 }
 
 static bool locals_add(locals_t* l, sv_str_t id, ctx_t* ctx, int64_t line)
@@ -742,6 +752,30 @@ static bool compile_dot(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     return emit2(c, ctx, OP_RECORD_GET, (uint8_t)id, line);
 }
 
+static bool compile_double_colon(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+    if (n != 2)
+        return compiler_malformed(ctx, "field access", line);
+
+    sv_str_t module_name;
+    TRY(expect_id(args[0], ctx, &module_name));
+
+    sv_str_t var_name = {0};
+    TRY(expect_id(args[1], ctx, &var_name));
+
+    value_t module_name_value = value_init_str_own(module_name, &ctx->alloc);
+    TRY(module_name_value.obj.cell != NULL);
+
+    sv_opt_t(value_t) module_path = thm_get(c->var_to_modules, module_name_value);
+    if (!module_path.is_some)
+        return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", module_name);
+    sv_opt_t(int64_t) id = globals_get(c->globals, var_name, AS_STR(module_path.value), ctx, line);
+    if (!id.is_some)
+        return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", var_name);
+
+    return emit2(c, ctx, OP_GET_GLOBAL, (uint8_t)id.value, line);
+}
+
 static bool compile_record_get_or_nil(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
     if (n != 2)
@@ -804,6 +838,7 @@ static bool compile_operator(compiler_t* c, operator_kind op, const sexpr_t* arg
         case OPERATOR_LEFT_BRACKET: return compile_binary_op(c, OP_INDEX, "index", args, n, line, ctx);
         case OPERATOR_PIPE_FORWARD: return compile_pipe(c, args, n, line, ctx);
         case OPERATOR_DOT: return compile_dot(c, args, n, line, ctx);
+        case OPERATOR_DOUBLE_COLON: return compile_double_colon(c, args, n, line, ctx);
         case OPERATOR_LEFT_PAREN: {
             char msg[96];
             snprintf(msg, sizeof(msg), "Operator not implemented at line %" PRId64, line);
@@ -1394,8 +1429,21 @@ static bool compile_atom(compiler_t* c, token_t token, ctx_t* ctx)
 
 static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx_t* ctx)
 {
+#define CLEANUP() do {\
+    sv_free(&ctx->alloc, source_code); \
+    value_free(&path_value, &ctx->alloc); \
+    value_free(&module_name, &ctx->alloc); \
+} while (0)
+
     char* source_code = NULL;
-    char* import_path = NULL;
+    value_t path_value = value_nil;
+    value_t module_name = value_nil;
+
+    sv_str_t name;
+    TRY(expect_id(args[0], ctx, &name));
+    module_name = value_init_str(name, &ctx->alloc);
+    if (module_name.obj.cell == NULL)
+        return false;
 
     // get import file name
     char current_dir[FILENAME_MAX];
@@ -1404,7 +1452,7 @@ static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx
     current_dir[length] = '\0';
     memcpy(current_dir, c->current_path, length);
 
-    import_path = sv_str_to_c_str(args[1].atom.literal.str, &ctx->alloc);
+    char* import_path = sv_str_to_c_str(args[1].atom.literal.str, &ctx->alloc);
     if (import_path == NULL)
         goto error_oom;
 
@@ -1413,17 +1461,19 @@ static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx
 
     // check if module has already been compiled
     sv_str_t full_path_str = sv_str_init(import_full_path);
-    value_t path_value = value_init_str_own(full_path_str, &ctx->alloc);
+    path_value = value_init_str(full_path_str, &ctx->alloc);
     if (path_value.obj.cell == NULL)
         goto error_oom;
 
     if (thm_get(c->modules.compiled_modules, path_value).is_some) {
-        sv_free(&ctx->alloc, import_path);
+        CLEANUP();
         return true;
     }
     // add it to modules to be compiled
-    if (thm_get(c->modules.to_be_compiled_modules, path_value).is_some)
+    if (thm_get(c->modules.to_be_compiled_modules, path_value).is_some) {
+        CLEANUP();
         return compiler_error(ctx, (int)C_ERR_IMPORT_CICLE, "Import cicle detected");
+    }
     if (!thm_put(&c->modules.to_be_compiled_modules, (kv_t){ .key = path_value }, &ctx->alloc))
         goto error_oom;
 
@@ -1433,25 +1483,31 @@ static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx
         goto error_oom;
 
     const char* current_path = c->current_path;
+    transient_hashmap_t var_to_modules = c->var_to_modules;
     c->current_path = import_full_path;
     if (!compile_source(c, source_code, ctx)) {
+        CLEANUP();
         return false;
     }
+    if (!vmb_add_byte(&c->builder, OP_POP, 0, &ctx->alloc))
+        goto error_oom;
     c->current_path = current_path;
+    c->var_to_modules = var_to_modules;
 
     // insert file into compiled modules and remove it from to be compiled
     if (!thm_put(&c->modules.compiled_modules, (kv_t){ .key = path_value }, &ctx->alloc))
         goto error_oom;
+    if (!thm_put(&c->var_to_modules, (kv_t){ .key = module_name, .value = path_value }, &ctx->alloc))
+        goto error_oom;
     thm_delete(&c->modules.to_be_compiled_modules, path_value, &ctx->alloc);
 
     sv_free(&ctx->alloc, source_code);
-    sv_free(&ctx->alloc, import_path);
-
     return add_const(c, ctx, value_nil, line);
+
 error_oom:
-    sv_free(&ctx->alloc, source_code);
-    sv_free(&ctx->alloc, import_path);
+    CLEANUP();
     return compiler_oom(ctx, line);
+#undef CLEANUP
 }
 
 static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* ctx)
@@ -1576,6 +1632,10 @@ vm_t compile(const char* base_path, const char* source_code, ctx_t* ctx)
 #undef FNS_SIZE
 
     if (!compile_source(&compiler, source_code, ctx)) {
+        ERR_RETURN;
+    }
+    if (!vmb_add_byte(&compiler.builder, OP_RETURN, 0, &ctx->alloc)) {
+        compiler_oom(ctx, 0);
         ERR_RETURN;
     }
 
