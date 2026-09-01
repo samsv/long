@@ -83,6 +83,7 @@ Inside `m2`, it sees `y = 2`. The variable name `y` will be mangled in the compi
 `m2` and marks it as completed and it's variable names are cached. Compilation comes back to `m1`, which compiles `add_y` as
 `$FULL_PATH/m1.long$add_y`. Compilation comes back to main.
 
+<!-- Note: we are not actually getting the full path -->
 The compiler sees the `m2` import and uses its cached value to lookup its variable names. Then, `y = m2::y` will be translated by
 the compiler as `y = $FULL_PATH/m2.long$y` and `m1::add_y(y)` to `$FULL_PATH/m1.long$add_y(y)`.
 
