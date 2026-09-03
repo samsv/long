@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "pattern_shape.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -19,6 +20,7 @@ typedef struct {
 
 static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec);
 static sexpr_t parse_pattern(scanner_t* s, ctx_t* ctx);
+static sexpr_t parse_pattern_tail(scanner_t* s, ctx_t* ctx, sexpr_t lhs);
 
 static token_pattern kind_pattern(token_kind kind)
 {
@@ -246,6 +248,11 @@ static precedence infix_prec(operator_kind op)
     return (precedence){ .left = 0, .right = 0, .has_right = false };
 }
 
+/* Elements of a container parse above `=`, so `x, y = 1, 2` is not an assignment. */
+#define PREC_ELEMENT 5
+/* A parameter admits `=`, the alias `{x, ..} = rec`. Nothing binds looser than `=`. */
+#define PREC_PARAM 2
+
 /**
  * The tail of a list is itself a list, so only a variable or a list pattern can
  * ever match there. Anything else is rejected rather than left as a dead branch.
@@ -295,7 +302,8 @@ static sexpr_t parse_list_tail(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list
 }
 
 static sexpr_t parse_container(sv_vec_t(sexpr_t)* list, scanner_t* s, ctx_t* ctx,
-                               token_t open_token, token_pattern close, bool allow_tail)
+                               token_t open_token, token_pattern close, bool allow_tail,
+                               uint8_t min_prec)
 {
     token_t closer;
     if (parser_check(s, ctx, close, &closer))
@@ -310,7 +318,7 @@ static sexpr_t parse_container(sv_vec_t(sexpr_t)* list, scanner_t* s, ctx_t* ctx
             break;
         }
 
-        sexpr_t e = parse_expr(s, ctx, 5);
+        sexpr_t e = parse_expr(s, ctx, min_prec);
         if (is_error_sexpr(e))
             return free_list_error(list, ctx, e);
         if (!push_sexpr(list, e, ctx)) {
@@ -330,7 +338,8 @@ static sexpr_t parse_container(sv_vec_t(sexpr_t)* list, scanner_t* s, ctx_t* ctx
     return cons_sexpr(*list);
 }
 
-static sexpr_t parse_parens(scanner_t* s, ctx_t* ctx, token_t left_paren, sexpr_t* lhs)
+static sexpr_t parse_parens(scanner_t* s, ctx_t* ctx, token_t left_paren, sexpr_t* lhs,
+                            uint8_t min_prec)
 {
     sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
     if (lhs != NULL && !push_sexpr(&list, *lhs, ctx)) {
@@ -338,7 +347,8 @@ static sexpr_t parse_parens(scanner_t* s, ctx_t* ctx, token_t left_paren, sexpr_
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, left_paren.line)));
     }
 
-    return parse_container(&list, s, ctx, left_paren, kind_pattern(TOKEN_RIGHT_PAREN), false);
+    return parse_container(&list, s, ctx, left_paren, kind_pattern(TOKEN_RIGHT_PAREN), false,
+                           min_prec);
 }
 
 static sexpr_t parse_list(scanner_t* s, ctx_t* ctx, token_t open, token_pattern close)
@@ -348,7 +358,7 @@ static sexpr_t parse_list(scanner_t* s, ctx_t* ctx, token_t open, token_pattern 
     if (!push_sexpr(&list, atom_sexpr(list_atom), ctx))
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
 
-    return parse_container(&list, s, ctx, open, close, true);
+    return parse_container(&list, s, ctx, open, close, true, PREC_ELEMENT);
 }
 
 static sexpr_t parse_hashmap(scanner_t* s, ctx_t* ctx, token_t open)
@@ -617,6 +627,8 @@ static bool clause_matches_params(sexpr_t pattern, int64_t n_params)
 {
     if (n_params < 2)
         return true;
+    while (pattern_is_alias(pattern))
+        pattern = alias_pattern(pattern);
     if (pattern.tag == S_ATOM)
         return pattern.atom.kind == TOKEN_LITERAL
             && pattern.atom.literal.kind == LITERAL_IDENTIFIER;
@@ -690,7 +702,9 @@ static sexpr_t parse_fun_clauses(scanner_t* s, ctx_t* ctx, sexpr_t args, token_t
                 *term = (token_t){ .kind = TOKEN_PIPE, .line = id.line };
                 break;
             }
-            pattern = atom_sexpr(id);
+            pattern = parse_pattern_tail(s, ctx, atom_sexpr(id));
+            if (is_error_sexpr(pattern))
+                return free_list_error(&list, ctx, pattern);
         } else {
             pattern = parse_pattern(s, ctx);
             if (is_error_sexpr(pattern))
@@ -755,7 +769,7 @@ static sexpr_t parse_fun_body(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list,
         sv_vec_t(sexpr_t) captures = sv_vec_init(sexpr_t);
         sexpr_t closure_vals =
             parse_container(&captures, s, ctx, left_bracket,
-                            kind_pattern(TOKEN_RIGHT_BRACKET), false);
+                            kind_pattern(TOKEN_RIGHT_BRACKET), false, PREC_ELEMENT);
         if (is_error_sexpr(closure_vals))
             return free_list_error(list, ctx, closure_vals);
         if (!push_sexpr(list, closure_vals, ctx)) {
@@ -768,7 +782,7 @@ static sexpr_t parse_fun_body(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list,
     if (left_paren.kind == TOKEN_ERROR)
         return free_list_error(list, ctx, atom_sexpr(left_paren));
 
-    sexpr_t args = parse_parens(s, ctx, left_paren, NULL);
+    sexpr_t args = parse_parens(s, ctx, left_paren, NULL, PREC_PARAM);
     if (is_error_sexpr(args))
         return free_list_error(list, ctx, args);
     if (!push_sexpr(list, args, ctx)) {
@@ -1141,7 +1155,7 @@ static sexpr_t parse_hashmap_pattern(scanner_t* s, ctx_t* ctx, token_t open)
     return cons_sexpr(list);
 }
 
-static sexpr_t parse_pattern(scanner_t* s, ctx_t* ctx)
+static sexpr_t parse_pattern_primary(scanner_t* s, ctx_t* ctx)
 {
     token_t token = scanner_next(s, ctx);
     if (token.kind == TOKEN_ERROR)
@@ -1176,6 +1190,40 @@ static sexpr_t parse_pattern(scanner_t* s, ctx_t* ctx)
     }
 
     return unexpected_token_error(ctx, token, "Expected a pattern");
+}
+
+/**
+ * Reads an optional `= pattern` after a pattern. `p = name` (or `name = p`) binds the name
+ * to the whole value and goes on matching p against it, so one side must be a name: two
+ * shapes could never both hold. Right associative through the recursion.
+ */
+static sexpr_t parse_pattern_tail(scanner_t* s, ctx_t* ctx, sexpr_t lhs)
+{
+    token_t eq;
+    if (!parser_check(s, ctx, op_pattern(OPERATOR_EQUAL), &eq))
+        return lhs;
+
+    sexpr_t rhs = parse_pattern(s, ctx);
+    if (is_error_sexpr(rhs)) {
+        sexpr_free(&lhs, &ctx->alloc);
+        return rhs;
+    }
+    if (!pattern_is_name(lhs) && !pattern_is_name(rhs)) {
+        sexpr_free(&lhs, &ctx->alloc);
+        sexpr_free(&rhs, &ctx->alloc);
+        return unexpected_token_error(ctx, eq, "One side of '=' in a pattern must be a name, got");
+    }
+
+    sexpr_t items[] = { atom_sexpr(eq), lhs, rhs };
+    return cons_of(ctx, items, 3, eq.line);
+}
+
+static sexpr_t parse_pattern(scanner_t* s, ctx_t* ctx)
+{
+    sexpr_t primary = parse_pattern_primary(s, ctx);
+    if (is_error_sexpr(primary))
+        return primary;
+    return parse_pattern_tail(s, ctx, primary);
 }
 
 static sexpr_t parse_match(scanner_t* s, ctx_t* ctx, token_t match_token)
@@ -1342,7 +1390,7 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
             lhs = cons_of(ctx, items, 3, token.line);
         } else if (op == OPERATOR_LEFT_PAREN) {
             sexpr_t callee = lhs;
-            lhs = parse_parens(s, ctx, token, &callee);
+            lhs = parse_parens(s, ctx, token, &callee, PREC_ELEMENT);
         } else {
             lhs = parse_bracket(s, ctx, token, lhs);
         }

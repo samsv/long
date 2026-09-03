@@ -593,6 +593,23 @@ static bool is_negative_number(sexpr_t e)
 }
 
 /**
+ * Both sides of an alias match the same subject, and every arm leaves the subject on top,
+ * so the second side simply runs after the first.
+ */
+static bool bind_alias(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
+                       int64_t line, ctx_t* ctx)
+{
+    if (!pattern_is_name(pattern.cons.arr[1]) && !pattern_is_name(pattern.cons.arr[2])) {
+        char msg[96];
+        snprintf(msg, sizeof(msg),
+                 "One side of '=' in a pattern must be a name at line %" PRId64, line);
+        return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR, msg);
+    }
+    TRY(bind_pattern(c, pattern.cons.arr[1], seen, line, ctx));
+    return bind_pattern(c, pattern.cons.arr[2], seen, line, ctx);
+}
+
+/**
  * Compiles one pattern against the value on the stack top, leaving that value in
  * place. Every arm holds to that: the subject is on top on entry and on top on exit,
  * which is what lets the container cases read a part, recurse and pop back. A
@@ -614,6 +631,8 @@ static bool bind_pattern(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* see
 
     if (is_negative_number(pattern))
         return bind_literal(c, pattern, line, ctx);
+    if (pattern_is_alias(pattern))
+        return bind_alias(c, pattern, seen, line, ctx);
 
     token_t head = pattern.cons.arr[0].atom;
     if (head.kind != TOKEN_SP_FUNCTION)

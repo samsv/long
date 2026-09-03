@@ -9,8 +9,9 @@
 /* Only has to be stable: it namespaces the globals. */
 #define SV_TEST_PATH "tests/main.long"
 
-/* The n-th field a program interns, after the ids the compiler reserves. */
-#define SV_TEST_FIELD(n) sv_test_compiler_val(RECORD_FIELD_VALUE + 1 + (n))
+/* The n-th field a program interns: compile() reserves two ids first, for map iteration. */
+#define SV_TEST_RESERVED_FIELDS 2
+#define SV_TEST_FIELD(n) sv_test_compiler_val(SV_TEST_RESERVED_FIELDS + (n))
 
 static inline value_t sv_test_compiler_eval(const char* src, bool* ok)
 {
@@ -338,6 +339,8 @@ static inline void sv_test_compiler_for(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("for [h, ..t] in [[1, 9], [2, 8]] do h end", 2));
    sv_test_run(t, sv_test_compiler_num("for (a, [b, c]) in [(1, [2, 3])] do a + b + c end", 6));
    sv_test_run(t, sv_test_compiler_num("for (_, b) in [(1, 2), (3, 4)] do b end", 4));
+   sv_test_run(t, sv_test_compiler_num("for (a, b) = p in [(1, 2), (3, 4)] do a + b + p[0] end", 10));
+   sv_test_run(t, sv_test_compiler_num("for p = {x, ..} in [{x: 1}, {x: 2}] do x * 10 + p.x end", 22));
    sv_test_run(t, sv_test_compiler_num("k = 10\nfor (a, b) in [(1, 2)] do a + b + k end", 13));
    sv_test_run(t, sv_test_compiler_num(
       "for (a, b) in [(1,1),(2,2),(3,3),(4,4),(5,5)] do a + b end", 10));
@@ -602,6 +605,30 @@ static inline void sv_test_compiler_match(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("match [1, 9] | [1, 2] do 8 | [1, 3] do 9 | _ do 5 end", 5));
    sv_test_run(t, sv_test_compiler_num("match {a: 2, b: 3} | {a: 1, b: v} do v | _ do 6 end", 6));
    sv_test_run(t, sv_test_compiler_num("match [[1], 9] | [[1], 2] do 8 | _ do 4 end", 4));
+
+   /* Aliases: on the scrutinee, on a tuple column, on the remaining column, under a guard. */
+   sv_test_run(t, sv_test_compiler_num("match {x: 1, y: 2} | {x: 1, ..} = r do r.y end", 2));
+   sv_test_run(t, sv_test_compiler_num("match {x: 1, y: 2} | r = {x: 1, ..} do r.y end", 2));
+   sv_test_run(t, sv_test_compiler_num("match (1, {a: 2}) | (1, {a} = r) do a + r.a end", 4));
+   sv_test_run(t, sv_test_compiler_num("match (1, 2) | (1, x = y) do x + y end", 4));
+   sv_test_run(t, sv_test_compiler_num("match (1, 2) | (x = y, 2) do x + y end", 2));
+   sv_test_run(t, sv_test_compiler_num(
+      "match [1, 2] | [h, ..t] = l when h == 1 do l[1] | _ do 0 end", 2));
+   sv_test_run(t, sv_test_compiler_num(
+      "match [1, 2] | [h, ..t] = l when h == 2 do l[1] | _ do 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("match 5 | a = b do a + b end", 10));
+   /* The alias row keeps its place among the other rows. */
+   sv_test_run(t, sv_test_compiler_num("match {a: 1} | {a: 2} = r do 0 | {a: b} do b end", 1));
+   sv_test_run(t, sv_test_compiler_num("match {a: 2} | {a: 2} = r do r.a | {a: b} do b end", 2));
+   /* Nested in a record value, a list head and a tuple element, and a missing key. */
+   sv_test_run(t, sv_test_compiler_num("match {k: {a: 1}} | {k: {a} = i} do i.a + a end", 2));
+   sv_test_run(t, sv_test_compiler_num("match {k: 1} | {z: {a} = i} do 1 | _ do 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("match [{a: 1}] | [{a} = r] do r.a + a end", 2));
+   sv_test_run(t, sv_test_compiler_num("match ((1, 2), 3) | ((a, b) = t, c) do a + b + c + t[1] end", 8));
+   /* A scrutinee that is not a name is evaluated once and the alias binds its temporary. */
+   sv_test_run(t, sv_test_compiler_num("fun g() {x: 3}\nmatch g() | {x} = r do r.x + x end", 6));
+   sv_test_run(t, sv_test_compiler_num("match 1 + 1 | 3 = r do 0 | r = 2 do r end", 2));
+   sv_test_run(t, sv_test_compiler_num("match 5 | (a = b) = c do a + b + c end", 15));
 }
 
 static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
@@ -763,6 +790,16 @@ static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
    sv_test_run(t, ok);
    sv_test_run(t, v.kind == VALUE_BOOL && v.boolean);
    value_free(&v, &sv_gpa);
+
+   /* Aliases in clause heads, name first or last, and over a parameter tuple. */
+   sv_test_run(t, sv_test_compiler_num(
+      "fun f(p) | r = {x, ..} do r.x + x | _ do 0 end\nf({x: 2})", 4));
+   sv_test_run(t, sv_test_compiler_num(
+      "fun f(p) | {x, ..} = r do r.x + x | _ do 0 end\nf({y: 2})", 0));
+   sv_test_run(t, sv_test_compiler_num(
+      "fun f(a, b) | (x, y) = t do x + y + t[0] end\nf(1, 2)", 4));
+   sv_test_run(t, sv_test_compiler_num(
+      "fun f(a, b) | (0, y) do y | (x, y) = t when x > 0 do t[1] * 10 | _ do 0 end\nf(1, 2)", 20));
 }
 
 static inline void sv_test_compiler_destructure(sv_testing_t* t)
@@ -855,6 +892,19 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
    /* A match with no matching clause raises rather than yielding nil. */
    sv_test_run(t, sv_test_compiler_runtime_err("match 5 | 1 do 2 end") == VM_ERR_NO_CLAUSE);
    sv_test_run(t, sv_test_compiler_runtime_err("match 5 end") == VM_ERR_NO_CLAUSE);
+
+   /* An alias binds the whole value and goes on matching the other side, in either order. */
+   sv_test_run(t, sv_test_compiler_num(
+      "fun f({x, y, ..} = r, o) do\nif r.x == x do o else 0 end\nend\nf({x: 1, y: 2, z: 3}, 9)", 9));
+   sv_test_run(t, sv_test_compiler_num("fun f(r = {x, ..}) x + r.y\nf({x: 1, y: 2})", 3));
+   sv_test_run(t, sv_test_compiler_num("fun f([h, ..t] = l) h + l[1]\nf([1, 2])", 3));
+   sv_test_run(t, sv_test_compiler_num("fun f((a, b) = t, c) a + b + c + t[0]\nf((1, 2), 3)", 7));
+   sv_test_run(t, sv_test_compiler_num("fun f(x = y) x + y\nf(2)", 4));
+   sv_test_run(t, sv_test_compiler_num("fun f(x = 1) x\nf(1)", 1));
+   sv_test_run(t, sv_test_compiler_runtime_err("fun f(x = 1) x\nf(2)") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_num("({a, ..} = r) = {a: 5}\na + r.a", 10));
+   sv_test_run(t, sv_test_compiler_num("x = (a = b = 4)\na + b + x", 12));
+   sv_test_run(t, sv_test_compiler_runtime_err("fun f({x, ..} = r) x\nf(5)") == VM_ERR_MATCH_FAILED);
 }
 
 static inline void sv_test_compiler(sv_testing_t* t)

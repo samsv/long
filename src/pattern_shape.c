@@ -40,3 +40,28 @@ int64_t record_n_fields(sexpr_t rec)
     int64_t n = rec.cons.size - 1 - (record_is_open(rec) ? 1 : 0);
     return n / 2;
 }
+
+bool pattern_is_name(sexpr_t e)
+{
+    return e.tag == S_ATOM
+        && e.atom.kind == TOKEN_LITERAL
+        && e.atom.literal.kind == LITERAL_IDENTIFIER;
+}
+
+bool pattern_is_alias(sexpr_t e)
+{
+    return e.tag == S_CONS && e.cons.size == 3
+        && e.cons.arr[0].tag == S_ATOM
+        && e.cons.arr[0].atom.kind == TOKEN_OPERATOR
+        && e.cons.arr[0].atom.operator == OPERATOR_EQUAL;
+}
+
+sexpr_t alias_name(sexpr_t alias)
+{
+    return pattern_is_name(alias.cons.arr[2]) ? alias.cons.arr[2] : alias.cons.arr[1];
+}
+
+sexpr_t alias_pattern(sexpr_t alias)
+{
+    return pattern_is_name(alias.cons.arr[2]) ? alias.cons.arr[1] : alias.cons.arr[2];
+}

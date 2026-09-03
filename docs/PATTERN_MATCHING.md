@@ -365,6 +365,27 @@ to a lookup that binds on success and FAILs the row otherwise.
 Map patterns follow the same schema, including the trailing `..` that makes a pattern open: `%{"k": v, ..}` requires
 only the keys it names, while `%{"k": v}` also pins the size.
 
+An aliased row is stripped before the columns are built, so `{x: 1, ..} = r` is the row `{x: 1, ..}` with `r`
+bound around its body:
+```clojure
+(match var
+    (tuple (= x (record x 1 y y ..)) body1)
+    (tuple (= y (record z 0 x 0 ..)) body2))
+;; becomes
+(match var
+    (tuple (record x 1 y y ..) (do (= x var) body1))
+    (tuple (record z 0 x 0 ..) (do (= y var) body2)))
+;; and lowers as any record match
+(do
+    (= $1 (record-get? var x))
+    (= $2 (record-get? var y))
+    (= $3 (record-get? var z))
+    (= $4 (length var))
+    (match (tuple $1 $2 $3 $4)
+        (tuple (tuple 1 y _ _) (do (= x var) body1))
+        (tuple (tuple 0 _ 0 _) (do (= y var) body2))))
+```
+
 ## Column reordering
 We may reorder the columns of a tuple pattern match without changing the final result. Reordering the columns may lead to a smaller decision tree. Let's take
 the example

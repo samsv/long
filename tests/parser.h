@@ -28,6 +28,17 @@ static inline void sv_test_parse_error(sv_testing_t* t, const char* src, int exp
    sv_str_deinit(&ctx.err.msg, &ctx.alloc);
 }
 
+static inline void sv_test_parse_ok(sv_testing_t* t, const char* src)
+{
+   ctx_t ctx = sv_test_parse_ctx();
+   scanner_t s = scanner_init(sv_str_init(src));
+   sexpr_t e = parser_program(&s, &ctx);
+   sv_test_run_msg(t, ctx.err.error_code == 0, "expected \"%s\" to parse", src);
+   if (ctx.err.msg.size > 0)
+      sv_str_deinit(&ctx.err.msg, &ctx.alloc);
+   sexpr_free(&e, &ctx.alloc);
+}
+
 static inline void sv_test_parser_exprs(sv_testing_t* t)
 {
    sv_test_parse_error(t, ", 2", PARSER_ERROR_UNEXPECTED_TOKEN);
@@ -94,6 +105,29 @@ static inline void sv_test_parser_match(sv_testing_t* t)
    sv_test_parse_error(t, "match x | [..t, 1] do 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | %{k: 1} do 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | 1 + 1 do 2 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+}
+
+static inline void sv_test_parser_alias(sv_testing_t* t)
+{
+   /* `pattern = name` binds the whole value, in every pattern position. */
+   sv_test_parse_ok(t, "fun f({x, y, ..} = r, o) x");
+   sv_test_parse_ok(t, "fun f(r = {x, ..}) x");
+   sv_test_parse_ok(t, "fun f(a = b = c) a");
+   sv_test_parse_ok(t, "match x | {a, ..} = r do r end");
+   sv_test_parse_ok(t, "match x | r = [h, ..t] do r end");
+   sv_test_parse_ok(t, "match x | (1, a = b) when a > 0 do a end");
+   sv_test_parse_ok(t, "fun f(x) | r = {a, ..} do r | _ do 0 end");
+   sv_test_parse_ok(t, "fun f(a, b) | (x, y) = t do t end");
+   sv_test_parse_ok(t, "for (a, b) = p in xs do a end");
+   sv_test_parse_ok(t, "({a, ..} = r) = e");
+
+   /* One side must be a name; a list tail cannot be aliased; call arguments stay above `=`. */
+   sv_test_parse_error(t, "match x | 1 = 2 do 3 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | (a, b) = [c] do 3 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "match x | [h, ..t = w] do h end", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "[h, ..t = w] = l", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "f(x = 1)", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "fun f(a, b) | (x, y) = t = u do t end", PARSER_ERROR_UNEXPECTED_TOKEN);
 }
 
 static inline void sv_test_parser_errors(sv_testing_t* t)
@@ -222,14 +256,14 @@ static inline void sv_test_parser_oom(sv_testing_t* t)
     * allocation on that path is exercised under failure. */
    int64_t errored = 0;
    int64_t completed = 0;
-   for (int64_t budget = 0; budget < 80; budget++) {
+   for (int64_t budget = 0; budget < 120; budget++) {
       sv_test_countdown_t c = { .remaining = budget };
       sv_allocator_t cd = { .vtable = &sv_test_countdown_vtable, .self = &c };
       ctx_t ctx = { .alloc = cd, .logger = sv_std_logger, .err = { 0 } };
 
       scanner_t sc = scanner_init(sv_str_init(
          "match x | (1, a) when a > 0 do a + 1 | [h, ..t] do h | {k: v, ..} do v"
-         " | _ do 0 end"));
+         " | {k: 1, ..} = r do r | _ do 0 end"));
       sexpr_t e3 = parser_expr(&sc, &ctx);
       if (e3.tag == S_ATOM && e3.atom.kind == TOKEN_ERROR)
          errored++;
@@ -251,6 +285,7 @@ static inline void sv_test_parser(sv_testing_t* t)
    sv_test_parser_program_fn(t);
    sv_test_parser_maps(t);
    sv_test_parser_match(t);
+   sv_test_parser_alias(t);
    sv_test_parser_errors(t);
    sv_test_parser_oom(t);
 }

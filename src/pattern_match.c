@@ -1,4 +1,5 @@
 #include "pattern_match.h"
+#include "pattern_shape.h"
 #include "obj/map.h"
 #include "stable_sort.h"
 #include "compiler.h"
@@ -396,6 +397,27 @@ static sexpr_t match_fail(cons_t* cons, sexpr_t u)
     return cons_sexpr(*cons);
 }
 
+/**
+ * Strips the aliases off a pattern matched against u, binding each name around the body
+ * (tuple (= name p) body)
+ * to
+ * (tuple p (do (= name u) body))
+ * Returns the wrapped body and leaves p in pat.
+ */
+static sexpr_t strip_alias(cons_t match, sexpr_t* pat, sexpr_t body, sexpr_t u, ctx_t* ctx)
+{
+    while (pattern_is_alias(*pat)) {
+        INIT_CAPACITY(eql, 3);
+        INIT_DO(do_expr, 2);
+        APPEND_CAP(&do_expr, bind_var(&eql, alias_name(*pat), u));
+        APPEND_CAP(&do_expr, body);
+
+        body = cons_sexpr(do_expr);
+        *pat = alias_pattern(*pat);
+    }
+    return body;
+}
+
 static sexpr_t compile_pattern(cons_t match, int* start_i, sexpr_t u,  sexpr_t deflt_fail, ctx_t* ctx);
 
 #define TUPLE_SIZE(i) GET_COND(match, (i)).cons.size - 1
@@ -465,7 +487,7 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
     // match conditions
     for (int64_t i = 2; i < match.size; i++) {
         sexpr_t head = GET_COND(match, i).cons.arr[target_column];
-        sexpr_t row_body = GET_BODY(match, i);
+        TRY(row_body, strip_alias(match, &head, GET_BODY(match, i), lower_match.arr[1], ctx));
 
         // Make different named variable patterns work by binding the given name to the body
         if (pattern_class_of(head) == PAT_VAR && !is_wildcard(head)) {
@@ -489,9 +511,15 @@ static sexpr_t compile_tuple(cons_t match, ctx_t* ctx)
         INIT_TUPLE(cond_tuple, 2);
 
         INIT_TUPLE(cond_tuple_pats, TUPLE_SIZE(i) - 1);
-        for (int64_t j = 1; j < TUPLE_SIZE(i) + 1; j++)
-            if (j != target_column)
-                APPEND_CAP(&cond_tuple_pats, GET_COND(match, i).cons.arr[j]);
+        for (int64_t j = 1; j < TUPLE_SIZE(i) + 1; j++) {
+            if (j == target_column)
+                continue;
+            // the other columns are matched against u_2 u_3 ...
+            sexpr_t pat = GET_COND(match, i).cons.arr[j];
+            TRY(wrapped, strip_alias(match, &pat, row_body, match.arr[1].cons.arr[j], ctx));
+            row_body = wrapped;
+            APPEND_CAP(&cond_tuple_pats, pat);
+        }
         sexpr_t pats_sexpr = cond_tuple_pats.size > 2 ? cons_sexpr(cond_tuple_pats) : cond_tuple_pats.arr[1];
         APPEND_CAP(&cond_tuple, pats_sexpr);
         APPEND_CAP(&cond_tuple, row_body);
@@ -1109,33 +1137,50 @@ sexpr_t match_compile(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
         return err;
     }
 
-    group(&s.cons);
     cons_t match = s.cons;
+    sexpr_t subject = match.arr[1];
+    sexpr_t u = pattern_is_name(subject) ? subject : next_u();
 
     for (int i = CONDS_START; i < s.cons.size; i++) {
         cons_t* body = &GET_BODY(s.cons, i).cons;
-        if (!is_when(body->arr[0]))
-            continue;
+        if (is_when(body->arr[0])) {
+            body->arr[0] = ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_IF);
+            int success = 0;
+            sv_vec_push(body, id_atom(FAIL_NAME), &success, &ctx->alloc);
+            if (!success)  {
+                // use the arena to allocate the error
+                error_set_oom(&ctx->err, C_ERR_OOM, match.arr[0].atom.line, &arena);
+                return ATOM_TOKEN_NO_CASE(TOKEN_ERROR);
+            }
+        }
 
-        body->arr[0] = ATOM_TOKEN(TOKEN_SP_FUNCTION, .fn = FN_IF);
-        int success = 0;
-        sv_vec_push(body, id_atom(FAIL_NAME), &success, &ctx->alloc);
-        if (!success)  {
-            // use the arena to allocate the error
-            error_set_oom(&ctx->err, C_ERR_OOM, match.arr[0].atom.line, &arena);
-            return ATOM_TOKEN_NO_CASE(TOKEN_ERROR);
+        // (tuple (= name p) body) to (tuple p (do (= name u) body))
+        while (pattern_is_alias(GET_COND(s.cons, i))) {
+            cons_t do_expr = sv_vec_init_capacity(sexpr_t, 3, &ctx->alloc);
+            if (do_expr.arr == NULL) {
+                error_set_oom(&ctx->err, C_ERR_OOM, match.arr[0].atom.line, &arena);
+                return ATOM_TOKEN_NO_CASE(TOKEN_ERROR);
+            }
+
+            sexpr_t alias = GET_COND(s.cons, i);
+            GET_COND(s.cons, i) = alias_pattern(alias);
+            // the alias cons is reused as the binding (= name u)
+            alias.cons.arr[1] = alias_name(alias);
+            alias.cons.arr[2] = u;
+
+            APPEND_CAP(&do_expr, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_DO));
+            APPEND_CAP(&do_expr, alias);
+            APPEND_CAP(&do_expr, GET_BODY(s.cons, i));
+            GET_BODY(s.cons, i) = cons_sexpr(do_expr);
         }
     }
+    group(&s.cons);
 
     ctx->alloc = arena;
     INIT_CAPACITY_L(match_fail_expr, 2)
 
-    sexpr_t subject = match.arr[1];
-    if (subject.tag == S_ATOM &&
-        subject.atom.kind == TOKEN_LITERAL &&
-        subject.atom.literal.kind == LITERAL_IDENTIFIER
-    ) {
-        ret = compile_pattern(match, &start_i, subject, match_fail(&match_fail_expr, subject), ctx);
+    if (pattern_is_name(subject)) {
+        ret = compile_pattern(match, &start_i, u, match_fail(&match_fail_expr, u), ctx);
         goto ret;
     }
 
@@ -1143,9 +1188,8 @@ sexpr_t match_compile(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
     INIT_CAPACITY_L(do_expr, 3);
     APPEND_CAP(&do_expr, ATOM_TOKEN(TOKEN_KEYWORD, .keyword = KEYWORD_DO));
 
-    sexpr_t u = next_u();
     INIT_CAPACITY_L(eql_expr, 3);
-    APPEND_CAP(&do_expr, bind_var(&eql_expr, u, match.arr[1]));
+    APPEND_CAP(&do_expr, bind_var(&eql_expr, u, subject));
 
     sexpr_t expr = compile_pattern(match, &start_i, u, match_fail(&match_fail_expr, u), ctx);
     if (expr.tag == S_ATOM && expr.atom.kind == TOKEN_ERROR) {

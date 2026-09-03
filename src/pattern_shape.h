@@ -19,4 +19,22 @@ int64_t record_n_fields(sexpr_t);
 bool hashmap_is_open(sexpr_t);
 int64_t hashmap_n_keys(sexpr_t);
 
+/**
+ * True for a plain name, an identifier atom.
+ */
+bool pattern_is_name(sexpr_t);
+/**
+ * True for an alias pattern, `(= name p)`. One side is always a name.
+ */
+bool pattern_is_alias(sexpr_t);
+/**
+ * The name an alias binds: the right side when it is a name, so `x = y` binds `y` and
+ * keeps `x` as the pattern variable.
+ */
+sexpr_t alias_name(sexpr_t);
+/**
+ * The side of an alias that goes on matching.
+ */
+sexpr_t alias_pattern(sexpr_t);
+
 #endif
