@@ -3,6 +3,6 @@
 ✅ Named tuples (and dot operator)
 ✅ Pattern match
 ✅ Modules
-Hashmap iterator
-Tail Recursion
+✅ Hashmap iterator
 Map, mapf, reduce
+Tail Recursion

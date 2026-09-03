@@ -1,5 +1,4 @@
 #include "parser.h"
-#include "pattern_shape.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -574,101 +573,35 @@ static sexpr_t parse_clause_body(scanner_t* s, ctx_t* ctx, int64_t line, token_t
 }
 
 /**
- * True when every alternative binds exactly the same variables. Otherwise a row
- * would be missing a name the body uses, which would quietly read a global of
- * that name if one existed.
+ * Emits one clause, taking ownership of pattern and of body.
  */
-static bool same_alt_vars(sv_vec_t(sexpr_t)* alts, ctx_t* ctx)
+static sexpr_t push_clause(sv_vec_t(sexpr_t)* list, sexpr_t pattern, sexpr_t body,
+                           sexpr_t tuple_atom, int64_t line, ctx_t* ctx)
 {
-    sv_vec_t(sv_str_t) first = sv_vec_init(sv_str_t);
-    if (!pattern_vars(alts->arr[0], &first, ctx)) {
-        sv_vec_deinit(&first, &ctx->alloc);
-        return false;
-    }
+    sexpr_t items[] = { tuple_atom, pattern, body };
+    sexpr_t clause = cons_of(ctx, items, 3, line);
+    if (is_error_sexpr(clause))
+        return clause;
 
-    bool ok = true;
-    for (int64_t i = 1; i < alts->size && ok; i++) {
-        sv_vec_t(sv_str_t) other = sv_vec_init(sv_str_t);
-        ok = pattern_vars(alts->arr[i], &other, ctx) && other.size == first.size;
-        for (int64_t j = 0; j < first.size && ok; j++) {
-            bool found = false;
-            for (int64_t k = 0; k < other.size && !found; k++)
-                found = sv_str_comp(first.arr[j], other.arr[k]);
-            ok = found;
-        }
-        sv_vec_deinit(&other, &ctx->alloc);
+    if (!push_sexpr(list, clause, ctx)) {
+        sexpr_free(&clause, &ctx->alloc);
+        return atom_sexpr(oom_error(ctx, line));
     }
-
-    sv_vec_deinit(&first, &ctx->alloc);
-    return ok;
+    return (sexpr_t){ .tag = S_ATOM, .atom = { .kind = TOKEN_EOF, .line = line } };
 }
 
 /**
- * Emits one clause for a set of alternatives. Several alternatives become an
- * `(or ...)` pattern, which the lowering turns into one row each sharing a single
- * compiled body. Takes ownership of every alternative and of body.
+ * A clause holds one pattern, so a `|` before the body is an error. The caller
+ * still owns what it passed in.
  */
-static sexpr_t push_alt_clauses(sv_vec_t(sexpr_t)* list, sv_vec_t(sexpr_t)* alts,
-                                sexpr_t body, sexpr_t tuple_atom, int64_t line, ctx_t* ctx)
+static bool reject_alternative(scanner_t* s, ctx_t* ctx, sexpr_t* err)
 {
-    sexpr_t err = { .tag = S_ATOM, .atom = { .kind = TOKEN_EOF, .line = line } };
-    sexpr_t pattern = { 0 };
+    token_t pipe;
+    if (!parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &pipe))
+        return false;
 
-    if (alts->size > 1) {
-        if (!same_alt_vars(alts, ctx)) {
-            if (ctx->err.error_code == 0)
-                err = atom_sexpr(parser_error_at(
-                    ctx, PARSER_ERROR_UNEXPECTED_TOKEN, line,
-                    "Alternative patterns must bind the same variables"));
-            else
-                err = atom_sexpr((token_t){ .kind = TOKEN_ERROR, .line = line });
-            goto fail;
-        }
-
-        sv_vec_t(sexpr_t) alt_list = sv_vec_init(sexpr_t);
-        token_t or_token = { .kind = TOKEN_KEYWORD, .line = line, .keyword = KEYWORD_OR };
-        if (!push_sexpr(&alt_list, atom_sexpr(or_token), ctx)) {
-            sv_vec_deinit(&alt_list, &ctx->alloc);
-            err = atom_sexpr(oom_error(ctx, line));
-            goto fail;
-        }
-        for (int64_t i = 0; i < alts->size; i++) {
-            if (!push_sexpr(&alt_list, alts->arr[i], ctx)) {
-                sexpr_free(&alts->arr[i], &ctx->alloc);
-                alts->arr[i] = (sexpr_t){ 0 };
-                err = free_list_error(&alt_list, ctx, atom_sexpr(oom_error(ctx, line)));
-                goto fail;
-            }
-            alts->arr[i] = (sexpr_t){ 0 };
-        }
-        pattern = cons_sexpr(alt_list);
-    } else {
-        pattern = alts->arr[0];
-        alts->arr[0] = (sexpr_t){ 0 };
-    }
-
-    sexpr_t items[] = { tuple_atom, pattern, body };
-    sexpr_t clause = cons_of(ctx, items, 3, line);
-    if (is_error_sexpr(clause)) {
-        sv_vec_deinit(alts, &ctx->alloc);
-        return clause;
-    }
-    if (!push_sexpr(list, clause, ctx)) {
-        sexpr_free(&clause, &ctx->alloc);
-        sv_vec_deinit(alts, &ctx->alloc);
-        return atom_sexpr(oom_error(ctx, line));
-    }
-
-    sv_vec_deinit(alts, &ctx->alloc);
-    return err;
-
-fail:
-    for (int64_t i = 0; i < alts->size; i++)
-        sexpr_free(&alts->arr[i], &ctx->alloc);
-    sv_vec_deinit(alts, &ctx->alloc);
-    sexpr_free(&pattern, &ctx->alloc);
-    sexpr_free(&body, &ctx->alloc);
-    return err;
+    *err = unexpected_token_error(ctx, pipe, "Expected 'do' or 'when' after a clause pattern, got");
+    return true;
 }
 
 static token_t pattern_head(sexpr_t pattern)
@@ -764,58 +697,34 @@ static sexpr_t parse_fun_clauses(scanner_t* s, ctx_t* ctx, sexpr_t args, token_t
                 return free_list_error(&list, ctx, pattern);
         }
 
-        /* Only the first pattern goes through the member lookahead above; every
-         * `|` after it adds an alternative to this clause. */
-        sv_vec_t(sexpr_t) alts = sv_vec_init(sexpr_t);
+        if (!clause_matches_params(pattern, args.cons.size)) {
+            int64_t line = pattern_head(pattern).line;
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "Clause must be a %" PRId64 " element tuple or a variable at line %" PRId64,
+                     args.cons.size, line);
+            sexpr_free(&pattern, &ctx->alloc);
+            return free_list_error(&list, ctx,
+                atom_sexpr(parser_error_at(ctx, PARSER_ERROR_UNEXPECTED_TOKEN, line, msg)));
+        }
+
         sexpr_t err;
-        for (;;) {
-            if (!clause_matches_params(pattern, args.cons.size)) {
-                int64_t line = pattern_head(pattern).line;
-                char msg[128];
-                snprintf(msg, sizeof(msg),
-                         "Clause must be a %" PRId64 " element tuple or a variable at line %" PRId64,
-                         args.cons.size, line);
-                sexpr_free(&pattern, &ctx->alloc);
-                err = atom_sexpr(parser_error_at(ctx, PARSER_ERROR_UNEXPECTED_TOKEN, line, msg));
-                goto clause_error;
-            }
-            if (!push_sexpr(&alts, pattern, ctx)) {
-                sexpr_free(&pattern, &ctx->alloc);
-                err = atom_sexpr(oom_error(ctx, fun_token.line));
-                goto clause_error;
-            }
-
-            token_t pipe;
-            if (!parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &pipe))
-                break;
-
-            pattern = parse_pattern(s, ctx);
-            if (is_error_sexpr(pattern)) {
-                err = pattern;
-                goto clause_error;
-            }
+        if (reject_alternative(s, ctx, &err)) {
+            sexpr_free(&pattern, &ctx->alloc);
+            return free_list_error(&list, ctx, err);
         }
 
         token_t inner = { .kind = TOKEN_EOF };
         sexpr_t body = parse_clause_body(s, ctx, fun_token.line, &inner);
         if (is_error_sexpr(body)) {
-            err = body;
-            goto clause_error;
+            sexpr_free(&pattern, &ctx->alloc);
+            return free_list_error(&list, ctx, body);
         }
 
         token_t tuple = { .kind = TOKEN_SP_FUNCTION, .line = fun_token.line, .fn = FN_TUPLE };
-        err = push_alt_clauses(&list, &alts, body, atom_sexpr(tuple), fun_token.line, ctx);
+        err = push_clause(&list, pattern, body, atom_sexpr(tuple), fun_token.line, ctx);
         if (is_error_sexpr(err))
             return free_list_error(&list, ctx, err);
-        goto clause_done;
-
-clause_error:
-        for (int64_t i = 0; i < alts.size; i++)
-            sexpr_free(&alts.arr[i], &ctx->alloc);
-        sv_vec_deinit(&alts, &ctx->alloc);
-        return free_list_error(&list, ctx, err);
-
-clause_done:
 
         if (inner.kind != TOKEN_PIPE) {
             *term = inner;
@@ -1293,43 +1202,25 @@ static sexpr_t parse_match(scanner_t* s, ctx_t* ctx, token_t match_token)
     }
 
     while (term.kind == TOKEN_PIPE) {
-        sv_vec_t(sexpr_t) alts = sv_vec_init(sexpr_t);
+        sexpr_t pattern = parse_pattern(s, ctx);
+        if (is_error_sexpr(pattern))
+            return free_list_error(&list, ctx, pattern);
+
         sexpr_t err;
-
-        for (;;) {
-            sexpr_t pattern = parse_pattern(s, ctx);
-            if (is_error_sexpr(pattern)) {
-                err = pattern;
-                goto error;
-            }
-            if (!push_sexpr(&alts, pattern, ctx)) {
-                sexpr_free(&pattern, &ctx->alloc);
-                err = atom_sexpr(oom_error(ctx, match_token.line));
-                goto error;
-            }
-
-            token_t pipe;
-            if (!parser_check(s, ctx, kind_pattern(TOKEN_PIPE), &pipe))
-                break;
+        if (reject_alternative(s, ctx, &err)) {
+            sexpr_free(&pattern, &ctx->alloc);
+            return free_list_error(&list, ctx, err);
         }
 
         sexpr_t body = parse_clause_body(s, ctx, match_token.line, &term);
         if (is_error_sexpr(body)) {
-            err = body;
-            goto error;
+            sexpr_free(&pattern, &ctx->alloc);
+            return free_list_error(&list, ctx, body);
         }
 
-        err = push_alt_clauses(&list, &alts, body, tuple_atom, match_token.line, ctx);
+        err = push_clause(&list, pattern, body, tuple_atom, match_token.line, ctx);
         if (is_error_sexpr(err))
             return free_list_error(&list, ctx, err);
-
-        continue;
-
-error:
-        for (int64_t i = 0; i < alts.size; i++)
-            sexpr_free(&alts.arr[i], &ctx->alloc);
-        sv_vec_deinit(&alts, &ctx->alloc);
-        return free_list_error(&list, ctx, err);
     }
 
     return cons_sexpr(list);

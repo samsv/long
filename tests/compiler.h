@@ -6,10 +6,16 @@
 #include "../src/compiler.h"
 #include <math.h>
 
+/* Only has to be stable: it namespaces the globals. */
+#define SV_TEST_PATH "tests/main.long"
+
+/* The n-th field a program interns, after the ids the compiler reserves. */
+#define SV_TEST_FIELD(n) sv_test_compiler_val(RECORD_FIELD_VALUE + 1 + (n))
+
 static inline value_t sv_test_compiler_eval(const char* src, bool* ok)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile(src, &ctx);
+   vm_t vm = compile(SV_TEST_PATH, src, &ctx);
    if (vm.chunk.bytecode.arr == NULL) {
       sv_str_deinit(&ctx.err.msg, &sv_gpa);
       *ok = false;
@@ -61,7 +67,7 @@ static inline value_t sv_test_compiler_val(double n)
 static inline int sv_test_compiler_runtime_err(const char* src)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile(src, &ctx);
+   vm_t vm = compile(SV_TEST_PATH, src, &ctx);
    if (vm.chunk.bytecode.arr == NULL) {
       sv_str_deinit(&ctx.err.msg, &sv_gpa);
       return -1;
@@ -77,7 +83,7 @@ static inline int sv_test_compiler_runtime_err(const char* src)
 static inline int sv_test_compiler_err(const char* src)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile(src, &ctx);
+   vm_t vm = compile(SV_TEST_PATH, src, &ctx);
    if (vm.chunk.bytecode.arr != NULL) {
       vm_deinit(&vm, &sv_gpa);
       return -1;
@@ -180,8 +186,8 @@ static inline void sv_test_compiler_tuples(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("a = {y: 1}\nb = {x: 2, y: 3}\nb.y", 3));
 
    value_t add_items[] = {
-      sv_test_compiler_val(0), sv_test_compiler_val(4),
-      sv_test_compiler_val(1), sv_test_compiler_val(6),
+      SV_TEST_FIELD(0), sv_test_compiler_val(4),
+      SV_TEST_FIELD(1), sv_test_compiler_val(6),
    };
    sv_test_run(t, sv_test_compiler_cmp(
       "fun add(v1, v2) do\n"
@@ -192,9 +198,9 @@ static inline void sv_test_compiler_tuples(sv_testing_t* t)
       "add({x: 1, y: 2}, {x: 3, y: 4})",
       value_init_record(add_items, 2, &sv_gpa), value_eql));
 
-   value_t inner_items[] = { sv_test_compiler_val(1), sv_test_compiler_val(5) };
+   value_t inner_items[] = { SV_TEST_FIELD(1), sv_test_compiler_val(5) };
    value_t inner = value_init_record(inner_items, 1, &sv_gpa);
-   value_t outer_items[] = { sv_test_compiler_val(0), inner };
+   value_t outer_items[] = { SV_TEST_FIELD(0), inner };
    sv_test_run(t, sv_test_compiler_cmp("{a: {b: 5}}",
       value_init_record(outer_items, 1, &sv_gpa), value_eql));
    value_free(&inner, &sv_gpa);
@@ -204,7 +210,7 @@ static inline void sv_test_compiler_tuples(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("t = 5\nt.x") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t pctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t pvm = compile("t = {x: 10, y: 20}\nt", &pctx);
+   vm_t pvm = compile(SV_TEST_PATH, "t = {x: 10, y: 20}\nt", &pctx);
    sv_test_run(t, pvm.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) perr = vm_run(&pvm);
    sv_test_run(t, !perr.is_some);
@@ -230,7 +236,7 @@ static inline void sv_test_compiler_tuple_type(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("(1, 2)[0.5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t tctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t tvm = compile("t = (1, (2, \"s\"))\nt", &tctx);
+   vm_t tvm = compile(SV_TEST_PATH, "t = (1, (2, \"s\"))\nt", &tctx);
    sv_test_run(t, tvm.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) terr = vm_run(&tvm);
    sv_test_run(t, !terr.is_some);
@@ -240,7 +246,7 @@ static inline void sv_test_compiler_tuple_type(sv_testing_t* t)
    vm_deinit(&tvm, &sv_gpa);
 
    ctx_t octx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t ovm = compile("(1,)", &octx);
+   vm_t ovm = compile(SV_TEST_PATH, "(1,)", &octx);
    sv_test_run(t, ovm.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) oerr = vm_run(&ovm);
    sv_test_run(t, !oerr.is_some);
@@ -289,7 +295,7 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("for x in 5 do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t actx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t avm = compile("fun f(x) do x end f(1, 2)", &actx);
+   vm_t avm = compile(SV_TEST_PATH, "fun f(x) do x end f(1, 2)", &actx);
    sv_test_run(t, avm.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) aerr = vm_run(&avm);
    sv_test_run(t, aerr.is_some);
@@ -300,7 +306,7 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    vm_deinit(&avm, &sv_gpa);
 
    ctx_t cctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t cvm = compile("[1] < 2", &cctx);
+   vm_t cvm = compile(SV_TEST_PATH, "[1] < 2", &cctx);
    sv_test_run(t, cvm.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) cerr = vm_run(&cvm);
    sv_test_run(t, cerr.is_some);
@@ -322,7 +328,7 @@ static inline void sv_test_compiler_for(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("if (for c in \"ab\" do c + \"!\" end) == \"b!\" do 1 else 0 end", 1));
    sv_test_run(t, sv_test_compiler_kind("for x in [] do x end", VALUE_OBJ));
    sv_test_run(t, sv_test_compiler_kind("for c in \"\" do c end", VALUE_OBJ));
-   sv_test_run(t, sv_test_compiler_runtime_err("for x in %{} do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_err("for x in 5 do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    /* The loop variable may be a pattern. A `for` evaluates to its last body value,
     * so that is how these observe the binding. */
@@ -343,6 +349,53 @@ static inline void sv_test_compiler_for(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("for (a, b) in [1, 2] do a end")
                == VM_ERR_MATCH_FAILED);
    sv_test_run(t, sv_test_compiler_err("for 1 in [1] do 1 end") == C_ERR_UNEXPECTED_SEXPR);
+}
+
+/**
+ * Map iteration order is unspecified, so nothing here may depend on it.
+ */
+static inline void sv_test_compiler_for_map(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_num("for {key, value} in %{\"a\": 1} do value end", 1));
+   sv_test_run(t, sv_test_compiler_num("for kv in %{\"a\": 1} do kv.value end", 1));
+   sv_test_run(t, sv_test_compiler_num(
+      "if (for kv in %{\"a\": 3} do kv.key end) == \"a\" do 1 else 0 end", 1));
+
+   /* Uniform values keep a multi entry result order independent. */
+   sv_test_run(t, sv_test_compiler_num("for {key, value} in %{\"a\": 7, \"b\": 7} do value end", 7));
+   sv_test_run(t, sv_test_compiler_num(
+      "for {key, value} in %{\"a\": 7, \"b\": 7, \"c\": 7} do value end", 7));
+
+   sv_test_run(t, sv_test_compiler_kind("for kv in %{} do kv end", VALUE_OBJ));
+
+   sv_test_run(t, sv_test_compiler_num("for {key, value} in %{0: \"z\"} do key end", 0));
+   sv_test_run(t, sv_test_compiler_num(
+      "for {key: (a, b), value} in %{(1, 2): 9} do a + b + value end", 12));
+
+   /* A `for` stops on a falsey item, but the record wrapper is always truthy. */
+   sv_test_run(t, sv_test_compiler_num("for {key, value} in %{\"a\": nil} do 7 end", 7));
+   sv_test_run(t, sv_test_compiler_num("for a in [1, nil, 3] do a end", 1));
+
+   /* The record is closed at two fields, so naming one of them needs `..`. */
+   sv_test_run(t, sv_test_compiler_num("for {value, ..} in %{\"a\": 5} do value end", 5));
+   sv_test_run(t, sv_test_compiler_runtime_err("for {key} in %{\"a\": 1} do key end")
+               == VM_ERR_MATCH_FAILED);
+
+   /* The binding is an ordinary record pattern, so other forms nest in it. */
+   sv_test_run(t, sv_test_compiler_num(
+      "for {key, value: [head, ..tail]} in %{\"a\": [1, 2]} do head end", 1));
+   sv_test_run(t, sv_test_compiler_num(
+      "for {key, value: [_, ..t]} in %{\"a\": [1, 2, 3]} do t[0] end", 2));
+   sv_test_run(t, sv_test_compiler_num(
+      "for {key, value: (a, b)} in %{\"a\": (1, 2)} do a + b end", 3));
+   sv_test_run(t, sv_test_compiler_num(
+      "for {key, value: {x, ..}} in %{\"a\": {x: 1, y: 2}} do x end", 1));
+   sv_test_run(t, sv_test_compiler_num(
+      "for {key, value: %{\"b\": v}} in %{\"a\": %{\"b\": 2}} do v end", 2));
+   sv_test_run(t, sv_test_compiler_num(
+      "for {key, value: [(a, b)]} in %{\"a\": [(1, 2)]} do a + b end", 3));
+   sv_test_run(t, sv_test_compiler_runtime_err(
+      "for {key, value: [a, b]} in %{\"x\": [1]} do a end") == VM_ERR_MATCH_FAILED);
 }
 
 static inline void sv_test_compiler_functions(sv_testing_t* t)
@@ -613,66 +666,6 @@ static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
    /* The guard is a plain expression, so a block body works behind one. */
    sv_test_run(t, sv_test_compiler_num("match 1 | 1 when true do y = 3; y + 1 end", 4));
 
-   /* Alternatives share one body: each one reaches it, and none of the others do. */
-   sv_test_run(t, sv_test_compiler_num("match 1 | 1 | 2 | 3 do 7 | _ do 0 end", 7));
-   sv_test_run(t, sv_test_compiler_num("match 2 | 1 | 2 | 3 do 7 | _ do 0 end", 7));
-   sv_test_run(t, sv_test_compiler_num("match 3 | 1 | 2 | 3 do 7 | _ do 0 end", 7));
-   sv_test_run(t, sv_test_compiler_num("match 9 | 1 | 2 | 3 do 7 | _ do 0 end", 0));
-   sv_test_run(t, sv_test_compiler_num("match 5 | 1 | 2 | 3 | 4 | 5 do 9 | _ do 0 end", 9));
-   sv_test_run(t, sv_test_compiler_num("match \"b\" | \"a\" | \"b\" do 1 | _ do 0 end", 1));
-
-   /* Alternatives may bind, as long as they all bind the same names. */
-   sv_test_run(t, sv_test_compiler_num("match (2, 7) | (1, a) | (2, a) do a | _ do 0 end", 7));
-   sv_test_run(t, sv_test_compiler_num("match (1, 5) | (1, a) | (2, a) do a | _ do 0 end", 5));
-   sv_test_run(t, sv_test_compiler_num("match (3, 4) | (1, a) | (3, a) do a | _ do 0 end", 4));
-   sv_test_run(t, sv_test_compiler_err("match x | (1, a) | (2, b) do a end") != -1);
-
-   /* A guard is cloned into each alternative, so it gates all of them. */
-   sv_test_run(t, sv_test_compiler_num("match 2 | 1 | 2 when true do 7 | _ do 0 end", 7));
-   sv_test_run(t, sv_test_compiler_num("match 2 | 1 | 2 when false do 7 | _ do 0 end", 0));
-
-   /* Alternatives of different shapes. */
-   sv_test_run(t, sv_test_compiler_num("match [] | [] | %{} do 5 | _ do 0 end", 5));
-   sv_test_run(t, sv_test_compiler_num("match %{} | [] | %{} do 5 | _ do 0 end", 5));
-
-   /* One compiled body, several entry points. These are the cases that only work
-    * because each alternative writes the clause's variables into the same slots. */
-   sv_test_run(t, sv_test_compiler_num(
-      "match (5, 2) | (1, a) | (a, 2) do a | _ do 0 end", 5));
-   sv_test_run(t, sv_test_compiler_num(
-      "match (1, 9) | (1, a) | (a, 2) do a | _ do 0 end", 9));
-   sv_test_run(t, sv_test_compiler_num(
-      "match (1, [2, 3]) | (1, [a, b]) | (2, [b, a]) do a + b | _ do 0 end", 5));
-
-   /* A repeat inside an alternative binds one name, so it still lines up. */
-   sv_test_run(t, sv_test_compiler_num("match (4, 4) | (a, a) | (a, 9) do a | _ do 0 end", 4));
-
-   /* Two shared clauses may name the same variable; it is declared once. */
-   sv_test_run(t, sv_test_compiler_num(
-      "match (3, 2) | (1, a) | (a, 2) do a | (5, b) | (b, 6) do b | _ do 0 end", 3));
-   sv_test_run(t, sv_test_compiler_num(
-      "match (5, 9) | (1, a) | (a, 2) do a | (5, b) | (b, 6) do b | _ do 0 end", 9));
-
-   /* The join point must survive a body that opens its own scopes. */
-   sv_test_run(t, sv_test_compiler_num("match 2 | 1 | 2 do do k = 3\nk + 1 end | _ do 0 end", 4));
-   sv_test_run(t, sv_test_compiler_num(
-      "match 2 | 1 | 2 do for i in [1, 2, 3] do i end | _ do 0 end", 3));
-   sv_test_run(t, sv_test_compiler_num(
-      "match 2 | 1 | 2 do match 4 | 3 | 4 do 8 | _ do 0 end | _ do 0 end", 8));
-   sv_test_run(t, sv_test_compiler_num(
-      "fun f(x) | 0 | 1 do for i in [7, 8] do i end | _ do 0 end\nf(1)", 8));
-   sv_test_run(t, sv_test_compiler_num(
-      "for v in [1, 2, 3] do match v | 1 | 2 do 7 | _ do 0 end end", 0));
-
-   /* A guard over an alternation reads the shared variable. */
-   sv_test_run(t, sv_test_compiler_num(
-      "match (1, 8) | (1, a) | (a, 2) when a > 5 do a | _ do 0 end", 8));
-   sv_test_run(t, sv_test_compiler_num(
-      "match (1, 3) | (1, a) | (a, 2) when a > 5 do a | _ do 0 end", 0));
-
-   sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 | 1 do 7 | _ do 0 end\nf(1)", 7));
-   sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 | 1 do 7 | _ do 0 end\nf(9)", 0));
-
    /* A repeated variable constrains the positions to be equal. The non-adjacent
     * cases are the ones that matter: an implementation comparing only neighbouring
     * slots would pass (a, a) and fail every one of these. */
@@ -779,6 +772,13 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("[h, ..t] = [1, 2, 3]\nh", 1));
    sv_test_run(t, sv_test_compiler_num("[h, ..t] = [1, 2, 3]\nt[1]", 3));
    sv_test_run(t, sv_test_compiler_num("[a, b] = [1, 2]\na + b", 3));
+
+   sv_test_run(t, sv_test_compiler_num("[a, b, c] = [1, 2, 3]\na + b + c", 6));
+   sv_test_run(t, sv_test_compiler_num("[a, ..t] = [1, 2, 3]\nt[0]", 2));
+   sv_test_run(t, sv_test_compiler_num("[[a, b], [c]] = [[1, 2], [3]]\na + b + c", 6));
+   sv_test_run(t, sv_test_compiler_num("{k: [a, b]} = {k: [1, 2]}\na + b", 3));
+   sv_test_run(t, sv_test_compiler_num("[a, ..[b, ..c]] = [1, 2, 3]\na + b + c[0]", 6));
+
    sv_test_run(t, sv_test_compiler_num("{x: a} = {x: 5}\na", 5));
    sv_test_run(t, sv_test_compiler_num("{x: a, ..} = {x: 5, y: 6}\na", 5));
    sv_test_run(t, sv_test_compiler_num("%{\"k\": v} = %{\"k\": 7}\nv", 7));
@@ -867,6 +867,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_tuple_type(t);
    sv_test_compiler_logic(t);
    sv_test_compiler_for(t);
+   sv_test_compiler_for_map(t);
    sv_test_compiler_functions(t);
    sv_test_compiler_closures(t);
    sv_test_compiler_recursion(t);

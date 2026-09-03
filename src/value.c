@@ -343,6 +343,7 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
             switch (AS_ITER(v).kind) {
                 case ITER_LIST: return sv_strb_add(b, "list iterator", 13, a) >= 0;
                 case ITER_STR: return sv_strb_add(b, "string iterator", 15, a) >= 0;
+                case ITER_MAP: return sv_strb_add(b, "map iterator", 12, a) >= 0;
             }
             return false;
         case OBJ_CLOSURE: {

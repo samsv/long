@@ -551,10 +551,8 @@ static bool bind_list(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
         TRY(emit(c, ctx, OP_IS_CONS, line));
         TRY(emit_assert(c, line, ctx));
 
-        TRY(emit(c, ctx, OP_DUP, line));
         TRY(emit(c, ctx, OP_LIST_UNCONS, line));
         TRY(bind_part(c, pattern.cons.arr[1 + i], seen, line, ctx));
-        TRY(emit(c, ctx, OP_POP, line));
     }
 
     if (list_has_tail(pattern)) {
@@ -566,6 +564,9 @@ static bool bind_list(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
         TRY(emit(c, ctx, OP_NOT, line));
         TRY(emit_assert(c, line, ctx));
     }
+
+    for (int64_t i = 0; i < fixed; i++)
+        TRY(emit(c, ctx, OP_POP, line));
 
     return true;
 }
@@ -1619,6 +1620,13 @@ vm_t compile(const char* base_path, const char* source_code, ctx_t* ctx)
 
     transient_hashmap_t record_fields = { .depth = 0 };
     compiler.record_fields = &record_fields;
+
+    /* Reserved for the ids map iteration builds its records with. */
+    uint32_t reserved = 0;
+    if (!record_field_id(&compiler, sv_str_init("key"), 0, ctx, &reserved))
+        ERR_RETURN;
+    if (!record_field_id(&compiler, sv_str_init("value"), 0, ctx, &reserved))
+        ERR_RETURN;
 
 #define FNS_SIZE 3
     native_fn_t native_fns[FNS_SIZE] = {

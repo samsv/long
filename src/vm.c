@@ -382,7 +382,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         }
         case OP_ITER_CREATE: {
             value_t v = sv_vec_pop(vm->stack);
-            if (!IS_LIST(v) && !IS_STR(v))
+            if (!IS_LIST(v) && !IS_STR(v) && !IS_MAP(v))
                 UNSUPPORTED_1(v, "Type is not iterable");
             value_t iter = value_init_iter(v, a);
             value_free(&v, a);
