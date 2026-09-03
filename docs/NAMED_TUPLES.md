@@ -62,3 +62,12 @@ this means that a mapping between field ids and its names must be kept in the VM
 each index corresponds to its respective id. Because the printing native functions will need access to this mapping, a special VM context parameter
 may be defined to pass special information to the functions, such as the table, allocator and a logger.
 
+
+## Update
+A tuple is immutable, so a change is a new tuple. `{y: 1, ..origin}` builds one from `origin` with `y` replaced;
+`origin` is left as it was.
+```elixir
+origin = {x: 0, y: 0}
+up = {y: 1, ..origin} # {x: 0, y: 1}
+```
+Trying to add new keys to a record is a runtime error.

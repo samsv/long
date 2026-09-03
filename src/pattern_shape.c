@@ -3,10 +3,31 @@
 
 typedef sv_vec_t(sexpr_t) cons_t;
 
+const sexpr_t* spread_of(const sexpr_t* items, int64_t n)
+{
+    if (n == 0)
+        return NULL;
+
+    const sexpr_t* last = &items[n - 1];
+    if (last->tag != S_CONS || last->cons.size != 2 || last->cons.arr[0].tag != S_ATOM
+        || last->cons.arr[0].atom.kind != TOKEN_DOT_DOT)
+        return NULL;
+    return &last->cons.arr[1];
+}
+
 bool list_has_tail(sexpr_t list)
 {
-    sexpr_t last = list.cons.arr[list.cons.size - 1];
-    return last.tag == S_CONS && last.cons.arr[0].atom.kind == TOKEN_DOT_DOT;
+    return spread_of(list.cons.arr + 1, list.cons.size - 1) != NULL;
+}
+
+bool is_list_tail(sexpr_t e)
+{
+    if (e.tag == S_ATOM)
+        return e.atom.kind == TOKEN_LITERAL && e.atom.literal.kind == LITERAL_IDENTIFIER;
+
+    return e.cons.size > 0 && e.cons.arr[0].tag == S_ATOM
+        && e.cons.arr[0].atom.kind == TOKEN_SP_FUNCTION
+        && e.cons.arr[0].atom.fn == FN_LIST;
 }
 
 int64_t list_n_fixed(sexpr_t list)

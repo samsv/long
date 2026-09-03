@@ -79,6 +79,12 @@ sv_str_t value_to_str(value_t, const vm_ctx_t*);
 value_t value_init_list(const value_t*, int64_t, const sv_allocator_t*);
 value_t value_wrap_list(list_t, const sv_allocator_t*);
 /**
+ * Wraps an already built record or map into a value, taking ownership. obj.cell is NULL
+ * on allocation failure, and the object is then still the caller's to free.
+ */
+value_t value_wrap_record(record_t, const sv_allocator_t*);
+value_t value_wrap_map(hashmap_t, const sv_allocator_t*);
+/**
  * Creates an iterator value borrowing the given list value. The value must
  * hold an iterable object. obj.cell is NULL on allocation failure.
  */

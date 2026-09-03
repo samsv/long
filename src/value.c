@@ -144,6 +144,16 @@ value_t value_wrap_list(list_t list, const sv_allocator_t* a)
     return obj_wrap((obj_t){ .kind = OBJ_LIST, .list = list }, a);
 }
 
+value_t value_wrap_record(record_t record, const sv_allocator_t* a)
+{
+    return obj_wrap((obj_t){ .kind = OBJ_RECORD, .record = record }, a);
+}
+
+value_t value_wrap_map(hashmap_t map, const sv_allocator_t* a)
+{
+    return obj_wrap((obj_t){ .kind = OBJ_MAP, .map = map }, a);
+}
+
 value_t value_init_err(error_t err, const sv_allocator_t* a)
 {
     return obj_wrap((obj_t){ .kind = OBJ_ERR, .err = err }, a);

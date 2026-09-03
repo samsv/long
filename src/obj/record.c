@@ -52,3 +52,36 @@ sv_opt_t(value_t) record_get(record_t tuple, uint32_t target)
     }
     return sv_opt_none_t(value_t);
 }
+
+record_t record_update(record_t base, const value_t* pairs, uint8_t n, int64_t* missing,
+                       const sv_allocator_t* a)
+{
+    *missing = -1;
+    record_item_t* items = sv_malloc(a, base.size * sizeof(record_item_t));
+    if (items == NULL)
+        return (record_t){0};
+
+    uint8_t at = 0;
+    for (uint16_t i = 0; i < 2 * (uint16_t)n; i += 2) {
+        uint32_t id = (uint32_t)pairs[i].number;
+
+        // the fields below this one are kept, then the field itself must be next
+        for (; at < base.size && base.items[at].id < id; at++)
+            items[at] = (record_item_t){ .id = base.items[at].id, .value = value_borrow(base.items[at].value) };
+
+        if (at == base.size || base.items[at].id != id) {
+            for (uint8_t j = 0; j < at; j++)
+                value_free(&items[j].value, a);
+            sv_free(a, items);
+            *missing = id;
+            return (record_t){0};
+        }
+
+        items[at++] = (record_item_t){ .id = id, .value = value_borrow(pairs[i + 1]) };
+    }
+
+    for (; at < base.size; at++)
+        items[at] = (record_item_t){ .id = base.items[at].id, .value = value_borrow(base.items[at].value) };
+
+    return (record_t){ .items = items, .size = base.size };
+}

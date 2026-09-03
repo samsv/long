@@ -257,6 +257,69 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         case OP_HASHMAP: VALUE_FROM_ARR(2, value_init_map);
         case OP_RECORD: VALUE_FROM_ARR(2, value_init_record);
         case OP_TUPLE: VALUE_FROM_ARR(1, value_init_tuple);
+        case OP_RECORD_UPDATE: {
+            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
+            value_t base = sv_vec_pop(vm->stack);
+            if (!IS_RECORD(base))
+                UNSUPPORTED_1(base, "Record update needs a record");
+
+            int64_t missing = -1;
+            record_t updated = record_update(AS_RECORD(base), &vm->stack.arr[vm->stack.size - 2 * n],
+                                             n, &missing, a);
+            if (missing >= 0) {
+                value_t id = { .kind = VALUE_NUMBER, .number = (double)missing };
+                OP_ERR_2(VM_ERR_FIELD_NOT_FOUND, base, id, "Field not found in record update");
+            }
+            TRY_OR(updated.items != NULL, value_free(&base, a), "OOM when updating a record");
+            value_t out = value_wrap_record(updated, a);
+            TRY_OR(out.obj.cell != NULL, record_deinit(&updated, a); value_free(&base, a),
+                   "OOM when updating a record");
+
+            arr_remove_n(&vm->stack, 2 * n, a);
+            value_free(&base, a);
+            TRY_PUSH_OWNED(out);
+            break;
+        }
+        case OP_HASHMAP_UPDATE: {
+            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
+            value_t base = sv_vec_pop(vm->stack);
+            if (!IS_MAP(base))
+                UNSUPPORTED_1(base, "Hashmap update needs a hashmap");
+
+            // map_put borrows the map and the pair, the stack keeps owning them
+            hashmap_t cur = sv_rc_borrow(AS_MAP(base));
+            value_free(&base, a);
+            const value_t* kvs = &vm->stack.arr[vm->stack.size - 2 * n];
+            for (uint8_t i = 0; i < n; i++) {
+                hashmap_t next = map_put(cur, (kv_t){ .key = kvs[2 * i], .value = kvs[2 * i + 1] }, a);
+                map_deinit(&cur, a);
+                TRY_NOT_NULL(next.cell, "OOM when updating a hashmap");
+                cur = next;
+            }
+            value_t out = value_wrap_map(cur, a);
+            TRY_OR(out.obj.cell != NULL, map_deinit(&cur, a), "OOM when updating a hashmap");
+
+            arr_remove_n(&vm->stack, 2 * n, a);
+            TRY_PUSH_OWNED(out);
+            break;
+        }
+        case OP_LIST_PREPEND: {
+            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
+            value_t tail = sv_vec_pop(vm->stack);
+            if (!IS_LIST(tail))
+                UNSUPPORTED_1(tail, "Spread into a list needs a list");
+
+            list_t list = ll_prepend_arr(AS_LIST(tail), &vm->stack.arr[vm->stack.size - n], n, a);
+            TRY_OR(list.cell != NULL, value_free(&tail, a), "OOM when building a list");
+            value_t out = value_wrap_list(list, a);
+            TRY_OR(out.obj.cell != NULL, ll_deinit(&list, a); value_free(&tail, a),
+                   "OOM when building a list");
+
+            arr_remove_n(&vm->stack, n, a);
+            value_free(&tail, a);
+            TRY_PUSH_OWNED(out);
+            break;
+        }
         case OP_ADD: {
             value_t v2 = sv_vec_pop(vm->stack);
             value_t v1 = sv_vec_pop(vm->stack);

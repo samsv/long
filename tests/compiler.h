@@ -884,8 +884,8 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("(a, b, a) = (1, 2, 3)\nb")
                == VM_ERR_MATCH_FAILED);
 
-   /* `..` is pattern and LHS syntax only, in all three container kinds. */
-   sv_test_run(t, sv_test_compiler_err("y = 1\nx = [1, ..y]\nx") == C_ERR_UNEXPECTED_SEXPR);
+   /* A bare `..` is pattern and LHS syntax only; a list spread onto a number is a type error. */
+   sv_test_run(t, sv_test_compiler_runtime_err("y = 1\nx = [1, ..y]\nx") == VM_ERR_OP_UNSUPPORTED_ARGS);
    sv_test_run(t, sv_test_compiler_err("x = {a: 1, ..}\nx") == C_ERR_UNEXPECTED_SEXPR);
    sv_test_run(t, sv_test_compiler_err("x = %{\"a\": 1, ..}\nx") == C_ERR_UNEXPECTED_SEXPR);
 
@@ -907,6 +907,55 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("fun f({x, ..} = r) x\nf(5)") == VM_ERR_MATCH_FAILED);
 }
 
+static inline void sv_test_compiler_spread(sv_testing_t* t)
+{
+   /* A trailing `..base` copies the base, the explicit entries replacing its own. */
+   sv_test_run(t, sv_test_compiler_num("o = {x: 0, y: 0}\nu = {y: 1, ..o}\nu.x + 10 * u.y", 10));
+   sv_test_run(t, sv_test_compiler_num("o = {x: 0, y: 0}\nif {y: 1, ..o} == {x: 0, y: 1} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("o = {x: 0, y: 0}\nu = {y: 1, ..o}\no.y", 0));
+   sv_test_run(t, sv_test_compiler_num("o = {x: 0, y: 0}\nif {..o} == o do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("o = {x: 0, y: 0}\nif {x: 1, y: 2, ..o} == {x: 1, y: 2} do 1 else 0 end", 1));
+   /* First, middle and last field of a three field base, alone and together. */
+   sv_test_run(t, sv_test_compiler_num("o = {a: 1, b: 2, c: 3}\nif {a: 9, ..o} == {a: 9, b: 2, c: 3} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("o = {a: 1, b: 2, c: 3}\nif {b: 9, ..o} == {a: 1, b: 9, c: 3} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("o = {a: 1, b: 2, c: 3}\nif {c: 9, ..o} == {a: 1, b: 2, c: 9} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num(
+      "o = {a: 1, b: 2, c: 3}\nif {c: 9, a: 7, b: 8, ..o} == {a: 7, b: 8, c: 9} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("o = {x: 0, y: 0}\n{p: {y: 1, ..o}, ..{p: 0, q: 2}}.p.y", 1));
+   sv_test_run(t, sv_test_compiler_num("fun f(o) {y: 1, ..o}\nf({x: 0, y: 0}).y", 1));
+   /* A field the base lacks: sorted below, between and above the base's fields. */
+   sv_test_run(t, sv_test_compiler_runtime_err("o = {x: 0, y: 0}\n{z: 1, ..o}") == VM_ERR_FIELD_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("{a: 1, ..{x: 0}}") == VM_ERR_FIELD_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("o = {a: 0, b: 0}\nq = {a: 0, c: 0}\n{b: 1, ..q}")
+               == VM_ERR_FIELD_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("{x: 1, ..5}") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_err("{x: 1, ..[1]}") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_err("o = {x: 0}\n{x: 1, x: 2, ..o}") == C_ERR_REDEFINED);
+   /* A pattern cannot bind a record or hashmap rest, and a list tail pattern is a name or a list. */
+   sv_test_run(t, sv_test_compiler_err("{x, ..rest} = {x: 1}\nx") == C_ERR_UNEXPECTED_SEXPR);
+   sv_test_run(t, sv_test_compiler_err("%{\"a\": v, ..r} = %{\"a\": 1}\nv") == C_ERR_UNEXPECTED_SEXPR);
+   sv_test_run(t, sv_test_compiler_err("fun f({x, ..r}) x\nf({x: 1})") == C_ERR_UNEXPECTED_SEXPR);
+   sv_test_run(t, sv_test_compiler_err("[h, ..1] = [1]\nh") == C_ERR_UNEXPECTED_SEXPR);
+
+   /* Hashmaps put the pairs onto the base; later pairs win, as in a literal. */
+   sv_test_run(t, sv_test_compiler_num(
+      "m = %{\"a\": 1}\nif %{\"b\": 2, ..m} == %{\"a\": 1, \"b\": 2} do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("m = %{\"a\": 1}\n%{\"a\": 5, ..m}[\"a\"]", 5));
+   sv_test_run(t, sv_test_compiler_num("m = %{\"a\": 1}\nif %{..m} == m do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("m = %{\"a\": 1}\nu = %{\"a\": 5, ..m}\nm[\"a\"]", 1));
+   sv_test_run(t, sv_test_compiler_num("m = %{\"a\": 1}\n%{\"a\": 1, \"a\": 2, ..m}[\"a\"]", 2));
+   sv_test_run(t, sv_test_compiler_runtime_err("%{\"a\": 1, ..[1]}") == VM_ERR_OP_UNSUPPORTED_ARGS);
+
+   /* Lists cons the fixed elements onto the tail, the mirror of the `[x, ..xs]` pattern. */
+   sv_test_run(t, sv_test_compiler_num("[1, 2, ..[3, 4]][2]", 3));
+   sv_test_run(t, sv_test_compiler_num("match [1, 2, ..[3, 4]] | [a, b, c, d] do d | _ do 0 end", 4));
+   sv_test_run(t, sv_test_compiler_num("match [1, ..[]] | [a] do a | _ do 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("fun f() [9]\nl = [1, ..f()]\nl[1]", 9));
+   sv_test_run(t, sv_test_compiler_num("xs = [3]\nys = [1, 2, ..xs]\nys[2]", 3));
+   sv_test_run(t, sv_test_compiler_num("xs = [3]\nys = [1, ..xs]\nxs[0]", 3));
+   sv_test_run(t, sv_test_compiler_runtime_err("[1, ..5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
+}
+
 static inline void sv_test_compiler(sv_testing_t* t)
 {
    sv_test_compiler_basics(t);
@@ -925,6 +974,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_match(t);
    sv_test_compiler_fun_clauses(t);
    sv_test_compiler_destructure(t);
+   sv_test_compiler_spread(t);
    sv_test_compiler_errors(t);
    sv_test_compiler_runtime_errors(t);
 }

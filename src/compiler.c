@@ -337,6 +337,7 @@ void compiler_free(compiler_t* c, const sv_allocator_t* a)
 static bool compile_fail(compiler_t*, int64_t, ctx_t*);
 static bool record_field_id(compiler_t*, sv_str_t, int64_t, ctx_t*, uint32_t*);
 static bool reject_pattern_only(ctx_t*, int64_t);
+static bool reject_shape(ctx_t*, const char*, int64_t);
 
 static bool compile_id(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
 {
@@ -479,6 +480,9 @@ static bool bind_tuple(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
 static bool bind_record(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
                         int64_t line, ctx_t* ctx)
 {
+    if (spread_of(pattern.cons.arr + 1, pattern.cons.size - 1) != NULL)
+        return reject_shape(ctx, "A record or hashmap pattern cannot bind its rest, use a bare '..'", line);
+
     int64_t n = record_n_fields(pattern);
     TRY(emit(c, ctx, OP_DUP, line));
     if (record_is_open(pattern))
@@ -507,6 +511,9 @@ static bool bind_record(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen
 static bool bind_hashmap(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
                          int64_t line, ctx_t* ctx)
 {
+    if (spread_of(pattern.cons.arr + 1, pattern.cons.size - 1) != NULL)
+        return reject_shape(ctx, "A record or hashmap pattern cannot bind its rest, use a bare '..'", line);
+
     int64_t n = hashmap_n_keys(pattern);
     TRY(emit(c, ctx, OP_DUP, line));
     if (hashmap_is_open(pattern)) {
@@ -556,8 +563,10 @@ static bool bind_list(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
     }
 
     if (list_has_tail(pattern)) {
-        TRY(bind_pattern(c, pattern.cons.arr[pattern.cons.size - 1].cons.arr[1],
-                         seen, line, ctx));
+        sexpr_t tail = pattern.cons.arr[pattern.cons.size - 1].cons.arr[1];
+        if (!is_list_tail(tail))
+            return reject_shape(ctx, "List tail must be a variable or a list", line);
+        TRY(bind_pattern(c, tail, seen, line, ctx));
     } else {
         TRY(emit(c, ctx, OP_DUP, line));
         TRY(emit(c, ctx, OP_IS_CONS, line));
@@ -728,11 +737,14 @@ static bool compile_record(compiler_t* c, const sexpr_t* args, int64_t n, int64_
 {
     if (n > 0 && args[n - 1].tag == S_ATOM && args[n - 1].atom.kind == TOKEN_DOT_DOT)
         return reject_pattern_only(ctx, args[n - 1].atom.line);
-    if (n % 2 != 0 || n / 2 > UINT8_MAX)
+
+    const sexpr_t* base = spread_of(args, n);
+    int64_t n_kvs = base == NULL ? n : n - 1;
+    if (n_kvs % 2 != 0 || n_kvs / 2 > UINT8_MAX)
         return compiler_malformed(ctx, "record", line);
 
     struct { uint32_t id; sv_str_t name; const sexpr_t* value; } fields[UINT8_MAX];
-    int64_t n_fields = n / 2;
+    int64_t n_fields = n_kvs / 2;
     for (int64_t i = 0; i < n_fields; i++) {
         sv_str_t name;
         TRY(expect_id(args[2 * i], ctx, &name));
@@ -755,7 +767,12 @@ static bool compile_record(compiler_t* c, const sexpr_t* args, int64_t n, int64_
         TRY(add_const(c, ctx, (value_t){ .kind = VALUE_NUMBER, .number = (double)fields[i].id }, line));
         TRY(compile_sexpr(c, *fields[i].value, ctx));
     }
-    return emit2(c, ctx, OP_RECORD, (uint8_t)n_fields, line);
+    if (base == NULL)
+        return emit2(c, ctx, OP_RECORD, (uint8_t)n_fields, line);
+
+    // id_1 v_1 ... base => record_update n
+    TRY(compile_sexpr(c, *base, ctx));
+    return emit2(c, ctx, OP_RECORD_UPDATE, (uint8_t)n_fields, line);
 }
 
 static bool compile_dot(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -964,16 +981,28 @@ static bool reject_pattern_only(ctx_t* ctx, int64_t line)
     return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR, msg);
 }
 
+static bool reject_shape(ctx_t* ctx, const char* what, int64_t line)
+{
+    char msg[128];
+    snprintf(msg, sizeof(msg), "%s at line %" PRId64, what, line);
+    return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR, msg);
+}
+
 static bool compile_list(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
-    for (int64_t i = 0; i < n; i++) {
-        if (args[i].tag == S_CONS && args[i].cons.size > 0
-            && args[i].cons.arr[0].tag == S_ATOM
-            && args[i].cons.arr[0].atom.kind == TOKEN_DOT_DOT)
-            return reject_pattern_only(ctx, line);
+    const sexpr_t* tail = spread_of(args, n);
+    int64_t fixed = tail == NULL ? n : n - 1;
+    for (int64_t i = 0; i < fixed; i++) {
+        if (spread_of(&args[i], 1) != NULL)
+            return compiler_malformed(ctx, "list spread", line);
         TRY(compile_sexpr(c, args[i], ctx));
     }
-    return emit2(c, ctx, OP_LIST, (uint8_t)n, line);
+    if (tail == NULL)
+        return emit2(c, ctx, OP_LIST, (uint8_t)n, line);
+
+    // e_1 ... e_n tail => list_prepend n
+    TRY(compile_sexpr(c, *tail, ctx));
+    return emit2(c, ctx, OP_LIST_PREPEND, (uint8_t)fixed, line);
 }
 
 static bool compile_hashmap(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -981,9 +1010,19 @@ static bool compile_hashmap(compiler_t* c, const sexpr_t* args, int64_t n, int64
     if (n > 0 && args[n - 1].tag == S_ATOM && args[n - 1].atom.kind == TOKEN_DOT_DOT)
         return reject_pattern_only(ctx, args[n - 1].atom.line);
 
-    for (int64_t i = 0; i < n; i++)
+    const sexpr_t* base = spread_of(args, n);
+    int64_t n_kvs = base == NULL ? n : n - 1;
+    if (n_kvs % 2 != 0 || n_kvs / 2 > UINT8_MAX)
+        return compiler_malformed(ctx, "hashmap", line);
+
+    for (int64_t i = 0; i < n_kvs; i++)
         TRY(compile_sexpr(c, args[i], ctx));
-    return emit2(c, ctx, OP_HASHMAP, (uint8_t)(n / 2), line);
+    if (base == NULL)
+        return emit2(c, ctx, OP_HASHMAP, (uint8_t)(n_kvs / 2), line);
+
+    // k_1 v_1 ... base => hashmap_update n
+    TRY(compile_sexpr(c, *base, ctx));
+    return emit2(c, ctx, OP_HASHMAP_UPDATE, (uint8_t)(n_kvs / 2), line);
 }
 
 static bool compile_and_or(compiler_t* c, bool is_and, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)

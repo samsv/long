@@ -4,10 +4,19 @@
 #include "sexpr.h"
 
 /**
+ * The expression a trailing `(.. e)` carries, or NULL when the items end without one. A
+ * list pattern's tail and a spread are the same shape.
+ */
+const sexpr_t* spread_of(const sexpr_t* items, int64_t n);
+/**
  * True when the list pattern ends with a `(.. tail)` expression.
  */
 bool list_has_tail(sexpr_t);
 int64_t list_n_fixed(sexpr_t);
+/**
+ * True for a name or a list, the only shapes a list tail can match.
+ */
+bool is_list_tail(sexpr_t);
 /**
  * True when the record pattern ends in the `..` marker.
  */

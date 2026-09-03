@@ -80,6 +80,9 @@ static const char* op_name(vm_instructions op)
         case OP_NO_MATCH: return "no_match";
         case OP_SWAP: return "swap";
         case OP_IS_HASHMAP_ANY: return "is_hashmap_any";
+        case OP_RECORD_UPDATE: return "record_update";
+        case OP_HASHMAP_UPDATE: return "hashmap_update";
+        case OP_LIST_PREPEND: return "list_prepend";
         case OP_RETURN: return "return";
     }
     return "unknown";
@@ -104,10 +107,13 @@ void print_chunk(vm_t v)
             case OP_RECORD:
             case OP_TUPLE:
             case OP_LIST:
+            case OP_RECORD_UPDATE:
+            case OP_LIST_PREPEND:
                 printf("%" PRId64 " [ %s ] size %u\n", i, op_name(op), code[i + 1]);
                 i += 2;
                 break;
             case OP_HASHMAP:
+            case OP_HASHMAP_UPDATE:
                 printf("%" PRId64 " [ %s ] pairs %u\n", i, op_name(op), code[i + 1]);
                 i += 2;
                 break;

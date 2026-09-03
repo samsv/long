@@ -130,6 +130,21 @@ static inline void sv_test_parser_alias(sv_testing_t* t)
    sv_test_parse_error(t, "fun f(a, b) | (x, y) = t = u do t end", PARSER_ERROR_UNEXPECTED_TOKEN);
 }
 
+static inline void sv_test_parser_spread(sv_testing_t* t)
+{
+   /* A trailing `..base` in a literal is a spread, and it must come last. */
+   sv_test_parse_ok(t, "{y: 1, ..o}");
+   sv_test_parse_ok(t, "{..o}");
+   sv_test_parse_ok(t, "%{\"k\": 1, ..m}");
+   sv_test_parse_ok(t, "[1, ..f()]");
+   sv_test_parse_ok(t, "[1, ..m::xs]");
+   sv_test_parse_error(t, "{y: 1, ..o, z: 2}", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "%{\"a\": 1, ..m, \"b\": 2}", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "{..o, x: 1}", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "[1, ..xs, 2]", PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "[..xs]", PARSER_ERROR_UNEXPECTED_TOKEN);
+}
+
 static inline void sv_test_parser_errors(sv_testing_t* t)
 {
    sv_test_parse_error(t, "", (int)PARSER_ERROR_EOF);
@@ -152,7 +167,6 @@ static inline void sv_test_parser_errors(sv_testing_t* t)
    sv_test_parse_error(t, "[..xs] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "[.., t] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "[..t, 1] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
-   sv_test_parse_error(t, "[h, ..1] = l", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | [a, ..1] do a end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | -x do 1 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | -\"s\" do 1 end", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
@@ -263,7 +277,7 @@ static inline void sv_test_parser_oom(sv_testing_t* t)
 
       scanner_t sc = scanner_init(sv_str_init(
          "match x | (1, a) when a > 0 do a + 1 | [h, ..t] do h | {k: v, ..} do v"
-         " | {k: 1, ..} = r do r | _ do 0 end"));
+         " | {k: 1, ..} = r do {k: 2, ..r} | _ do 0 end"));
       sexpr_t e3 = parser_expr(&sc, &ctx);
       if (e3.tag == S_ATOM && e3.atom.kind == TOKEN_ERROR)
          errored++;
@@ -286,6 +300,7 @@ static inline void sv_test_parser(sv_testing_t* t)
    sv_test_parser_maps(t);
    sv_test_parser_match(t);
    sv_test_parser_alias(t);
+   sv_test_parser_spread(t);
    sv_test_parser_errors(t);
    sv_test_parser_oom(t);
 }

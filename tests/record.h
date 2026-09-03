@@ -114,9 +114,54 @@ static inline void sv_test_record_vm_ops(sv_testing_t* t)
    vm_deinit(&miss, &sv_gpa);
 }
 
+static inline void sv_test_record_update(sv_testing_t* t)
+{
+   value_t s = value_init_str(sv_str_init("str"), &sv_gpa);
+   value_t s2 = value_init_str(sv_str_init("new"), &sv_gpa);
+   value_t items[] = {
+      sv_test_record_num(0), sv_test_record_num(10),
+      sv_test_record_num(2), s,
+      sv_test_record_num(5), sv_test_record_num(50),
+   };
+   value_t base = value_init_record(items, 3, &sv_gpa);
+   sv_test_run(t, s.obj.cell->count == 2);
+
+   /* The first and last field in one merge; the middle one is carried over. */
+   value_t pairs[] = {
+      sv_test_record_num(0), sv_test_record_num(11),
+      sv_test_record_num(5), s2,
+   };
+   int64_t missing = 0;
+   record_t up = record_update(AS_RECORD(base), pairs, 2, &missing, &sv_gpa);
+   sv_test_run(t, up.items != NULL && missing == -1 && up.size == 3);
+   sv_test_run(t, record_get(up, 0).value.number == 11);
+   sv_test_run(t, record_get(up, 2).value.obj.cell == s.obj.cell);
+   sv_test_run(t, record_get(up, 5).value.obj.cell == s2.obj.cell);
+   sv_test_run(t, s.obj.cell->count == 3 && s2.obj.cell->count == 2);
+   sv_test_run(t, record_get(AS_RECORD(base), 0).value.number == 10);
+   sv_test_run(t, record_get(AS_RECORD(base), 5).value.number == 50);
+   record_deinit(&up, &sv_gpa);
+   sv_test_run(t, s.obj.cell->count == 2 && s2.obj.cell->count == 1);
+
+   /* An id between two fields is missing: nothing is built and no borrow is left behind. */
+   value_t gap[] = {
+      sv_test_record_num(0), sv_test_record_num(1),
+      sv_test_record_num(3), sv_test_record_num(3),
+   };
+   record_t none = record_update(AS_RECORD(base), gap, 2, &missing, &sv_gpa);
+   sv_test_run(t, none.items == NULL && missing == 3);
+   sv_test_run(t, s.obj.cell->count == 2);
+
+   value_free(&base, &sv_gpa);
+   value_free(&s2, &sv_gpa);
+   sv_test_run(t, s.obj.cell->count == 1);
+   value_free(&s, &sv_gpa);
+}
+
 static inline void sv_test_record(sv_testing_t* t)
 {
    sv_test_record_values(t);
+   sv_test_record_update(t);
    sv_test_record_print(t);
    sv_test_record_vm_ops(t);
 }

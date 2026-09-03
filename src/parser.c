@@ -254,20 +254,6 @@ static precedence infix_prec(operator_kind op)
 #define PREC_PARAM 2
 
 /**
- * The tail of a list is itself a list, so only a variable or a list pattern can
- * ever match there. Anything else is rejected rather than left as a dead branch.
- */
-static bool is_list_tail(sexpr_t e)
-{
-    if (e.tag == S_ATOM)
-        return e.atom.kind == TOKEN_LITERAL && e.atom.literal.kind == LITERAL_IDENTIFIER;
-
-    return e.cons.size > 0 && e.cons.arr[0].tag == S_ATOM
-        && e.cons.arr[0].atom.kind == TOKEN_SP_FUNCTION
-        && e.cons.arr[0].atom.fn == FN_LIST;
-}
-
-/**
  * Reads the `..tail` element of a list, having consumed the `..`. Returns the
  * error atom on failure and a nil atom on success; the tail is pushed onto list.
  */
@@ -280,7 +266,7 @@ static sexpr_t parse_list_tail(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list
     sexpr_t tail = as_pattern ? parse_pattern(s, ctx) : parse_expr(s, ctx, 5);
     if (is_error_sexpr(tail))
         return tail;
-    if (!is_list_tail(tail)) {
+    if (as_pattern && !is_list_tail(tail)) {
         sexpr_free(&tail, &ctx->alloc);
         return unexpected_token_error(ctx, dots, "List tail must be a variable or a list after");
     }
@@ -361,6 +347,39 @@ static sexpr_t parse_list(scanner_t* s, ctx_t* ctx, token_t open, token_pattern 
     return parse_container(&list, s, ctx, open, close, true, PREC_ELEMENT);
 }
 
+/**
+ * Reads what follows a `..` in a record or hashmap. A bare `..` before the closing brace is
+ * the open marker of a pattern; `..expr` is a spread and must come last. Returns the error
+ * atom on failure and a nil atom on success; the element is pushed onto list.
+ */
+static sexpr_t parse_spread(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list, token_t dots,
+                            int64_t line)
+{
+    if (scanner_peek(s, ctx).kind == TOKEN_RIGHT_BRACE) {
+        if (!push_sexpr(list, atom_sexpr(dots), ctx))
+            return atom_sexpr(oom_error(ctx, line));
+        return (sexpr_t){ .tag = S_ATOM, .atom = { .kind = TOKEN_EOF, .line = line } };
+    }
+
+    sexpr_t base = parse_expr(s, ctx, PREC_ELEMENT);
+    if (is_error_sexpr(base))
+        return base;
+
+    sexpr_t items[] = { atom_sexpr(dots), base };
+    sexpr_t spread = cons_of(ctx, items, 2, dots.line);
+    if (is_error_sexpr(spread))
+        return spread;
+    if (!push_sexpr(list, spread, ctx)) {
+        sexpr_free(&spread, &ctx->alloc);
+        return atom_sexpr(oom_error(ctx, line));
+    }
+
+    token_t comma;
+    if (parser_check(s, ctx, kind_pattern(TOKEN_COMMA), &comma))
+        return unexpected_token_error(ctx, comma, "Spread must be the last element, got");
+    return (sexpr_t){ .tag = S_ATOM, .atom = { .kind = TOKEN_EOF, .line = line } };
+}
+
 static sexpr_t parse_hashmap(scanner_t* s, ctx_t* ctx, token_t open)
 {
     sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
@@ -375,8 +394,9 @@ static sexpr_t parse_hashmap(scanner_t* s, ctx_t* ctx, token_t open)
     for (;;) {
         token_t dots;
         if (parser_check(s, ctx, kind_pattern(TOKEN_DOT_DOT), &dots)) {
-            if (!push_sexpr(&list, atom_sexpr(dots), ctx))
-                return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+            sexpr_t err = parse_spread(s, ctx, &list, dots, open.line);
+            if (is_error_sexpr(err))
+                return free_list_error(&list, ctx, err);
             break;
         }
 
@@ -426,8 +446,9 @@ static sexpr_t parse_record(scanner_t* s, ctx_t* ctx, token_t open)
     for (;;) {
         token_t dots;
         if (parser_check(s, ctx, kind_pattern(TOKEN_DOT_DOT), &dots)) {
-            if (!push_sexpr(&list, atom_sexpr(dots), ctx))
-                return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, open.line)));
+            sexpr_t err = parse_spread(s, ctx, &list, dots, open.line);
+            if (is_error_sexpr(err))
+                return free_list_error(&list, ctx, err);
             break;
         }
 

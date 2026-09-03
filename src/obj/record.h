@@ -32,5 +32,12 @@ bool record_eql(record_t, record_t);
  * Returns the element from the tuple.
  */
 sv_opt_t(value_t) record_get(record_t, uint32_t);
+/**
+ * A copy of the record with the given fields replaced.
+ * items is NULL on failure: missing is the id of the first field the record does
+ * not have, or -1 when the allocation failed.
+ */
+record_t record_update(record_t, const value_t* pairs, uint8_t n, int64_t* missing,
+                       const sv_allocator_t*);
 
 #endif

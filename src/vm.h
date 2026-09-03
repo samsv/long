@@ -113,6 +113,9 @@ typedef enum {
     OP_ASSERT_MATCH,
     OP_NO_MATCH,
     OP_SWAP,
+    OP_RECORD_UPDATE,
+    OP_HASHMAP_UPDATE,
+    OP_LIST_PREPEND,
     OP_RETURN,
 } vm_instructions;
 
