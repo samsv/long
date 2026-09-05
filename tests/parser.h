@@ -293,6 +293,26 @@ static inline void sv_test_parser_oom(sv_testing_t* t)
    sv_test_run(t, completed > 0);
 }
 
+static inline void sv_test_parser_comments(sv_testing_t* t)
+{
+   sv_test_parse_ok(t, "# a full line comment");
+   sv_test_parse_ok(t, "x = 1 # trailing");
+   sv_test_parse_ok(t, "x = 1 #no space\ny = 2");
+   sv_test_parse_ok(t, "# a\n# b\nx = 1");
+   sv_test_parse_ok(t, "x = 1\n#");
+   sv_test_parse_ok(t, "if x do # open\n  y # body\nend # close");
+   sv_test_parse_ok(t, "x = \"a#b\"");
+   sv_test_parse_error(t, "# nothing but a comment", (int)PARSER_ERROR_EOF);
+
+   /* Comment lines still count, so the error lands on line 4. */
+   ctx_t ctx = sv_test_parse_ctx();
+   scanner_t s = scanner_init(sv_str_init("# one\n# two\n1 +\n@"));
+   sexpr_t e = parser_expr(&s, &ctx);
+   sv_test_run(t, e.tag == S_ATOM && e.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "line 4"));
+   sv_str_deinit(&ctx.err.msg, &ctx.alloc);
+}
+
 static inline void sv_test_parser(sv_testing_t* t)
 {
    sv_test_parser_exprs(t);
@@ -301,6 +321,7 @@ static inline void sv_test_parser(sv_testing_t* t)
    sv_test_parser_match(t);
    sv_test_parser_alias(t);
    sv_test_parser_spread(t);
+   sv_test_parser_comments(t);
    sv_test_parser_errors(t);
    sv_test_parser_oom(t);
 }

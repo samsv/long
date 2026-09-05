@@ -276,7 +276,18 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
     int64_t initial_i = s->i;
     uint32_t c = next_codepoint(s);
 
-    while (c != CODEPOINT_EOF && c != CODEPOINT_INVALID && is_whitespace(c)) {
+    while (c != CODEPOINT_EOF && c != CODEPOINT_INVALID) {
+        if (c == '#') {
+            // Leave the newline to the whitespace branch, which counts lines.
+            c = next_codepoint(s);
+            while (c != '\n' && c != CODEPOINT_EOF && c != CODEPOINT_INVALID)
+                c = next_codepoint(s);
+            continue;
+        }
+
+        if (!is_whitespace(c))
+            break;
+
         if (c == '\n')
             s->line++;
         initial_i = s->i;
@@ -300,7 +311,6 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
         case '-': return operator_of(s, OPERATOR_MINUS);
         case '*': return operator_of(s, OPERATOR_STAR);
         case '/': return operator_of(s, OPERATOR_SLASH);
-        case '#': return token_of(s, TOKEN_HASH);
         case '.':
             if (next_char_if_eq(s, '.'))
                 return token_of(s, TOKEN_DOT_DOT);

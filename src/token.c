@@ -140,7 +140,6 @@ bool token_format_builder(token_t token, sv_str_builder* b, const sv_allocator_t
         case TOKEN_DOT_DOT: return add_text(b, "..", a);
         case TOKEN_COMMA: return add_text(b, ",", a);
         case TOKEN_SEMICOLON: return add_text(b, ";", a);
-        case TOKEN_HASH: return add_text(b, "#", a);
         case TOKEN_PIPE: return add_text(b, "|", a);
         case TOKEN_EOF: return add_text(b, "<EOF>", a);
         case TOKEN_ERROR: return add_text(b, "<ERROR>", a);

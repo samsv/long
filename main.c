@@ -3,8 +3,6 @@
 #include "src/compiler.h"
 #include "src/debug.h"
 #include "src/std/allocator_std.h"
-#include "sexpr.h"
-#include "parser.h"
 
 static int run(vm_t vm, ctx_t ctx)
 {
@@ -39,11 +37,6 @@ static int run_file(const char* path)
     if (source == NULL) {
         return 1;
     }
-
-    scanner_t s = scanner_init(sv_str_init(source));
-    sexpr_t sexpr = parser_expr(&s, &ctx);
-    sv_str_t og_fmt = sexpr_format(sexpr, &sv_gpa);
-    printf("%.*s\n", (int)og_fmt.size, og_fmt.chars);
 
     vm_t vm = compile(path, source, &ctx);
     free((void*)source);

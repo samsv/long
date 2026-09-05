@@ -4,6 +4,7 @@
 #include "vector.h"
 #include "string.h"
 #include "unicode.h"
+#include "scanner.h"
 #include "rc.h"
 #include "list.h"
 #include "map.h"
@@ -21,6 +22,7 @@ int main(void)
     sv_test_vector(&t);
     sv_test_string(&t);
     sv_test_unicode(&t);
+    sv_test_scanner(&t);
     sv_test_rc(&t);
     sv_test_list(&t);
     sv_test_map(&t);

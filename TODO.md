@@ -4,5 +4,14 @@
 ✅ Pattern match
 ✅ Modules
 ✅ Hashmap iterator
-Map, mapf, reduce
+✅ Comments
+String escapes
+Wide Operands
+Call Frames
 Tail Recursion
+Embedding API
+    - Global Names on VM;
+    - Call Closure from C;
+STDLib
+Map, mapf, reduce
+Line Table on VM

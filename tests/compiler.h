@@ -97,6 +97,8 @@ static inline int sv_test_compiler_err(const char* src)
 static inline void sv_test_compiler_basics(sv_testing_t* t)
 {
    sv_test_run(t, sv_test_compiler_num("x = 5", 5));
+   sv_test_run(t, sv_test_compiler_num("# leading\nx = 1 # trailing\n# middle\nx + 1", 2));
+   sv_test_run(t, sv_test_compiler_num("if \"a#b\" == \"a#b\" do 1 else 0 end # trailing", 1));
    sv_test_run(t, sv_test_compiler_num("y = if x = 8.5 do x end", 8.5));
    sv_test_run(t, sv_test_compiler_num("1", 1));
    sv_test_run(t, sv_test_compiler_num("5 * 2.5", 12.5));

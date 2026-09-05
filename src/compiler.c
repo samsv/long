@@ -1098,7 +1098,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
         compiler_free(&fc, &ctx->alloc);                                                                      \
         vm_deinit(&fc.builder.vm, &ctx->alloc);                                                               \
         return false;                                                                                         \
-    } } while (0)
+} } while (0)
 
     if (cls != NULL) {
         fc.upvalues.offset = upvalue_offset;
@@ -1136,7 +1136,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
 #undef FN_TRY
 
     *out = vmb_build(&fc.builder);
-    out->name = name;
+    out->name = sv_str_copy(name, &ctx->alloc);
     out->arity = (uint8_t)params->cons.size;
     fc.members = (transient_hashmap_t){0};
     fc.globals.name_indexes = (transient_hashmap_t){0};
