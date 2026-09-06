@@ -169,12 +169,42 @@ fail:
 
 static bool add_const(compiler_t* c, ctx_t* ctx, value_t v, int64_t line)
 {
-    sv_opt_t(uint8_t) i = vmb_add_constant(&c->builder, v, &ctx->alloc);
+    sv_opt_t(uint32_t) i = vmb_add_constant(&c->builder, v, &ctx->alloc);
     if (!i.is_some) {
         value_free(&v, &ctx->alloc);
         return compiler_oom(ctx, line);
     }
     return true;
+}
+
+static bool check_limit(ctx_t* ctx, int64_t n, uint32_t max, const char* what, int64_t line)
+{
+    if (n <= (int64_t)max)
+        return true;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "More than %" PRIu32 " %s at line %" PRId64, max, what, line);
+    return compiler_error(ctx, C_ERR_LIMIT_EXCEEDED, msg);
+}
+
+static bool emit_narrow(compiler_t* c, ctx_t* ctx, uint8_t op, int64_t arg,
+                        const char* what, int64_t line)
+{
+    TRY(check_limit(ctx, arg, UINT8_MAX, what, line));
+    return emit2(c, ctx, op, (uint8_t)arg, line);
+}
+
+static bool emit_wide(compiler_t* c, ctx_t* ctx, uint8_t op, uint32_t arg, int64_t line)
+{
+    if (!vmb_add_arg(&c->builder, op, arg, line, &ctx->alloc))
+        return compiler_oom(ctx, line);
+    return true;
+}
+
+static bool emit_pop_locals(compiler_t* c, ctx_t* ctx, int64_t count, int64_t line)
+{
+    if (count == 0)
+        return true;
+    return emit_wide(c, ctx, OP_POP_LOCAL, (uint32_t)count, line);
 }
 
 static bool jump_emit(ctx_t* ctx, sv_opt_t(int64_t) ji, int64_t* out, int64_t line)
@@ -202,20 +232,20 @@ static int64_t names_count(transient_hashmap_t names)
     return names.set.dense.cell != NULL ? thm_count(names) : 0;
 }
 
-static sv_opt_t(int64_t) names_get(transient_hashmap_t names, sv_str_t id, ctx_t* ctx)
+static sv_opt_t(uint32_t) names_get(transient_hashmap_t names, sv_str_t id, ctx_t* ctx)
 {
     if (names.set.dense.cell == NULL)
-        return sv_opt_none_t(int64_t);
+        return sv_opt_none_t(uint32_t);
 
     value_t key = value_init_str(id, &ctx->alloc);
     if (key.obj.cell == NULL)
-        return sv_opt_none_t(int64_t);
+        return sv_opt_none_t(uint32_t);
 
     sv_opt_t(value_t) v = thm_get(names, key);
     value_free(&key, &ctx->alloc);
     if (!v.is_some)
-        return sv_opt_none_t(int64_t);
-    return sv_opt_some_t(int64_t, (int64_t)v.value.number);
+        return sv_opt_none_t(uint32_t);
+    return sv_opt_some_t(uint32_t, (uint32_t)v.value.number);
 }
 
 static bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
@@ -262,6 +292,7 @@ static sv_str_t append_prefix(sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t 
 
 static bool globals_add(globals_t* g, sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t line)
 {
+    TRY(check_limit(ctx, names_count(g->name_indexes), UINT32_MAX, "globals", line));
     sv_str_t name = append_prefix(id, prefix, ctx, line);
     if (name.chars == NULL)
         return compiler_oom(ctx, line);
@@ -276,13 +307,13 @@ static bool globals_add(globals_t* g, sv_str_t id, sv_str_t prefix, ctx_t* ctx, 
     return true;
 }
 
-static sv_opt_t(int64_t) globals_get(const globals_t g, sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t line)
+static sv_opt_t(uint32_t) globals_get(const globals_t g, sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t line)
 {
     sv_str_t name = append_prefix(id, prefix, ctx, line);
     if (name.chars == NULL)
-        return sv_opt_none_t(int64_t);
+        return sv_opt_none_t(uint32_t);
 
-    sv_opt_t(int64_t) maybe = names_get(g.name_indexes, name, ctx);
+    sv_opt_t(uint32_t) maybe = names_get(g.name_indexes, name, ctx);
     if (maybe.is_some)
         return maybe;
 
@@ -291,6 +322,7 @@ static sv_opt_t(int64_t) globals_get(const globals_t g, sv_str_t id, sv_str_t pr
 
 static bool locals_add(locals_t* l, sv_str_t id, ctx_t* ctx, int64_t line)
 {
+    TRY(check_limit(ctx, names_count(l->name_indexes) + l->offset, UINT32_MAX, "locals", line));
     bool existed = false;
     if (!names_add(&l->name_indexes, id, ctx, &existed))
         return compiler_oom(ctx, line);
@@ -299,14 +331,14 @@ static bool locals_add(locals_t* l, sv_str_t id, ctx_t* ctx, int64_t line)
     return true;
 }
 
-static sv_opt_t(int64_t) locals_get(const locals_t* l, sv_str_t id, ctx_t* ctx)
+static sv_opt_t(uint32_t) locals_get(const locals_t* l, sv_str_t id, ctx_t* ctx)
 {
     for (; l != NULL; l = l->next) {
-        sv_opt_t(int64_t) idx = names_get(l->name_indexes, id, ctx);
+        sv_opt_t(uint32_t) idx = names_get(l->name_indexes, id, ctx);
         if (idx.is_some)
-            return sv_opt_some_t(int64_t, idx.value + l->offset);
+            return sv_opt_some_t(uint32_t, (uint32_t)(idx.value + l->offset));
     }
-    return sv_opt_none_t(int64_t);
+    return sv_opt_none_t(uint32_t);
 }
 
 static bool expect_id(sexpr_t e, ctx_t* ctx, sv_str_t* out)
@@ -344,21 +376,21 @@ static bool compile_id(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
     if (sv_str_comp(id, sv_str_init("$fail")))
         return compile_fail(c, line, ctx);
 
-    sv_opt_t(int64_t) idx = locals_get(c->locals, id, ctx);
+    sv_opt_t(uint32_t) idx = locals_get(c->locals, id, ctx);
     if (idx.is_some)
-        return emit2(c, ctx, OP_GET_LOCAL, (uint8_t)idx.value, line);
+        return emit_wide(c, ctx, OP_GET_LOCAL, idx.value, line);
 
     idx = locals_get(&c->upvalues, id, ctx);
     if (idx.is_some)
-        return emit2(c, ctx, OP_GET_UPVALUE, (uint8_t)idx.value, line);
+        return emit_wide(c, ctx, OP_GET_UPVALUE, idx.value, line);
 
     idx = globals_get(c->globals, id, sv_str_init(c->current_path), ctx, line);
     if (idx.is_some)
-        return emit2(c, ctx, OP_GET_GLOBAL, (uint8_t)idx.value, line);
+        return emit_wide(c, ctx, OP_GET_GLOBAL, idx.value, line);
 
     idx = names_get(c->members, id, ctx);
     if (idx.is_some)
-        return emit2(c, ctx, OP_GET_MEMBER, (uint8_t)idx.value, line);
+        return emit_narrow(c, ctx, OP_GET_MEMBER, idx.value, "closure group members", line);
 
     return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", id);
 }
@@ -368,13 +400,13 @@ static bool add_var(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
     if (c->locals != NULL) {
         TRY(emit(c, ctx, OP_SET_LOCAL, line));
         TRY(locals_add(c->locals, id, ctx, line));
-        sv_opt_t(int64_t) idx = locals_get(c->locals, id, ctx);
-        return emit2(c, ctx, OP_GET_LOCAL, (uint8_t)idx.value, line);
+        sv_opt_t(uint32_t) idx = locals_get(c->locals, id, ctx);
+        return emit_wide(c, ctx, OP_GET_LOCAL, idx.value, line);
     }
     TRY(emit(c, ctx, OP_SET_GLOBAL, line));
     TRY(globals_add(&c->globals, id, sv_str_init(c->current_path), ctx, line));
-    sv_opt_t(int64_t) idx = globals_get(c->globals, id, sv_str_init(c->current_path), ctx, line);
-    return emit2(c, ctx, OP_GET_GLOBAL, (uint8_t)idx.value, line);
+    sv_opt_t(uint32_t) idx = globals_get(c->globals, id, sv_str_init(c->current_path), ctx, line);
+    return emit_wide(c, ctx, OP_GET_GLOBAL, idx.value, line);
 }
 
 static bool init_scope(compiler_t* c, ctx_t* ctx, int64_t line)
@@ -397,11 +429,11 @@ static bool deinit_scope(compiler_t* c, ctx_t* ctx)
     if (local == NULL)
         return true;
 
-    uint8_t n = (uint8_t)names_count(local->name_indexes);
+    int64_t n = names_count(local->name_indexes);
     c->locals = local->next;
     thm_deinit(&local->name_indexes, &ctx->alloc);
     sv_free(&ctx->alloc, local);
-    return emit2(c, ctx, OP_POP_LOCAL, n, 0);
+    return emit_pop_locals(c, ctx, n, 0);
 }
 
 static bool is_pattern_wildcard(sexpr_t e)
@@ -465,7 +497,7 @@ static bool bind_tuple(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
 {
     int64_t arity = pattern.cons.size - 1;
     TRY(emit(c, ctx, OP_DUP, line));
-    TRY(emit2(c, ctx, OP_IS_TUPLE, (uint8_t)arity, line));
+    TRY(emit_narrow(c, ctx, OP_IS_TUPLE, arity, "tuple elements", line));
     TRY(emit_assert(c, line, ctx));
 
     for (int64_t i = 0; i < arity; i++) {
@@ -488,7 +520,7 @@ static bool bind_record(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen
     if (record_is_open(pattern))
         TRY(emit(c, ctx, OP_IS_RECORD_ANY, line));
     else
-        TRY(emit2(c, ctx, OP_IS_RECORD, (uint8_t)n, line));
+        TRY(emit_narrow(c, ctx, OP_IS_RECORD, n, "record fields", line));
     TRY(emit_assert(c, line, ctx));
 
     for (int64_t i = 0; i < n; i++) {
@@ -704,7 +736,7 @@ static bool compile_pipe(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
     for (int64_t i = 1; i < rhs.cons.size; i++)
         TRY(compile_sexpr(c, rhs.cons.arr[i], ctx));
     TRY(compile_id(c, fn_name, line, ctx));
-    return emit2(c, ctx, OP_CALL, (uint8_t)rhs.cons.size, line);
+    return emit_narrow(c, ctx, OP_CALL, rhs.cons.size, "arguments", line);
 }
 
 static bool record_field_id(compiler_t* c, sv_str_t name, int64_t line, ctx_t* ctx, uint32_t* out)
@@ -713,13 +745,13 @@ static bool record_field_id(compiler_t* c, sv_str_t name, int64_t line, ctx_t* c
     if (!names_add(c->record_fields, name, ctx, &existed))
         return compiler_oom(ctx, line);
 
-    sv_opt_t(int64_t) id = names_get(*c->record_fields, name, ctx);
+    sv_opt_t(uint32_t) id = names_get(*c->record_fields, name, ctx);
     if (id.value > UINT8_MAX) {
         char msg[96];
         snprintf(msg, sizeof(msg), "More than %d record fields at line %" PRId64, UINT8_MAX + 1, line);
-        return compiler_error(ctx, C_ERR_NOT_IMPLEMENTED, msg);
+        return compiler_error(ctx, C_ERR_LIMIT_EXCEEDED, msg);
     }
-    *out = (uint32_t)id.value;
+    *out = id.value;
     return true;
 }
 
@@ -806,11 +838,11 @@ static bool compile_double_colon(compiler_t* c, const sexpr_t* args, int64_t n, 
     sv_opt_t(value_t) module_path = thm_get(c->var_to_modules, module_name_value);
     if (!module_path.is_some)
         return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", module_name);
-    sv_opt_t(int64_t) id = globals_get(c->globals, var_name, AS_STR(module_path.value), ctx, line);
+    sv_opt_t(uint32_t) id = globals_get(c->globals, var_name, AS_STR(module_path.value), ctx, line);
     if (!id.is_some)
         return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", var_name);
 
-    return emit2(c, ctx, OP_GET_GLOBAL, (uint8_t)id.value, line);
+    return emit_wide(c, ctx, OP_GET_GLOBAL, id.value, line);
 }
 
 static bool compile_record_get_or_nil(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -924,14 +956,14 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     TRY(emit(c, ctx, OP_ITER_CREATE, line));
     TRY(emit(c, ctx, OP_SET_LOCAL, line));
     TRY(locals_add(c->locals, iter_name, ctx, line));
-    sv_opt_t(int64_t) iter_slot = locals_get(c->locals, iter_name, ctx);
-    TRY(emit2(c, ctx, OP_GET_LOCAL, (uint8_t)iter_slot.value, line));
+    sv_opt_t(uint32_t) iter_slot = locals_get(c->locals, iter_name, ctx);
+    TRY(emit_wide(c, ctx, OP_GET_LOCAL, iter_slot.value, line));
 
     TRY(init_scope(c, ctx, line));
     int64_t loop_start = c->builder.vm.chunk.bytecode.size;
 
-    sv_opt_t(int64_t) iter_idx = locals_get(c->locals, iter_name, ctx);
-    TRY(emit2(c, ctx, OP_GET_LOCAL, (uint8_t)iter_idx.value, line));
+    sv_opt_t(uint32_t) iter_idx = locals_get(c->locals, iter_name, ctx);
+    TRY(emit_wide(c, ctx, OP_GET_LOCAL, iter_idx.value, line));
     TRY(emit(c, ctx, OP_ITER_NEXT, line));
 
     sv_str_t id;
@@ -942,8 +974,8 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
         TRY(expect_id(binding[0], ctx, &id));
     TRY(emit(c, ctx, OP_SET_LOCAL, line));
     TRY(locals_add(c->locals, id, ctx, line));
-    sv_opt_t(int64_t) id_slot = locals_get(c->locals, id, ctx);
-    TRY(emit2(c, ctx, OP_GET_LOCAL, (uint8_t)id_slot.value, line));
+    sv_opt_t(uint32_t) id_slot = locals_get(c->locals, id, ctx);
+    TRY(emit_wide(c, ctx, OP_GET_LOCAL, id_slot.value, line));
 
     int64_t j1 = 0;
     TRY(jump_emit(ctx, vmb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
@@ -953,7 +985,7 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
      * pushed only the item, so the loop's own pop must keep counting just that. */
     if (destructure) {
         TRY(init_scope(c, ctx, line));
-        TRY(emit2(c, ctx, OP_GET_LOCAL, (uint8_t)id_slot.value, line));
+        TRY(emit_wide(c, ctx, OP_GET_LOCAL, id_slot.value, line));
         TRY(compile_destructure(c, binding[0], line, ctx));
         TRY(emit(c, ctx, OP_POP, line));
     }
@@ -963,8 +995,7 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     if (destructure)
         TRY(deinit_scope(c, ctx));
 
-    uint8_t inner = (uint8_t)names_count(c->locals->name_indexes);
-    TRY(emit2(c, ctx, OP_POP_LOCAL, inner, 0));
+    TRY(emit_pop_locals(c, ctx, names_count(c->locals->name_indexes), 0));
     if (!vmb_add_jump_back(&c->builder, loop_start, line, &ctx->alloc))
         return compiler_oom(ctx, line);
     TRY(patch_jump(c, ctx, j1, line));
@@ -997,12 +1028,15 @@ static bool compile_list(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
             return compiler_malformed(ctx, "list spread", line);
         TRY(compile_sexpr(c, args[i], ctx));
     }
-    if (tail == NULL)
-        return emit2(c, ctx, OP_LIST, (uint8_t)n, line);
+    if (tail == NULL) {
+        TRY(check_limit(ctx, n, UINT32_MAX, "list elements", line));
+        return emit_wide(c, ctx, OP_LIST, (uint32_t)n, line);
+    }
 
     // e_1 ... e_n tail => list_prepend n
     TRY(compile_sexpr(c, *tail, ctx));
-    return emit2(c, ctx, OP_LIST_PREPEND, (uint8_t)fixed, line);
+    TRY(check_limit(ctx, fixed, UINT32_MAX, "list elements", line));
+    return emit_wide(c, ctx, OP_LIST_PREPEND, (uint32_t)fixed, line);
 }
 
 static bool compile_hashmap(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -1012,17 +1046,18 @@ static bool compile_hashmap(compiler_t* c, const sexpr_t* args, int64_t n, int64
 
     const sexpr_t* base = spread_of(args, n);
     int64_t n_kvs = base == NULL ? n : n - 1;
-    if (n_kvs % 2 != 0 || n_kvs / 2 > UINT8_MAX)
+    if (n_kvs % 2 != 0)
         return compiler_malformed(ctx, "hashmap", line);
+    TRY(check_limit(ctx, n_kvs / 2, UINT32_MAX, "hashmap entries", line));
 
     for (int64_t i = 0; i < n_kvs; i++)
         TRY(compile_sexpr(c, args[i], ctx));
     if (base == NULL)
-        return emit2(c, ctx, OP_HASHMAP, (uint8_t)(n_kvs / 2), line);
+        return emit_wide(c, ctx, OP_HASHMAP, (uint32_t)(n_kvs / 2), line);
 
     // k_1 v_1 ... base => hashmap_update n
     TRY(compile_sexpr(c, *base, ctx));
-    return emit2(c, ctx, OP_HASHMAP_UPDATE, (uint8_t)(n_kvs / 2), line);
+    return emit_wide(c, ctx, OP_HASHMAP_UPDATE, (uint32_t)(n_kvs / 2), line);
 }
 
 static bool compile_and_or(compiler_t* c, bool is_and, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
@@ -1102,6 +1137,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
 
     if (cls != NULL) {
         fc.upvalues.offset = upvalue_offset;
+        FN_TRY(check_limit(ctx, cls->cons.size, UINT8_MAX, "closure upvalues", line));
         for (int64_t i = 0; i < cls->cons.size; i++) {
             sv_str_t cls_name = { 0 };
             FN_TRY(expect_id(cls->cons.arr[i], ctx, &cls_name));
@@ -1109,6 +1145,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
         }
     }
 
+    FN_TRY(check_limit(ctx, params->cons.size, UINT8_MAX, "parameters", line));
     FN_TRY(init_scope(&fc, ctx, line));
     for (int64_t i = 0; i < params->cons.size; i++) {
         sv_str_t p = { 0 };
@@ -1183,7 +1220,7 @@ static bool compile_fun(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
         return false;
     }
 
-    sv_opt_t(uint8_t) fi = vmb_add_closure(
+    sv_opt_t(uint32_t) fi = vmb_add_closure(
         &c->builder,
         has_cls ? (uint8_t)cls->cons.size : 0,
         fn_vm,
@@ -1197,7 +1234,7 @@ static bool compile_fun(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
 
 static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, int64_t line, ctx_t* ctx)
 {
-    uint8_t first = (uint8_t)c->builder.vm.chunk.functions.size;
+    int64_t first = c->builder.vm.chunk.functions.size;
 
     transient_hashmap_t member_names = {0};
 #define G_TRY(call) do {                                                                                      \
@@ -1206,6 +1243,8 @@ static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, 
         return false;                                                                                         \
     } } while (0)
 
+    G_TRY(check_limit(ctx, first, UINT32_MAX, "functions", line));
+    G_TRY(check_limit(ctx, n, UINT8_MAX, "closure group members", line));
     for (int64_t i = 0; i < n; i++) {
         if (members[i].tag != S_CONS || (members[i].cons.size != 3 && members[i].cons.size != 4))
             G_TRY(compiler_malformed(ctx, "fun group", line));
@@ -1249,7 +1288,8 @@ static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, 
         G_TRY(compile_upvalue_loads(c, has_cls ? &members[i].cons.arr[1] : NULL, line, ctx));
     }
 
-    G_TRY(emit2(c, ctx, OP_CREATE_GROUP, first, line));
+    G_TRY(check_limit(ctx, upvalue_base, UINT8_MAX, "closure group upvalues", line));
+    G_TRY(emit_wide(c, ctx, OP_CREATE_GROUP, (uint32_t)first, line));
     G_TRY(emit2(c, ctx, (uint8_t)n, (uint8_t)upvalue_base, line));
 
     for (int64_t i = 0; i < n; i++) {
@@ -1316,10 +1356,7 @@ static bool compile_fail(compiler_t* c, int64_t line, ctx_t* ctx)
     if (target == NULL)
         return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR, "No alternative to fail to");
 
-    for (int64_t left = live_locals(c) - target->locals; left > 0; left -= UINT8_MAX) {
-        uint8_t count = left > UINT8_MAX ? UINT8_MAX : (uint8_t)left;
-        TRY(emit2(c, ctx, OP_POP_LOCAL, count, line));
-    }
+    TRY(emit_pop_locals(c, ctx, live_locals(c) - target->locals, line));
 
     int64_t j = 0;
     TRY(jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &j, line));
@@ -1350,8 +1387,9 @@ static bool compile_sized_test(compiler_t* c, sv_str_t name, const sexpr_t* args
         return compiler_malformed(ctx, tuple ? "is-tuple?" : "is-record?", line);
 
     TRY(compile_sexpr(c, args[0], ctx));
-    return emit2(c, ctx, tuple ? OP_IS_TUPLE : OP_IS_RECORD,
-                 (uint8_t)args[1].atom.literal.number, line);
+    return emit_narrow(c, ctx, tuple ? OP_IS_TUPLE : OP_IS_RECORD,
+                       (int64_t)args[1].atom.literal.number,
+                       tuple ? "tuple elements" : "record fields", line);
 }
 
 /**
@@ -1455,7 +1493,7 @@ static bool compile_call(compiler_t* c, sv_str_t fn_name, const sexpr_t* args, i
     for (int64_t i = 0; i < n; i++)
         TRY(compile_sexpr(c, args[i], ctx));
     TRY(compile_id(c, fn_name, line, ctx));
-    return emit2(c, ctx, OP_CALL, (uint8_t)n, line);
+    return emit_narrow(c, ctx, OP_CALL, n, "arguments", line);
 }
 
 static bool compile_literal(compiler_t* c, literal_t lit, int64_t line, ctx_t* ctx)
@@ -1579,7 +1617,7 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
         for (int64_t i = 1; i < n; i++)
             TRY(compile_sexpr(c, cons[i], ctx));
         TRY(compile_cons(c, head.cons.arr, head.cons.size, ctx));
-        return emit2(c, ctx, OP_CALL, (uint8_t)(n - 1), 0);
+        return emit_narrow(c, ctx, OP_CALL, n - 1, "arguments", 0);
     }
 
     token_t a = head.atom;

@@ -131,9 +131,25 @@ static sexpr_t unexpected_token_error(ctx_t* ctx, token_t token, const char* wha
     return atom_sexpr(parser_error_at(ctx, PARSER_ERROR_UNEXPECTED_TOKEN, token.line, msg));
 }
 
+static token_t parser_peek(scanner_t* s, ctx_t* ctx)
+{
+    token_t token = scanner_peek(s, ctx);
+    while (token.kind == TOKEN_NEWLINE) {
+        scanner_next(s, ctx);
+        token = scanner_peek(s, ctx);
+    }
+    return token;
+}
+
+static token_t parser_next(scanner_t* s, ctx_t* ctx)
+{
+    parser_peek(s, ctx);
+    return scanner_next(s, ctx);
+}
+
 static token_t parser_expect(scanner_t* s, ctx_t* ctx, token_pattern p)
 {
-    token_t token = scanner_next(s, ctx);
+    token_t token = parser_next(s, ctx);
     if (token.kind == TOKEN_ERROR || token_is(token, p))
         return token;
 
@@ -152,7 +168,7 @@ static token_t parser_expect(scanner_t* s, ctx_t* ctx, token_pattern p)
 
 static token_t parser_expect_close(scanner_t* s, ctx_t* ctx, token_t open, token_pattern close)
 {
-    token_t token = scanner_next(s, ctx);
+    token_t token = parser_next(s, ctx);
     if (token.kind == TOKEN_ERROR || token_is(token, close))
         return token;
 
@@ -175,7 +191,7 @@ static token_t parser_expect_close(scanner_t* s, ctx_t* ctx, token_t open, token
 
 static token_t parser_expect_literal(scanner_t* s, ctx_t* ctx, literal_kind literal_kind, const char* literal_name)
 {
-    token_t token = scanner_next(s, ctx);
+    token_t token = parser_next(s, ctx);
     if (token.kind == TOKEN_ERROR)
         return token;
     if (token.kind == TOKEN_LITERAL && token.literal.kind == literal_kind)
@@ -204,7 +220,7 @@ static token_t parser_expect_str(scanner_t* s, ctx_t* ctx)
 
 static bool parser_check(scanner_t* s, ctx_t* ctx, token_pattern p, token_t* out)
 {
-    token_t token = scanner_peek(s, ctx);
+    token_t token = parser_peek(s, ctx);
     if (!token_is(token, p))
         return false;
     *out = scanner_next(s, ctx);
@@ -248,15 +264,9 @@ static precedence infix_prec(operator_kind op)
     return (precedence){ .left = 0, .right = 0, .has_right = false };
 }
 
-/* Elements of a container parse above `=`, so `x, y = 1, 2` is not an assignment. */
 #define PREC_ELEMENT 5
-/* A parameter admits `=`, the alias `{x, ..} = rec`. Nothing binds looser than `=`. */
 #define PREC_PARAM 2
 
-/**
- * Reads the `..tail` element of a list, having consumed the `..`. Returns the
- * error atom on failure and a nil atom on success; the tail is pushed onto list.
- */
 static sexpr_t parse_list_tail(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list,
                                token_t dots, int64_t line, bool as_pattern)
 {
@@ -347,15 +357,10 @@ static sexpr_t parse_list(scanner_t* s, ctx_t* ctx, token_t open, token_pattern 
     return parse_container(&list, s, ctx, open, close, true, PREC_ELEMENT);
 }
 
-/**
- * Reads what follows a `..` in a record or hashmap. A bare `..` before the closing brace is
- * the open marker of a pattern; `..expr` is a spread and must come last. Returns the error
- * atom on failure and a nil atom on success; the element is pushed onto list.
- */
 static sexpr_t parse_spread(scanner_t* s, ctx_t* ctx, sv_vec_t(sexpr_t)* list, token_t dots,
                             int64_t line)
 {
-    if (scanner_peek(s, ctx).kind == TOKEN_RIGHT_BRACE) {
+    if (parser_peek(s, ctx).kind == TOKEN_RIGHT_BRACE) {
         if (!push_sexpr(list, atom_sexpr(dots), ctx))
             return atom_sexpr(oom_error(ctx, line));
         return (sexpr_t){ .tag = S_ATOM, .atom = { .kind = TOKEN_EOF, .line = line } };
@@ -567,11 +572,6 @@ static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
     return cons_of(ctx, items, 3, for_token.line);
 }
 
-/**
- * Reads the `when guard` and `do block` tail shared by every clause form. A guard is
- * returned wrapped around the body as `(when guard body)`, so a clause stays a fixed
- * size and the lowering can bind pattern variables around both at once.
- */
 static sexpr_t parse_clause_body(scanner_t* s, ctx_t* ctx, int64_t line, token_t* term)
 {
     token_t when;
@@ -603,9 +603,6 @@ static sexpr_t parse_clause_body(scanner_t* s, ctx_t* ctx, int64_t line, token_t
     return cons_of(ctx, items, 3, when.line);
 }
 
-/**
- * Emits one clause, taking ownership of pattern and of body.
- */
 static sexpr_t push_clause(sv_vec_t(sexpr_t)* list, sexpr_t pattern, sexpr_t body,
                            sexpr_t tuple_atom, int64_t line, ctx_t* ctx)
 {
@@ -621,10 +618,6 @@ static sexpr_t push_clause(sv_vec_t(sexpr_t)* list, sexpr_t pattern, sexpr_t bod
     return (sexpr_t){ .tag = S_ATOM, .atom = { .kind = TOKEN_EOF, .line = line } };
 }
 
-/**
- * A clause holds one pattern, so a `|` before the body is an error. The caller
- * still owns what it passed in.
- */
 static bool reject_alternative(scanner_t* s, ctx_t* ctx, sexpr_t* err)
 {
     token_t pipe;
@@ -640,10 +633,6 @@ static token_t pattern_head(sexpr_t pattern)
     return pattern.tag == S_ATOM ? pattern.atom : pattern.cons.arr[0].atom;
 }
 
-/**
- * With more than one parameter the scrutinee is a tuple, so a clause must be a
- * tuple of the same arity, or a variable binding the whole tuple.
- */
 static bool clause_matches_params(sexpr_t pattern, int64_t n_params)
 {
     if (n_params < 2)
@@ -659,11 +648,6 @@ static bool clause_matches_params(sexpr_t pattern, int64_t n_params)
         && pattern.cons.size - 1 == n_params;
 }
 
-/**
- * The scrutinee for a clause list: the parameter itself when there is one, a
- * tuple of them otherwise, mirroring how `(x)` is x and `(a, b)` is a tuple.
- * The parameter atoms are copied, which is free because an atom owns nothing.
- */
 static sexpr_t params_scrutinee(ctx_t* ctx, sexpr_t args, int64_t line)
 {
     for (int64_t i = 0; i < args.cons.size; i++)
@@ -689,12 +673,6 @@ static sexpr_t params_scrutinee(ctx_t* ctx, sexpr_t args, int64_t line)
     return cons_sexpr(list);
 }
 
-/**
- * Reads `| pattern = expr` clauses into a `(do (match scrutinee clause...))`
- * body. Stops at `end`, or on a `|` that begins the next group member, whose
- * name is then reported through pending. A NULL pending means there is no group
- * to hand a member back to.
- */
 static sexpr_t parse_fun_clauses(scanner_t* s, ctx_t* ctx, sexpr_t args, token_t fun_token,
                                  token_t* term, token_t* pending)
 {
@@ -708,14 +686,14 @@ static sexpr_t parse_fun_clauses(scanner_t* s, ctx_t* ctx, sexpr_t args, token_t
         return free_list_error(&list, ctx, atom_sexpr(oom_error(ctx, fun_token.line)));
 
     for (;;) {
-        token_t id = scanner_peek(s, ctx);
+        token_t id = parser_peek(s, ctx);
         if (id.kind == TOKEN_ERROR)
             return free_list_error(&list, ctx, atom_sexpr(scanner_next(s, ctx)));
 
         sexpr_t pattern;
         if (id.kind == TOKEN_LITERAL && id.literal.kind == LITERAL_IDENTIFIER) {
             scanner_next(s, ctx);
-            token_t after = scanner_peek(s, ctx);
+            token_t after = parser_peek(s, ctx);
             bool header = token_is(after, op_pattern(OPERATOR_LEFT_PAREN))
                 || token_is(after, op_pattern(OPERATOR_LEFT_BRACKET));
             if (header && pending != NULL) {
@@ -864,9 +842,6 @@ static sexpr_t parse_fun(scanner_t* s, ctx_t* ctx, token_t fun_token)
     return cons_sexpr(list);
 }
 
-/**
- * Parses `import name("file.long")` to (import name "file.long")
- */
 static sexpr_t parse_import(scanner_t* s, ctx_t* ctx, token_t import_token)
 {
 #define CHECK_TOKEN(token) if (token.kind == TOKEN_ERROR) return free_list_error(&list, ctx, atom_sexpr(token))
@@ -1143,7 +1118,7 @@ static sexpr_t parse_hashmap_pattern(scanner_t* s, ctx_t* ctx, token_t open)
             break;
         }
 
-        token_t key = scanner_next(s, ctx);
+        token_t key = parser_next(s, ctx);
         if (key.kind == TOKEN_ERROR)
             return free_list_error(&list, ctx, atom_sexpr(key));
         if (key.kind != TOKEN_LITERAL || key.literal.kind == LITERAL_IDENTIFIER)
@@ -1178,7 +1153,7 @@ static sexpr_t parse_hashmap_pattern(scanner_t* s, ctx_t* ctx, token_t open)
 
 static sexpr_t parse_pattern_primary(scanner_t* s, ctx_t* ctx)
 {
-    token_t token = scanner_next(s, ctx);
+    token_t token = parser_next(s, ctx);
     if (token.kind == TOKEN_ERROR)
         return atom_sexpr(token);
 
@@ -1200,7 +1175,7 @@ static sexpr_t parse_pattern_primary(scanner_t* s, ctx_t* ctx)
     if (token.kind == TOKEN_PERCENT_BRACE)
         return parse_hashmap_pattern(s, ctx, token);
     if (token_is(token, op_pattern(OPERATOR_MINUS))) {
-        token_t num = scanner_next(s, ctx);
+        token_t num = parser_next(s, ctx);
         if (num.kind == TOKEN_ERROR)
             return atom_sexpr(num);
         if (num.kind != TOKEN_LITERAL || num.literal.kind != LITERAL_NUMBER)
@@ -1213,11 +1188,6 @@ static sexpr_t parse_pattern_primary(scanner_t* s, ctx_t* ctx)
     return unexpected_token_error(ctx, token, "Expected a pattern");
 }
 
-/**
- * Reads an optional `= pattern` after a pattern. `p = name` (or `name = p`) binds the name
- * to the whole value and goes on matching p against it, so one side must be a name: two
- * shapes could never both hold. Right associative through the recursion.
- */
 static sexpr_t parse_pattern_tail(scanner_t* s, ctx_t* ctx, sexpr_t lhs)
 {
     token_t eq;
@@ -1386,9 +1356,6 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
                 return lhs;
             continue;
         } else if (token.kind == TOKEN_LITERAL || token.kind == TOKEN_SP_FUNCTION) {
-            if (token.line != start_token.line)
-                break;
-
             sexpr_free(&lhs, &ctx->alloc);
             return unexpected_token_error(ctx, token, "Unexpected token");
         } else {
@@ -1425,7 +1392,7 @@ static sexpr_t parse_operator(scanner_t* s, ctx_t* ctx, token_t start_token, uin
 
 static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
 {
-    token_t token = scanner_next(s, ctx);
+    token_t token = parser_next(s, ctx);
     if (token.kind == TOKEN_ERROR)
         return atom_sexpr(token);
 
@@ -1496,7 +1463,7 @@ sexpr_t parser_program(scanner_t* s, ctx_t* ctx)
 
     for (;;) {
         parser_skip_semicolons(s, ctx);
-        token_t peeked = scanner_peek(s, ctx);
+        token_t peeked = parser_peek(s, ctx);
         if (peeked.kind == TOKEN_EOF)
             break;
         if (peeked.kind == TOKEN_ERROR)

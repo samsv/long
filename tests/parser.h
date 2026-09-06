@@ -313,6 +313,45 @@ static inline void sv_test_parser_comments(sv_testing_t* t)
    sv_str_deinit(&ctx.err.msg, &ctx.alloc);
 }
 
+static inline void sv_test_parser_newlines(sv_testing_t* t)
+{
+   /* A newline ends a complete expression. */
+   sv_test_parse_ok(t, "x = 1\n(a, b) = (1, 2)");
+   sv_test_parse_ok(t, "x = 5\n-1");
+   sv_test_parse_ok(t, "xs = [1]\n[0]");
+   sv_test_parse_ok(t, "x = 1\nx = 2");
+
+   /* An incomplete expression continues. */
+   sv_test_parse_ok(t, "x = 1 +\n2");
+   sv_test_parse_ok(t, "x =\n1");
+   sv_test_parse_ok(t, "x = (1 +\n2) * 3");
+   sv_test_parse_ok(t, "f(\n1,\n2\n)");
+   sv_test_parse_ok(t, "[\n1,\n2\n]");
+   sv_test_parse_ok(t, "[1,\n2]");
+   sv_test_parse_ok(t, "{x: 1,\n y: 2}");
+   sv_test_parse_ok(t, "{x:\n1}");
+   sv_test_parse_ok(t, "%{1: 2,\n 3: 4}");
+   sv_test_parse_ok(t, "%{1: 2,\n..m}");
+   sv_test_parse_ok(t, "{x,\n..\n}");
+   sv_test_parse_ok(t, "fun f(x)\n  x");
+   sv_test_parse_ok(t, "fun f(\n  a,\n  b\n) a");
+   sv_test_parse_ok(t, "if x do\n1\nelse\n2\nend");
+   sv_test_parse_ok(t, "if x\ndo 1 end");
+   sv_test_parse_ok(t, "for x in\n[1] do\nx\nend");
+   sv_test_parse_ok(t, "match x\n| 1 do 2\n| _ do 3\nend");
+   sv_test_parse_ok(t, "match x\n| (1, a)\nwhen a > 0 do a\n| _ do 3\nend");
+   sv_test_parse_ok(t, "fun\n| a(x) x\n| b(x)\n  x\nend");
+   sv_test_parse_ok(t, "x\n|> f()\n|> g()");
+   sv_test_parse_ok(t, "x # c\n|> f()");
+   sv_test_parse_ok(t, "(a,\n b) = t");
+   sv_test_parse_ok(t, "%{1:\nv} = m");
+
+   /* Elements need a comma; a same-line juxtaposition is still an error. */
+   sv_test_parse_error(t, "[1\n2]", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "(1 +\n2) 3", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_parse_error(t, "1 2", (int)PARSER_ERROR_UNEXPECTED_TOKEN);
+}
+
 static inline void sv_test_parser(sv_testing_t* t)
 {
    sv_test_parser_exprs(t);
@@ -322,6 +361,7 @@ static inline void sv_test_parser(sv_testing_t* t)
    sv_test_parser_alias(t);
    sv_test_parser_spread(t);
    sv_test_parser_comments(t);
+   sv_test_parser_newlines(t);
    sv_test_parser_errors(t);
    sv_test_parser_oom(t);
 }

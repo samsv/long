@@ -80,6 +80,7 @@ static const char* op_name(vm_instructions op)
         case OP_NO_MATCH: return "no_match";
         case OP_SWAP: return "swap";
         case OP_IS_HASHMAP_ANY: return "is_hashmap_any";
+        case OP_EXTENDED_ARG: return "extended_arg";
         case OP_RECORD_UPDATE: return "record_update";
         case OP_HASHMAP_UPDATE: return "hashmap_update";
         case OP_LIST_PREPEND: return "list_prepend";
@@ -88,18 +89,47 @@ static const char* op_name(vm_instructions op)
     return "unknown";
 }
 
+static uint32_t read_operand(const uint8_t* p, uint8_t width)
+{
+    uint32_t arg = 0;
+    for (uint8_t k = 0; k < width; k++)
+        arg |= (uint32_t)p[k] << (8 * k);
+    return arg;
+}
+
+static bool truncated(int64_t i, vm_instructions op, int64_t left, int64_t need)
+{
+    if (left >= need)
+        return false;
+    printf("%" PRId64 " [ %s ] truncated\n", i, op_name(op));
+    return true;
+}
+
 void print_chunk(vm_t v)
 {
     printf("========= INSTRUCTIONS =========\n");
     const uint8_t* code = v.chunk.bytecode.arr;
+    int64_t size = v.chunk.bytecode.size;
+    uint8_t width = 1;
     int64_t i = 0;
-    while (i < v.chunk.bytecode.size) {
+    while (i < size) {
         vm_instructions op = code[i];
+        const uint8_t* p = code + i + 1;
+        int64_t left = size - i - 1;
         switch (op) {
+            case OP_EXTENDED_ARG:
+                if (truncated(i, op, left, 1))
+                    return;
+                width = p[0];
+                printf("%" PRId64 " [ %s ] width %u\n", i, op_name(op), width);
+                i += 2;
+                continue;
             case OP_JUMP:
             case OP_JUMP_BACK:
             case OP_JUMP_IF_FALSE: {
-                uint16_t offset = (uint16_t)(code[i + 1] | code[i + 2] << 8);
+                if (truncated(i, op, left, 2))
+                    return;
+                uint16_t offset = (uint16_t)(p[0] | p[1] << 8);
                 printf("%" PRId64 " [ %s ] offset %u\n", i, op_name(op), offset);
                 i += 3;
                 break;
@@ -109,22 +139,31 @@ void print_chunk(vm_t v)
             case OP_LIST:
             case OP_RECORD_UPDATE:
             case OP_LIST_PREPEND:
-                printf("%" PRId64 " [ %s ] size %u\n", i, op_name(op), code[i + 1]);
-                i += 2;
+                if (truncated(i, op, left, width))
+                    return;
+                printf("%" PRId64 " [ %s ] size %" PRIu32 "\n", i, op_name(op), read_operand(p, width));
+                i += 1 + width;
                 break;
             case OP_HASHMAP:
             case OP_HASHMAP_UPDATE:
-                printf("%" PRId64 " [ %s ] pairs %u\n", i, op_name(op), code[i + 1]);
-                i += 2;
+                if (truncated(i, op, left, width))
+                    return;
+                printf("%" PRId64 " [ %s ] pairs %" PRIu32 "\n", i, op_name(op), read_operand(p, width));
+                i += 1 + width;
                 break;
             case OP_LOAD_CLOSURE:
-                printf("%" PRId64 " [ %s ] fn_index %u n_closures %u\n", i, op_name(op), code[i + 1], code[i + 2]);
-                i += 3;
+                if (truncated(i, op, left, width + 1))
+                    return;
+                printf("%" PRId64 " [ %s ] fn_index %" PRIu32 " n_closures %u\n",
+                    i, op_name(op), read_operand(p, width), p[width]);
+                i += 2 + width;
                 break;
             case OP_CREATE_GROUP:
-                printf("%" PRId64 " [ %s ] first %u members %u upvalues %u\n",
-                    i, op_name(op), code[i + 1], code[i + 2], code[i + 3]);
-                i += 4;
+                if (truncated(i, op, left, width + 2))
+                    return;
+                printf("%" PRId64 " [ %s ] first %" PRIu32 " members %u upvalues %u\n",
+                    i, op_name(op), read_operand(p, width), p[width], p[width + 1]);
+                i += 3 + width;
                 break;
             case OP_POP_LOCAL:
             case OP_LOAD_CONSTANT:
@@ -133,17 +172,20 @@ void print_chunk(vm_t v)
             case OP_GET_UPVALUE:
             case OP_RECORD_GET:
             case OP_GET_MEMBER:
-            case OP_LENGTH:
             case OP_RECORD_GET_OR_UNDEF:
             case OP_IS_TUPLE:
             case OP_IS_RECORD:
             case OP_HAS_FIELD:
-                printf("%" PRId64 " [ %s ] index %u\n", i, op_name(op), code[i + 1]);
-                i += 2;
+                if (truncated(i, op, left, width))
+                    return;
+                printf("%" PRId64 " [ %s ] index %" PRIu32 "\n", i, op_name(op), read_operand(p, width));
+                i += 1 + width;
                 break;
             case OP_CALL:
-                printf("%" PRId64 " [ %s ] args %u\n", i, op_name(op), code[i + 1]);
-                i += 2;
+                if (truncated(i, op, left, width))
+                    return;
+                printf("%" PRId64 " [ %s ] args %" PRIu32 "\n", i, op_name(op), read_operand(p, width));
+                i += 1 + width;
                 break;
             case OP_ADD:
             case OP_SUB:
@@ -162,6 +204,7 @@ void print_chunk(vm_t v)
             case OP_NEGATE:
             case OP_POP:
             case OP_INDEX:
+            case OP_LENGTH:
             case OP_NOT:
             case OP_DUP:
             case OP_IS_STR:
@@ -186,6 +229,7 @@ void print_chunk(vm_t v)
                 i += 1;
                 break;
         }
+        width = 1;
     }
 }
 

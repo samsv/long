@@ -146,13 +146,24 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
 #define UNSUPPORTED_1(v, err_msg) OP_ERR_1(VM_ERR_OP_UNSUPPORTED_ARGS, v, err_msg)
 
+#define READ_BYTE() (vm->chunk.bytecode.arr[vm->ip++])
+
+#define READ_NARROW(name) do { name = READ_BYTE(); } while (0)
+
+#define READ_ARG(name) do {                                                                                   \
+    name = READ_BYTE();                                                                                       \
+    for (int shift = 8; arg_bytes > 1; arg_bytes--, shift += 8)                                               \
+        name |= (uint32_t)READ_BYTE() << shift;                                                               \
+} while (0)
+
 #define SET(arr) {                                                                                            \
     value_t v = sv_vec_pop(vm->stack);                                                                        \
     TRY_PUSH(arr, v);                                                                                         \
     break; }
 
 #define GET(src) {                                                                                            \
-    uint8_t i = vm->chunk.bytecode.arr[vm->ip++];                                                             \
+    uint32_t i = 0;                                                                                           \
+    READ_ARG(i);                                                                                              \
     TRY_PUSH_STACK(value_borrow(src.arr[i]));                                                                 \
     break; }
 
@@ -180,7 +191,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
     break; }
 
 #define IS_SIZED(is, as, field) {                                                                             \
-    uint8_t want = vm->chunk.bytecode.arr[vm->ip++];                                                          \
+    uint8_t want = READ_BYTE();                                                                               \
     value_t v = sv_vec_pop(vm->stack);                                                                        \
     value_t res = { .kind = VALUE_BOOL, .boolean = is(v) && as(v).field == want };                            \
     value_free(&v, a);                                                                                        \
@@ -210,7 +221,8 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
     error_t err;
     int success = 0;
-    while (1) switch (vm->chunk.bytecode.arr[vm->ip++]) {
+    uint8_t arg_bytes = 1;
+    while (1) switch (READ_BYTE()) {
         case OP_SET_LOCAL: SET(vm->locals)
         case OP_SET_GLOBAL: SET(vm->globals)
         case OP_GET_LOCAL: GET(vm->locals)
@@ -235,7 +247,12 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             break;
         }
         case OP_POP: arr_remove(&vm->stack, a); break;
-        case OP_POP_LOCAL: arr_remove_n(&vm->locals, vm->chunk.bytecode.arr[vm->ip++], a); break;
+        case OP_POP_LOCAL: {
+            uint32_t n = 0;
+            READ_ARG(n);
+            arr_remove_n(&vm->locals, n, a);
+            break;
+        }
         case OP_NEGATE: {
             value_t v = sv_vec_pop(vm->stack);
             if (!IS_NUMBER(v))
@@ -245,20 +262,21 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             break;
         }
 
-#define VALUE_FROM_ARR(mult, init_fn) {                                                                       \
-            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];                                                     \
+#define VALUE_FROM_ARR(mult, init_fn, n_type, read) {                                                         \
+            n_type n = 0;                                                                                     \
+            read(n);                                                                                          \
             value_t arr = init_fn(&vm->stack.arr[vm->stack.size - (mult) * n], n, a);                         \
             TRY_NOT_NULL(arr.obj.cell, "OOM when creating collection");                                       \
             arr_remove_n(&vm->stack, (mult) * n, a);                                                          \
             TRY_PUSH_OWNED(arr);                                                                              \
             break; }
 
-        case OP_LIST: VALUE_FROM_ARR(1, value_init_list);
-        case OP_HASHMAP: VALUE_FROM_ARR(2, value_init_map);
-        case OP_RECORD: VALUE_FROM_ARR(2, value_init_record);
-        case OP_TUPLE: VALUE_FROM_ARR(1, value_init_tuple);
+        case OP_LIST: VALUE_FROM_ARR(1, value_init_list, uint32_t, READ_ARG);
+        case OP_HASHMAP: VALUE_FROM_ARR(2, value_init_map, uint32_t, READ_ARG);
+        case OP_RECORD: VALUE_FROM_ARR(2, value_init_record, uint8_t, READ_NARROW);
+        case OP_TUPLE: VALUE_FROM_ARR(1, value_init_tuple, uint8_t, READ_NARROW);
         case OP_RECORD_UPDATE: {
-            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
+            uint8_t n = READ_BYTE();
             value_t base = sv_vec_pop(vm->stack);
             if (!IS_RECORD(base))
                 UNSUPPORTED_1(base, "Record update needs a record");
@@ -281,7 +299,8 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             break;
         }
         case OP_HASHMAP_UPDATE: {
-            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
+            uint32_t n = 0;
+            READ_ARG(n);
             value_t base = sv_vec_pop(vm->stack);
             if (!IS_MAP(base))
                 UNSUPPORTED_1(base, "Hashmap update needs a hashmap");
@@ -290,7 +309,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             hashmap_t cur = sv_rc_borrow(AS_MAP(base));
             value_free(&base, a);
             const value_t* kvs = &vm->stack.arr[vm->stack.size - 2 * n];
-            for (uint8_t i = 0; i < n; i++) {
+            for (uint32_t i = 0; i < n; i++) {
                 hashmap_t next = map_put(cur, (kv_t){ .key = kvs[2 * i], .value = kvs[2 * i + 1] }, a);
                 map_deinit(&cur, a);
                 TRY_NOT_NULL(next.cell, "OOM when updating a hashmap");
@@ -304,7 +323,8 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             break;
         }
         case OP_LIST_PREPEND: {
-            uint8_t n = vm->chunk.bytecode.arr[vm->ip++];
+            uint32_t n = 0;
+            READ_ARG(n);
             value_t tail = sv_vec_pop(vm->stack);
             if (!IS_LIST(tail))
                 UNSUPPORTED_1(tail, "Spread into a list needs a list");
@@ -404,7 +424,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         }
 #define RECORD_GET(...) do {                                                                                  \
     value_t maybe_tuple = sv_vec_pop(vm->stack);                                                              \
-    uint8_t id = vm->chunk.bytecode.arr[vm->ip++];                                                            \
+    uint8_t id = READ_BYTE();                                                                                 \
     if (!IS_RECORD(maybe_tuple))                                                                              \
         UNSUPPORTED_1(maybe_tuple, "Type is not subscriptable");                                              \
     record_t tuple = AS_RECORD(maybe_tuple);                                                                  \
@@ -465,8 +485,9 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             break;
         }
         case OP_LOAD_CLOSURE: {
-            uint8_t i = vm->chunk.bytecode.arr[vm->ip++];
-            uint8_t n_cls = vm->chunk.bytecode.arr[vm->ip++];
+            uint32_t i = 0;
+            READ_ARG(i);
+            uint8_t n_cls = READ_BYTE();
             value_t cls = value_init_closure(
                 &vm->chunk.functions.arr[i],
                 &vm->stack.arr[vm->stack.size - n_cls],
@@ -478,9 +499,10 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             break;
         }
         case OP_CREATE_GROUP: {
-            uint8_t first = vm->chunk.bytecode.arr[vm->ip++];
-            uint8_t n_members = vm->chunk.bytecode.arr[vm->ip++];
-            uint8_t n_upvalues = vm->chunk.bytecode.arr[vm->ip++];
+            uint32_t first = 0;
+            READ_ARG(first);
+            uint8_t n_members = READ_BYTE();
+            uint8_t n_upvalues = READ_BYTE();
 
             sv_vec_grow_cap(&vm->stack, vm->stack.size + n_members, &success, a);
             TRY_OR(success, (void)0, "OOM when creating closure group")
@@ -515,7 +537,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             break;
         }
         case OP_GET_MEMBER: {
-            uint8_t i = vm->chunk.bytecode.arr[vm->ip++];
+            uint8_t i = READ_BYTE();
             if (vm->group.cell == NULL) {
                 vm_instruction_err* p = sv_malloc(a, sizeof(vm_instruction_err));
                 if (p != NULL)
@@ -550,7 +572,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
     goto error; } while (0)
 
             value_t value = sv_vec_pop(vm->stack);
-            uint8_t arg_count = vm->chunk.bytecode.arr[vm->ip++];
+            uint8_t arg_count = READ_BYTE();
 
             if (!IS_CLOSURE(value) && !IS_NATIVE(value) && !IS_CLOSURE_MEMBER(value))
                 UNSUPPORTED_1(value, "Type is not callable");
@@ -649,7 +671,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         }
         case OP_HAS_FIELD: {
             value_t v = sv_vec_pop(vm->stack);
-            uint8_t id = vm->chunk.bytecode.arr[vm->ip++];
+            uint8_t id = READ_BYTE();
             value_t res = { .kind = VALUE_BOOL,
                             .boolean = IS_RECORD(v) && record_get(AS_RECORD(v), id).is_some };
             value_free(&v, a);
@@ -696,6 +718,9 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
             value_t subject = value_borrow(sv_vec_last(vm->stack));
             OP_ERR_1(VM_ERR_NO_CLAUSE, subject, "No clause matched");
         }
+        case OP_EXTENDED_ARG:
+            arg_bytes = READ_BYTE();
+            break;
         case OP_RETURN:
             return sv_opt_none_t(error_t);
         default: {
@@ -762,30 +787,43 @@ bool vmb_add_bytes(vm_builder_t* b, uint8_t b1, uint8_t b2, int64_t line, const 
     return vmb_add_byte(b, b1, line, a) && vmb_add_byte(b, b2, line, a);
 }
 
-sv_opt_t(uint8_t) vmb_add_constant(vm_builder_t* b, value_t c, const sv_allocator_t* a)
+bool vmb_add_arg(vm_builder_t* b, uint8_t op, uint32_t arg, int64_t line, const sv_allocator_t* a)
+{
+    uint8_t width = arg > 0xFFFFFF ? 4 : arg > 0xFFFF ? 3 : arg > 0xFF ? 2 : 1;
+    if (width > 1 && !vmb_add_bytes(b, OP_EXTENDED_ARG, width, line, a))
+        return false;
+    if (!vmb_add_byte(b, op, line, a))
+        return false;
+    for (uint8_t i = 0; i < width; i++)
+        if (!vmb_add_byte(b, (uint8_t)(arg >> (8 * i)), line, a))
+            return false;
+    return true;
+}
+
+sv_opt_t(uint32_t) vmb_add_constant(vm_builder_t* b, value_t c, const sv_allocator_t* a)
 {
     int success = 0;
     sv_vec_push(&b->vm.chunk.constants, c, &success, a);
     if (!success)
-        return sv_opt_none_t(uint8_t);
+        return sv_opt_none_t(uint32_t);
 
-    uint8_t i = (uint8_t)(b->vm.chunk.constants.size - 1);
-    if (!vmb_add_bytes(b, OP_LOAD_CONSTANT, i, 0, a))
-        return sv_opt_none_t(uint8_t);
-    return sv_opt_some_t(uint8_t, i);
+    int64_t i = b->vm.chunk.constants.size - 1;
+    if (i > UINT32_MAX || !vmb_add_arg(b, OP_LOAD_CONSTANT, (uint32_t)i, 0, a))
+        return sv_opt_none_t(uint32_t);
+    return sv_opt_some_t(uint32_t, (uint32_t)i);
 }
 
-sv_opt_t(uint8_t) vmb_add_closure(vm_builder_t* b, uint8_t cls_args_n, vm_t fn_vm, const sv_allocator_t* a)
+sv_opt_t(uint32_t) vmb_add_closure(vm_builder_t* b, uint8_t cls_args_n, vm_t fn_vm, const sv_allocator_t* a)
 {
     int success = 0;
     sv_vec_push(&b->vm.chunk.functions, fn_vm, &success, a);
     if (!success)
-        return sv_opt_none_t(uint8_t);
+        return sv_opt_none_t(uint32_t);
 
-    uint8_t i = (uint8_t)(b->vm.chunk.functions.size - 1);
-    if (!vmb_add_bytes(b, OP_LOAD_CLOSURE, i, 0, a) || !vmb_add_byte(b, cls_args_n, 0, a))
-        return sv_opt_none_t(uint8_t);
-    return sv_opt_some_t(uint8_t, i);
+    int64_t i = b->vm.chunk.functions.size - 1;
+    if (i > UINT32_MAX || !vmb_add_arg(b, OP_LOAD_CLOSURE, (uint32_t)i, 0, a) || !vmb_add_byte(b, cls_args_n, 0, a))
+        return sv_opt_none_t(uint32_t);
+    return sv_opt_some_t(uint32_t, (uint32_t)i);
 }
 
 void vmb_patch_jump(vm_builder_t* b, int64_t index, uint16_t value)

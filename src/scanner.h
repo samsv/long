@@ -23,6 +23,8 @@ typedef struct {
  * Creates a scanner over `source`. The scanner is a view: it does not own
  * `source` and allocates nothing. The source is validated as UTF-8 lazily,
  * while scanning. `#` starts a comment that runs to the end of the line.
+ * A run of newlines is one TOKEN_NEWLINE token, omitted before `|` and at
+ * the end of the input.
  */
 scanner_t scanner_init(sv_str_t source);
 

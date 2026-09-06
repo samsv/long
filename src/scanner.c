@@ -275,6 +275,7 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
 
     int64_t initial_i = s->i;
     uint32_t c = next_codepoint(s);
+    bool newline = false;
 
     while (c != CODEPOINT_EOF && c != CODEPOINT_INVALID) {
         if (c == '#') {
@@ -288,8 +289,10 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
         if (!is_whitespace(c))
             break;
 
-        if (c == '\n')
+        if (c == '\n') {
             s->line++;
+            newline = true;
+        }
         initial_i = s->i;
         c = next_codepoint(s);
     }
@@ -299,6 +302,11 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
 
     if (c == CODEPOINT_INVALID)
         return utf8_error_token(s, ctx);
+
+    if (newline && c != '|') {
+        s->i = initial_i;
+        return token_of(s, TOKEN_NEWLINE);
+    }
 
     switch (c) {
         case '(': return operator_of(s, OPERATOR_LEFT_PAREN);

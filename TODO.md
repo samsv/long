@@ -6,7 +6,7 @@
 ✅ Hashmap iterator
 ✅ Comments
 String escapes
-Wide Operands
+✅ Wide Operands
 Call Frames
 Tail Recursion
 Embedding API

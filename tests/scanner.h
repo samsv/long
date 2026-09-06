@@ -41,12 +41,13 @@ static inline void sv_test_scan_error(sv_testing_t* t, const char* src, scanner_
 
 static inline void sv_test_scanner_comments(sv_testing_t* t)
 {
-   const token_kind two[] = { TOKEN_LITERAL, TOKEN_LITERAL };
-   sv_test_scan_kinds(t, "1 # trailing\n2", two, 2);
-   sv_test_scan_kinds(t, "1 #no space\n2", two, 2);
-   sv_test_scan_kinds(t, "# a\n# b\n1 2", two, 2);
-   sv_test_scan_kinds(t, "1\n2 # at EOF without a newline", two, 2);
-   sv_test_scan_kinds(t, "1 # ( \" @ # still one comment\n2", two, 2);
+   const token_kind split[] = { TOKEN_LITERAL, TOKEN_NEWLINE, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, "1 # trailing\n2", split, 3);
+   sv_test_scan_kinds(t, "1 #no space\n2", split, 3);
+   const token_kind leading[] = { TOKEN_NEWLINE, TOKEN_LITERAL, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, "# a\n# b\n1 2", leading, 3);
+   sv_test_scan_kinds(t, "1\n2 # at EOF without a newline", split, 3);
+   sv_test_scan_kinds(t, "1 # ( \" @ # still one comment\n2", split, 3);
    sv_test_scan_kinds(t, "# only a comment", NULL, 0);
    sv_test_scan_kinds(t, "#", NULL, 0);
 
@@ -55,6 +56,8 @@ static inline void sv_test_scanner_comments(sv_testing_t* t)
    scanner_t s = scanner_init(sv_str_init("a # one\n# two\n\n# four\nb"));
    token_t tok = scanner_next(&s, &ctx);
    sv_test_run(t, tok.kind == TOKEN_LITERAL && tok.line == 1);
+   tok = scanner_next(&s, &ctx);
+   sv_test_run(t, tok.kind == TOKEN_NEWLINE && tok.line == 5);
    tok = scanner_next(&s, &ctx);
    sv_test_run(t, tok.kind == TOKEN_LITERAL && tok.line == 5);
    tok = scanner_next(&s, &ctx);
@@ -72,9 +75,41 @@ static inline void sv_test_scanner_comments(sv_testing_t* t)
    sv_test_scan_error(t, "# \xFF\n1", SCANNER_ERROR_INVALID_UTF8);
 }
 
+static inline void sv_test_scanner_newlines(sv_testing_t* t)
+{
+   const token_kind split[] = { TOKEN_LITERAL, TOKEN_NEWLINE, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, "1\n2", split, 3);
+   sv_test_scan_kinds(t, "1\n\n\n2", split, 3);
+   sv_test_scan_kinds(t, "1\r\n2", split, 3);
+   sv_test_scan_kinds(t, "1 \n # c \n 2", split, 3);
+
+   /* No newline before a pipe or a clause bar, at the end, or between other tokens. */
+   const token_kind piped[] = { TOKEN_LITERAL, TOKEN_OPERATOR, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, "1\n|> f", piped, 3);
+   sv_test_scan_kinds(t, "1\n# c\n  |> f", piped, 3);
+   const token_kind barred[] = { TOKEN_LITERAL, TOKEN_PIPE, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, "1\n| 2", barred, 3);
+   const token_kind one[] = { TOKEN_LITERAL };
+   sv_test_scan_kinds(t, "1\n", one, 1);
+   sv_test_scan_kinds(t, "1\n\n# c\n", one, 1);
+   const token_kind two[] = { TOKEN_LITERAL, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, "1 2", two, 2);
+   const token_kind leading[] = { TOKEN_NEWLINE, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, "\n\n1", leading, 2);
+
+   /* The newline token carries the line of what follows it. */
+   ctx_t ctx = sv_test_scan_ctx();
+   scanner_t s = scanner_init(sv_str_init("a\n\nb"));
+   sv_test_run(t, scanner_next(&s, &ctx).line == 1);
+   token_t nl = scanner_next(&s, &ctx);
+   sv_test_run(t, nl.kind == TOKEN_NEWLINE && nl.line == 3);
+   sv_test_run(t, scanner_next(&s, &ctx).line == 3);
+}
+
 static inline void sv_test_scanner(sv_testing_t* t)
 {
    sv_test_scanner_comments(t);
+   sv_test_scanner_newlines(t);
 }
 
 #endif

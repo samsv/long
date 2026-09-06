@@ -4,7 +4,11 @@
 #include "../src/std/test.h"
 #include "../src/std/allocator_std.h"
 #include "../src/compiler.h"
+#include "../src/parser.h"
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* Only has to be stable: it namespaces the globals. */
 #define SV_TEST_PATH "tests/main.long"
@@ -92,6 +96,24 @@ static inline int sv_test_compiler_err(const char* src)
    int code = ctx.err.error_code;
    sv_str_deinit(&ctx.err.msg, &sv_gpa);
    return code;
+}
+
+/**
+ * Builds `head`, then `fmt` printed with each integer in [from, to], then `tail`.
+ * The caller frees the result with free().
+ */
+static inline char* sv_test_compiler_gen(const char* head, const char* fmt, int64_t from, int64_t to, const char* tail)
+{
+   sv_str_builder b = sv_strb_init();
+   sv_strb_add(&b, head, (int64_t)strlen(head), &sv_gpa);
+   for (int64_t i = from; i <= to; i++) {
+      char item[64];
+      int n = snprintf(item, sizeof(item), fmt, (long long)i, (long long)i);
+      sv_strb_add(&b, item, n, &sv_gpa);
+   }
+   sv_strb_add(&b, tail, (int64_t)strlen(tail), &sv_gpa);
+   sv_strb_add_char(&b, '\0', &sv_gpa);
+   return b.arr;
 }
 
 static inline void sv_test_compiler_basics(sv_testing_t* t)
@@ -507,6 +529,106 @@ static inline void sv_test_compiler_groups(sv_testing_t* t)
    sv_test_run(t, v.kind == VALUE_BOOL);
    sv_test_run(t, v.boolean);
    value_free(&v, &sv_gpa);
+}
+
+static inline void sv_test_compiler_wide_operands(sv_testing_t* t)
+{
+   /* 301 constants: 0.5 + 1.5 + ... + 300.5 = 301 * 0.5 + (1 + ... + 300) = 150.5 + 45150. */
+   char* src = sv_test_compiler_gen("x = 0.5", " + %lld.5", 1, 300, "\nx");
+   sv_test_run(t, sv_test_compiler_num(src, 45300.5));
+   free(src);
+
+   /* Global 302: three natives, then x1..x300. */
+   src = sv_test_compiler_gen("", "x%lld = 1\n", 1, 299, "x300 = 2\nx300");
+   sv_test_run(t, sv_test_compiler_num(src, 2));
+   free(src);
+
+   /* Local 300; the block pops 300 locals on exit, in two batches. */
+   src = sv_test_compiler_gen("fun f() do\n", "a%lld = 1\n", 1, 299, "a300 = 2\na300\nend\nf()");
+   sv_test_run(t, sv_test_compiler_num(src, 2));
+   free(src);
+
+   /* Function 299. */
+   src = sv_test_compiler_gen("", "fun f%lld() 1\n", 1, 299, "fun f300() 2\nf300()");
+   sv_test_run(t, sv_test_compiler_num(src, 2));
+   free(src);
+
+   /* 301 pairs, and 300 pairs over a base. */
+   src = sv_test_compiler_gen("m = %{0: 0", ", %lld: %lld", 1, 300, "}\nm[300]");
+   sv_test_run(t, sv_test_compiler_num(src, 300));
+   free(src);
+   src = sv_test_compiler_gen("b = %{0: 0}\nm = %{1: 1", ", %lld: %lld", 2, 300, ", ..b}\nm[0] + m[300]");
+   sv_test_run(t, sv_test_compiler_num(src, 300));
+   free(src);
+
+   /* 300 elements, and 300 elements onto a tail. */
+   src = sv_test_compiler_gen("xs = [0", ", %lld", 1, 299, "]\nxs[299]");
+   sv_test_run(t, sv_test_compiler_num(src, 299));
+   free(src);
+   src = sv_test_compiler_gen("t = [9]\nxs = [0", ", %lld", 1, 299, ", ..t]\nxs[300]");
+   sv_test_run(t, sv_test_compiler_num(src, 9));
+   free(src);
+
+   /* One-byte operands still stop at 255: parameters, arguments, upvalues, group members,
+    * group upvalues, tuple pattern elements. */
+   src = sv_test_compiler_gen("fun f(a0", ", a%lld", 1, 255, ") 1");
+   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   free(src);
+
+   src = sv_test_compiler_gen("fun f(a) a\nf(0", ", %lld", 1, 255, ")");
+   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   free(src);
+
+   char* defs = sv_test_compiler_gen("", "v%lld = 1\n", 0, 255, "fun f[v0");
+   src = sv_test_compiler_gen(defs, ", v%lld", 1, 255, "](x) x");
+   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   free(defs);
+   free(src);
+
+   src = sv_test_compiler_gen("fun\n", "| m%lld() 1\n", 0, 255, "end");
+   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   free(src);
+
+   /* Two members of 128 upvalues each: neither is over the limit alone, the group is. */
+   defs = sv_test_compiler_gen("", "v%lld = 1\n", 0, 255, "fun\n| a[v0");
+   char* half = sv_test_compiler_gen(defs, ", v%lld", 1, 127, "](x) x\n| b[v128");
+   src = sv_test_compiler_gen(half, ", v%lld", 129, 255, "](x) x\nend");
+   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   free(defs);
+   free(half);
+   free(src);
+
+   src = sv_test_compiler_gen("(a0", ", a%lld", 1, 255, ") = 1");
+   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   free(src);
+   src = sv_test_compiler_gen("t = 1\nmatch t | (a0", ", a%lld", 1, 255, ") do 1 end");
+   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   free(src);
+}
+
+static inline void sv_test_compiler_newlines(sv_testing_t* t)
+{
+   /* Two statements, not a call, a subtraction or an index. */
+   sv_test_run(t, sv_test_compiler_num("t = (1, 2)\n(a, b) = t\nb", 2));
+   sv_test_run(t, sv_test_compiler_num("x = 5\n-1", -1));
+   sv_test_run(t, sv_test_compiler_num("xs = [7]\n[0][0]", 0));
+   sv_test_run(t, sv_test_compiler_num("x = 5\n(1, 2)[1]", 2));
+
+   /* Continuations. */
+   sv_test_run(t, sv_test_compiler_num("x = 1 +\n2\nx", 3));
+   sv_test_run(t, sv_test_compiler_num("x =\n4\nx", 4));
+   sv_test_run(t, sv_test_compiler_num("fun inc(x) x + 1\n1\n|> inc()\n|> inc()", 3));
+   sv_test_run(t, sv_test_compiler_num("[1,\n2,\n3][2]", 3));
+   sv_test_run(t, sv_test_compiler_num("%{1: 2,\n3: 4}[3]", 4));
+   sv_test_run(t, sv_test_compiler_num("{x: 1,\ny: 2}.y", 2));
+   sv_test_run(t, sv_test_compiler_num("fun f(\na,\nb\n)\na + b\nf(1, 2)", 3));
+   sv_test_run(t, sv_test_compiler_num("if false do\n1\nelse\n2\nend", 2));
+   sv_test_run(t, sv_test_compiler_num("match 2\n| 1 do 10\n| 2 do 20\nend", 20));
+
+   /* The old newline-joins are now syntax errors where they were ambiguous. */
+   sv_test_run(t, sv_test_compiler_err("[1\n2]") == PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_run(t, sv_test_compiler_err("(1 +\n2) 3") == PARSER_ERROR_UNEXPECTED_TOKEN);
+   sv_test_run(t, sv_test_compiler_err("x = 1\nand x") == PARSER_ERROR_UNEXPECTED_TOKEN);
 }
 
 static inline void sv_test_compiler_errors(sv_testing_t* t)
@@ -977,6 +1099,8 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_fun_clauses(t);
    sv_test_compiler_destructure(t);
    sv_test_compiler_spread(t);
+   sv_test_compiler_wide_operands(t);
+   sv_test_compiler_newlines(t);
    sv_test_compiler_errors(t);
    sv_test_compiler_runtime_errors(t);
 }

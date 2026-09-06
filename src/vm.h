@@ -99,14 +99,12 @@ typedef enum {
     OP_IS_LIST,
     OP_IS_NIL_LIST,
     OP_IS_CONS,
-    /* The size is a bytecode operand because tuple_t.size and record_t.size are
-     * both uint8_t, so a pattern can never need a larger one. */
     OP_IS_TUPLE,
     OP_IS_RECORD,
     OP_IS_RECORD_ANY,
-    /* A hashmap has no such cap, so this one takes its size off the stack. */
     OP_IS_HASHMAP,
     OP_IS_HASHMAP_ANY,
+    OP_EXTENDED_ARG,
     OP_HAS_FIELD,
     OP_HAS_KEY,
     OP_LIST_UNCONS,
@@ -165,6 +163,7 @@ typedef struct {
 } vm_wrong_type_err;
 
 sv_opt_def(uint8_t);
+sv_opt_def(uint32_t);
 sv_opt_def(int64_t);
 
 typedef struct {
@@ -209,15 +208,21 @@ bool vmb_add_byte(vm_builder_t*, uint8_t, int64_t, const sv_allocator_t*);
  */
 bool vmb_add_bytes(vm_builder_t*, uint8_t, uint8_t, int64_t, const sv_allocator_t*);
 /**
- * Registers a constant and emits its load instruction. Returns the constant
- * index, none on allocation failure.
+ * Emits an instruction with an operand of up to four bytes, prefixed with
+ * OP_EXTENDED_ARG when it does not fit one.
  */
-sv_opt_t(uint8_t) vmb_add_constant(vm_builder_t*, value_t, const sv_allocator_t*);
+bool vmb_add_arg(vm_builder_t*, uint8_t, uint32_t, int64_t, const sv_allocator_t*);
+/**
+ * Registers a constant and emits its load instruction. Returns the constant
+ * index, none on allocation failure or past the uint32 index space.
+ */
+sv_opt_t(uint32_t) vmb_add_constant(vm_builder_t*, value_t, const sv_allocator_t*);
 /**
  * Registers a function vm and emits its load instruction with the closure
- * argument count. Returns the function index, none on allocation failure.
+ * argument count. Returns the function index, none on allocation failure or
+ * past the uint32 index space.
  */
-sv_opt_t(uint8_t) vmb_add_closure(vm_builder_t*, uint8_t, vm_t, const sv_allocator_t*);
+sv_opt_t(uint32_t) vmb_add_closure(vm_builder_t*, uint8_t, vm_t, const sv_allocator_t*);
 /**
  * Writes the jump offset over the placeholder at the given bytecode index.
  */
