@@ -357,11 +357,11 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
             }
             return false;
         case OBJ_CLOSURE: {
-            sv_str_t name = cls_get_vm(v.obj.cell->value.closure).name;
+            sv_str_t name = cls_get_vm(v.obj.cell->value.closure)->name;
             return sv_strb_add(b, name.chars, name.size, a) >= 0;
         }
         case OBJ_CLOSURE_MEMBER: {
-            sv_str_t name = clsm_get_vm(v.obj.cell->value.closure_member).name;
+            sv_str_t name = clsm_get_vm(v.obj.cell->value.closure_member)->name;
             return sv_strb_add(b, name.chars, name.size, a) >= 0;
         }
         case OBJ_NATIVE_FN: {

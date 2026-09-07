@@ -72,7 +72,7 @@
  * The default capacity can be changed by setting `VEC_DEFAULT_CAP`
  * before importing `vector.h`.
  */
-#define sv_vec_init(type) {                                                                                   \
+#define sv_vec_init(type) (sv_vec_t(type)){                                                                   \
     .arr = NULL,                                                                                              \
     .size = 0,                                                                                                \
     .capacity = 0,                                                                                            \

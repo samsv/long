@@ -510,6 +510,41 @@ static inline void sv_test_compiler_recursion(sv_testing_t* t)
       "f(1)", VALUE_OBJ));
 }
 
+static inline void sv_test_compiler_call_stack(sv_testing_t* t)
+{
+   /* Depth is bounded by the heap, not the C stack. */
+   sv_test_run(t, sv_test_compiler_num(
+      "fun count(n) if n == 0 do 0 else count(n - 1) + 1 end\ncount(100000)", 100000));
+   sv_test_run(t, sv_test_compiler_num(
+      "fun sum(n, acc) if n == 0 do acc else sum(n - 1, acc + n) end\nsum(50000, 0)", 1250025000));
+
+   /* Mutual recursion through a group, 20001 frames deep. */
+   bool ok = false;
+   value_t v = sv_test_compiler_eval(
+      "fun\n"
+      "| is_even(x) if x == 0 do true else is_odd(x - 1) end\n"
+      "| is_odd(x) if x == 0 do false else is_even(x - 1) end\n"
+      "end\n"
+      "is_even(20000)", &ok);
+   sv_test_run(t, ok && v.kind == VALUE_BOOL && v.boolean);
+
+   /* A closure made deep in the stack outlives its frames. */
+   sv_test_run(t, sv_test_compiler_num(
+      "fun mk(n)\n"
+      "  if n == 0 do\n"
+      "    fun g[n](y) n + y\n"
+      "    g\n"
+      "  else\n"
+      "    mk(n - 1)\n"
+      "  end\n"
+      "mk(500)(7)", 7));
+
+   /* Errors deep in the stack unwind; the sanitizer checks the frees. */
+   sv_test_run(t, sv_test_compiler_runtime_err(
+      "fun f(n) if n == 0 do 1 + \"a\" else f(n - 1) end\nf(1000)") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_err("fun f(n) f(n + 1)\nf(0)") == VM_ERR_STACK_OVERFLOW);
+}
+
 static inline void sv_test_compiler_groups(sv_testing_t* t)
 {
    bool ok = false;
@@ -1094,6 +1129,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_functions(t);
    sv_test_compiler_closures(t);
    sv_test_compiler_recursion(t);
+   sv_test_compiler_call_stack(t);
    sv_test_compiler_groups(t);
    sv_test_compiler_match(t);
    sv_test_compiler_fun_clauses(t);

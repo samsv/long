@@ -130,7 +130,7 @@ static const sv_str_t sv_str_error = {
 
 sv_str_builder sv_strb_init(void)
 {
-   return (sv_str_builder)sv_vec_init(char);
+   return sv_vec_init(char);
 }
 
 void sv_strb_deinit(sv_str_builder* b, const sv_allocator_t* a)
@@ -336,7 +336,7 @@ sv_vec_t(sv_str_t) sv_str_split(const sv_str_t s, const char* c, const sv_alloca
 
 error:
    sv_vec_deinit(&v, a);
-   return (sv_vec_t(sv_str_t))sv_vec_init(sv_str_t);
+   return sv_vec_init(sv_str_t);
 }
 
 #endif

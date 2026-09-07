@@ -30,12 +30,12 @@ typedef struct {
     size_t index;
 } closure_member_t;
 
-vm_t cls_get_vm(closure_t);
+vm_t* cls_get_vm(closure_t);
 void cls_deinit(closure_t*, const sv_allocator_t*);
 
 void clsg_deinit(closure_group_t*, const sv_allocator_t*);
 
-vm_t clsm_get_vm(closure_member_t);
+vm_t* clsm_get_vm(closure_member_t);
 void clsm_deinit(closure_member_t*, const sv_allocator_t*);
 
 #endif

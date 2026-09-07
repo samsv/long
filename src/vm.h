@@ -34,7 +34,24 @@ typedef struct vm_ctx_t {
     uint32_t record_names_sizes;
 } vm_ctx_t;
 
+#define VM_MAX_FRAMES 1000000
+
+typedef struct {
+    vm_t* vm;
+    int64_t ip;
+
+    int64_t locals_offset;
+    int64_t stack_offset;
+
+    sv_rc_t(closure_group_t) group;
+    value_arr upvalues;
+} call_frame_t;
+
+sv_vec_def(call_frame_t);
+
 typedef struct vm_t {
+    sv_vec_t(call_frame_t) call_frames;
+
     sv_str_t name;
     uint8_t arity;
 
@@ -43,11 +60,6 @@ typedef struct vm_t {
     value_arr globals;
     value_arr locals;
     value_arr stack;
-    value_arr upvalues;
-
-    sv_rc_t(closure_group_t) group;
-
-    int64_t ip;
 
     vm_ctx_t ctx;
 } vm_t;
@@ -129,6 +141,7 @@ typedef enum {
     VM_ERR_WRONG_TYPE,
     VM_ERR_MATCH_FAILED,
     VM_ERR_NO_CLAUSE,
+    VM_ERR_STACK_OVERFLOW,
 } vm_error_kinds;
 
 /**

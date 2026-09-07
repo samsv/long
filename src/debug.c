@@ -243,11 +243,6 @@ void print_locals(vm_t v)
     print_arr(v.locals, "LOCALS", v);
 }
 
-void print_upvalues(vm_t v)
-{
-    print_arr(v.upvalues, "UPVALUES", v);
-}
-
 void print_stack(vm_t v)
 {
     print_arr(v.stack, "STACK", v);
@@ -259,5 +254,4 @@ void print_vm(vm_t v)
     print_globals(v);
     print_locals(v);
     print_stack(v);
-    print_upvalues(v);
 }
