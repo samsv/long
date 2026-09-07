@@ -95,6 +95,7 @@ void vm_deinit(vm_t* vm, const sv_allocator_t* a)
             sv_free(a, (void*)vm->ctx.record_key_names[i]);
         sv_free(a, (void*)vm->ctx.record_key_names);
     }
+    sv_str_deinit(&vm->name, a);
     arr_deinit(&vm->globals, a);
     vm_fn_deinit(vm, a);
     sv_vec_deinit(&vm->call_frames, a);

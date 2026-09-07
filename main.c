@@ -17,6 +17,7 @@ static int run(vm_t vm, ctx_t ctx)
     if (err.is_some) {
         sv_log_error(&ctx.logger, "%.*s", (int)err.value.msg.size, err.value.msg.chars);
         vm_err_deinit(&err.value, &ctx.alloc);
+        vm_deinit(&vm, &ctx.alloc);
         return 1;
     }
     print_vm(vm);

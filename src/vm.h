@@ -186,6 +186,9 @@ typedef struct {
 chunk_t chunk_init(void);
 void chunk_deinit(chunk_t*, const sv_allocator_t*);
 
+/**
+ * Creates an empty vm that owns `name`.
+ */
 vm_t vm_init(sv_str_t);
 void vm_deinit(vm_t*, const sv_allocator_t*);
 
@@ -200,7 +203,7 @@ sv_opt_t(error_t) vm_run(vm_t*);
 void vm_err_deinit(error_t*, const sv_allocator_t*);
 
 /**
- * Initializes a new builder wrapping an empty vm.
+ * Initializes a new builder wrapping an empty vm that owns `name`.
  */
 vm_builder_t vmb_init(sv_str_t);
 

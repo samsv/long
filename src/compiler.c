@@ -53,6 +53,8 @@ compiler_t compiler_init(const char* base_path, ctx_t* ctx, bool* success)
     if (modules.compiled_modules.set.dense.cell == NULL
         || modules.to_be_compiled_modules.set.dense.cell == NULL
     ) {
+        thm_deinit(&modules.compiled_modules, &ctx->alloc);
+        thm_deinit(&modules.to_be_compiled_modules, &ctx->alloc);
         compiler_oom(ctx, 0);
         *success = false;
         return (compiler_t){0};
@@ -298,10 +300,14 @@ static bool globals_add(globals_t* g, sv_str_t id, sv_str_t prefix, ctx_t* ctx, 
         return compiler_oom(ctx, line);
 
     bool existed = false;
-    if (!names_add(&g->name_indexes, name, ctx, &existed))
+    if (!names_add(&g->name_indexes, name, ctx, &existed)) {
+        sv_str_deinit(&name, &ctx->alloc);
         return compiler_oom(ctx, line);
-    if (existed)
+    }
+    if (existed) {
+        sv_str_deinit(&name, &ctx->alloc);
         return compiler_error_name(ctx, C_ERR_REDEFINED, line, "Global redefined", id);
+    }
 
     sv_str_deinit(&name, &ctx->alloc);
     return true;
@@ -314,6 +320,7 @@ static sv_opt_t(uint32_t) globals_get(const globals_t g, sv_str_t id, sv_str_t p
         return sv_opt_none_t(uint32_t);
 
     sv_opt_t(uint32_t) maybe = names_get(g.name_indexes, name, ctx);
+    sv_str_deinit(&name, &ctx->alloc);
     if (maybe.is_some)
         return maybe;
 
@@ -358,6 +365,8 @@ void compiler_free(compiler_t* c, const sv_allocator_t* a)
     thm_deinit(&c->globals.name_indexes, a);
     thm_deinit(&c->upvalues.name_indexes, a);
     thm_deinit(&c->members, a);
+    thm_deinit(&c->modules.compiled_modules, a);
+    thm_deinit(&c->modules.to_be_compiled_modules, a);
     while (c->locals != NULL) {
         locals_t* l = c->locals;
         c->locals = l->next;
@@ -832,12 +841,16 @@ static bool compile_double_colon(compiler_t* c, const sexpr_t* args, int64_t n, 
     sv_str_t var_name = {0};
     TRY(expect_id(args[1], ctx, &var_name));
 
-    value_t module_name_value = value_init_str_own(module_name, &ctx->alloc);
+    value_t module_name_value = value_init_str(module_name, &ctx->alloc);
     TRY(module_name_value.obj.cell != NULL);
 
     sv_opt_t(value_t) module_path = thm_get(c->var_to_modules, module_name_value);
-    if (!module_path.is_some)
-        return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", module_name);
+    if (!module_path.is_some) {
+        compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", module_name);
+        value_free(&module_name_value, &ctx->alloc);
+        return false;
+    }
+    value_free(&module_name_value, &ctx->alloc);
     sv_opt_t(uint32_t) id = globals_get(c->globals, var_name, AS_STR(module_path.value), ctx, line);
     if (!id.is_some)
         return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", var_name);
@@ -1555,6 +1568,7 @@ static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx
 
     char import_full_path[FILENAME_MAX];
     cwk_path_join(current_dir, import_path, import_full_path, sizeof(import_full_path));
+    sv_free(&ctx->alloc, import_path);
 
     // check if module has already been compiled
     sv_str_t full_path_str = sv_str_init(import_full_path);
@@ -1598,7 +1612,7 @@ static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx
         goto error_oom;
     thm_delete(&c->modules.to_be_compiled_modules, path_value, &ctx->alloc);
 
-    sv_free(&ctx->alloc, source_code);
+    CLEANUP();
     return add_const(c, ctx, value_nil, line);
 
 error_oom:

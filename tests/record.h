@@ -81,7 +81,7 @@ static inline void sv_test_record_print(sv_testing_t* t)
 
 static inline void sv_test_record_vm_ops(sv_testing_t* t)
 {
-   vm_builder_t b = vmb_init(sv_str_init("tuple test"));
+   vm_builder_t b = vmb_init(sv_str_copy(sv_str_init("tuple test"), &sv_gpa));
    sv_test_run(t, vmb_add_constant(&b, sv_test_record_num(0), &sv_gpa).is_some);
    sv_test_run(t, vmb_add_constant(&b, sv_test_record_num(10), &sv_gpa).is_some);
    sv_test_run(t, vmb_add_constant(&b, sv_test_record_num(1), &sv_gpa).is_some);
@@ -98,7 +98,7 @@ static inline void sv_test_record_vm_ops(sv_testing_t* t)
    sv_test_run(t, vm.stack.arr[0].kind == VALUE_NUMBER && vm.stack.arr[0].number == 20);
    vm_deinit(&vm, &sv_gpa);
 
-   vm_builder_t mb = vmb_init(sv_str_init("tuple miss"));
+   vm_builder_t mb = vmb_init(sv_str_copy(sv_str_init("tuple miss"), &sv_gpa));
    sv_test_run(t, vmb_add_constant(&mb, sv_test_record_num(0), &sv_gpa).is_some);
    sv_test_run(t, vmb_add_constant(&mb, sv_test_record_num(10), &sv_gpa).is_some);
    sv_test_run(t, vmb_add_bytes(&mb, OP_RECORD, 1, 0, &sv_gpa));
