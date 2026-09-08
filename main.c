@@ -39,7 +39,7 @@ static int run_file(const char* path)
         return 1;
     }
 
-    vm_t vm = compile(path, source, &ctx);
+    vm_t vm = compile(path, source, 1000000, &ctx);
     free((void*)source);
 
     int ret = run(vm, ctx);

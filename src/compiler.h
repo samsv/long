@@ -42,11 +42,12 @@ typedef struct {
     // in the compiler. After compilation is completed, the old var_to_modules map may be restored.
     transient_hashmap_t var_to_modules;
 
-    vm_builder_t builder;
+    fn_builder_t builder;
+    sv_vec_t(value_t) global_values;
 } compiler_t;
 
 char* read_file(const char*, const sv_allocator_t*);
-vm_t compile(const char* base_path, const char* source_code, ctx_t*);
+vm_t compile(const char* base_path, const char* source_code, int64_t, ctx_t*);
 bool add_native_fn(compiler_t*, native_fn_t, ctx_t*);
 
 typedef enum {

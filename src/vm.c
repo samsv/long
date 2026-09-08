@@ -17,13 +17,6 @@ static void arr_remove_n(value_arr* arr, int64_t n, const sv_allocator_t* a)
     arr->size -= n;
 }
 
-static void arr_deinit(value_arr* arr, const sv_allocator_t* a)
-{
-    sv_vec_foreach(value_t, v, arr)
-        value_free(&v, a);
-    sv_vec_deinit(arr, a);
-}
-
 static bool value_is_truthy(value_t v)
 {
     switch (v.kind) {
@@ -36,10 +29,10 @@ static bool value_is_truthy(value_t v)
     return true;
 }
 
-static int64_t vm_get_offset(const vm_t* vm, int64_t i)
+static int64_t vm_get_offset(const fn_t* fn, int64_t i)
 {
-    int64_t low = vm->chunk.bytecode.arr[i];
-    int64_t high = vm->chunk.bytecode.arr[i + 1];
+    int64_t low = fn->chunk.bytecode.arr[i];
+    int64_t high = fn->chunk.bytecode.arr[i + 1];
     return low + (high << 8);
 }
 
@@ -48,45 +41,18 @@ static error_t vm_oom_err(const char* msg)
     return (error_t){ .error_code = VM_ERR_OOM, .msg = sv_str_init(msg) };
 }
 
-chunk_t chunk_init(void)
-{
-    return (chunk_t){
-        .bytecode = sv_vec_init(uint8_t),
-        .lines = sv_vec_init(int64_t),
-        .constants = sv_vec_init(value_t),
-        .functions = sv_vec_init(vm_t),
-    };
-}
-
-void chunk_deinit(chunk_t* c, const sv_allocator_t* a)
-{
-    arr_deinit(&c->constants, a);
-    sv_vec_foreach(vm_t, f, &c->functions)
-        vm_deinit(&f, a);
-    sv_vec_deinit(&c->functions, a);
-    sv_vec_deinit(&c->bytecode, a);
-    sv_vec_deinit(&c->lines, a);
-}
-
-vm_t vm_init(sv_str_t name)
+vm_t vm_init(fn_t fn, int64_t max_call_frames, hashmap_t globals_names_to_index)
 {
     return (vm_t){
-        .name = name,
-        .arity = 0,
-        .chunk = chunk_init(),
+        .call_frames = sv_vec_init(call_frame_t),
+        .max_call_frames = max_call_frames,
+        .globals_names_to_index = globals_names_to_index,
+        .fn = fn,
         .globals = sv_vec_init(value_t),
         .locals = sv_vec_init(value_t),
         .stack = sv_vec_init(value_t),
-        .call_frames = sv_vec_init(call_frame_t),
-        .max_frames = VM_MAX_FRAMES,
         .ctx = { .alloc = NULL, .logger = sv_std_logger, .record_key_names = NULL, .record_names_sizes = 0 },
     };
-}
-
-static void vm_fn_deinit(vm_t* vm, const sv_allocator_t* a)
-{
-    arr_deinit(&vm->stack, a);
-    arr_deinit(&vm->locals, a);
 }
 
 void vm_deinit(vm_t* vm, const sv_allocator_t* a)
@@ -96,18 +62,19 @@ void vm_deinit(vm_t* vm, const sv_allocator_t* a)
             sv_free(a, (void*)vm->ctx.record_key_names[i]);
         sv_free(a, (void*)vm->ctx.record_key_names);
     }
-    sv_str_deinit(&vm->name, a);
-    arr_deinit(&vm->globals, a);
-    vm_fn_deinit(vm, a);
+    value_arr_deinit(&vm->globals, a);
+    value_arr_deinit(&vm->stack, a);
+    value_arr_deinit(&vm->locals, a);
     sv_vec_deinit(&vm->call_frames, a);
-    chunk_deinit(&vm->chunk, a);
+    map_deinit(&vm->globals_names_to_index, a);
+    fn_deinit(&vm->fn, a);
 }
 
-static call_frame_t init_frame(vm_t* fn, int64_t locals_offset, int64_t stack_offset,
+static call_frame_t init_frame(fn_t* fn, int64_t locals_offset, int64_t stack_offset,
                                value_arr upvalues, sv_rc_t(closure_group_t) group)
 {
     return (call_frame_t){
-        .vm = fn,
+        .fn = fn,
         .ip = 0,
         .locals_offset = locals_offset,
         .stack_offset = stack_offset,
@@ -135,7 +102,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
 #define TRY_NOT_NULL(v, err_msg) TRY_OR((v) != NULL, (void)0, err_msg)
 
-#define LINE() (frame->vm->chunk.lines.arr[frame->ip - 1])
+#define LINE() (frame->fn->chunk.lines.arr[frame->ip - 1])
 
 #define TRY_PUSH(arr, v)                                                                                      \
     sv_vec_push(&(arr), v, &success, a);                                                                      \
@@ -162,7 +129,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
 #define UNSUPPORTED_1(v, err_msg) OP_ERR_1(VM_ERR_OP_UNSUPPORTED_ARGS, v, err_msg)
 
-#define READ_BYTE() (frame->vm->chunk.bytecode.arr[frame->ip++])
+#define READ_BYTE() (frame->fn->chunk.bytecode.arr[frame->ip++])
 
 #define READ_NARROW(name) do { name = READ_BYTE(); } while (0)
 
@@ -239,7 +206,7 @@ break; }
     int success = 0;
     uint8_t arg_bytes = 1;
 
-    TRY_PUSH(vm->call_frames, init_frame(vm, 0, 0, sv_vec_init(value_t), (sv_rc_t(closure_group_t)){0}));
+    TRY_PUSH(vm->call_frames, init_frame(&vm->fn, 0, 0, sv_vec_init(value_t), (sv_rc_t(closure_group_t)){0}));
     call_frame_t* frame = &sv_vec_last(vm->call_frames);
 
     while (1) switch (READ_BYTE()) {
@@ -248,7 +215,7 @@ break; }
         case OP_GET_LOCAL: GET(vm->locals, frame->locals_offset)
         case OP_GET_UPVALUE: GET(frame->upvalues, 0)
         case OP_GET_GLOBAL: GET(vm->globals, 0)
-        case OP_LOAD_CONSTANT: GET(frame->vm->chunk.constants, 0)
+        case OP_LOAD_CONSTANT: GET(frame->fn->chunk.constants, 0)
         case OP_SUB: MATH_OP(-)
         case OP_MUL: MATH_OP(*)
         case OP_DIV: MATH_OP(/)
@@ -258,11 +225,11 @@ break; }
         case OP_GREATER_EQUAL: CMP_OP(>=)
         case OP_LESS: CMP_OP(<)
         case OP_LESS_EQUAL: CMP_OP(<=)
-        case OP_JUMP: frame->ip += vm_get_offset(frame->vm, frame->ip); break;
-        case OP_JUMP_BACK: frame->ip -= vm_get_offset(frame->vm, frame->ip); break;
+        case OP_JUMP: frame->ip += vm_get_offset(frame->fn, frame->ip); break;
+        case OP_JUMP_BACK: frame->ip -= vm_get_offset(frame->fn, frame->ip); break;
         case OP_JUMP_IF_FALSE: {
             value_t v = sv_vec_pop(vm->stack);
-            frame->ip = value_is_truthy(v) ? frame->ip + 2 : frame->ip + vm_get_offset(frame->vm, frame->ip);
+            frame->ip = value_is_truthy(v) ? frame->ip + 2 : frame->ip + vm_get_offset(frame->fn, frame->ip);
             value_free(&v, a);
             break;
         }
@@ -509,7 +476,7 @@ break; }
             READ_ARG(i);
             uint8_t n_cls = READ_BYTE();
             value_t cls = value_init_closure(
-                &frame->vm->chunk.functions.arr[i],
+                &frame->fn->chunk.functions.arr[i],
                 &vm->stack.arr[vm->stack.size - n_cls],
                 n_cls,
                 a);
@@ -529,10 +496,10 @@ break; }
 
             closure_group_t g = {
                 .members = {
-                    .arr = &frame->vm->chunk.functions.arr[first],
+                    .arr = &frame->fn->chunk.functions.arr[first],
                     .size = n_members,
                     .capacity = n_members,
-                    .element_size = sizeof(vm_t),
+                    .element_size = sizeof(fn_t),
                 },
                 .upvalues = sv_vec_init(value_t),
             };
@@ -614,7 +581,7 @@ break; }
 } while (0)
 
 #define INIT_FN_VM(fn, upvalues, group)                                                                       \
-    vm_t* fn;                                                                                                 \
+    fn_t* fn;                                                                                                 \
     value_arr upvalues;                                                                                       \
     sv_rc_t(closure_group_t) group = { 0 };                                                                   \
     do {                                                                                                      \
@@ -647,7 +614,7 @@ break; }
             LOAD_FN();
             INIT_FN_VM(fn, upvalues, group);
 
-            if (vm->call_frames.size >= vm->max_frames) {
+            if (vm->call_frames.size >= vm->max_call_frames) {
                 vm_err_t* p = sv_malloc(a, sizeof(vm_err_t));
                 if (p != NULL)
                     *p = (vm_err_t){ .line = LINE() };
@@ -782,7 +749,7 @@ break; }
             if (instruction_err_payload != NULL)
                 *instruction_err_payload = (vm_instruction_err){
                     .vm_err = { .line = LINE() },
-                    .instruction = frame->vm->chunk.bytecode.arr[frame->ip - 1],
+                    .instruction = frame->fn->chunk.bytecode.arr[frame->ip - 1],
                 };
             err = (error_t){ .error_code = VM_ERR_NOT_IMPLEMENTED,
                              .payload = instruction_err_payload,
@@ -815,105 +782,3 @@ error:
 #undef UNSUPPORTED_1
 #undef LINE
 }
-
-vm_builder_t vmb_init(sv_str_t name)
-{
-    return (vm_builder_t){ .vm = vm_init(name) };
-}
-
-vm_t vmb_build(vm_builder_t* b)
-{
-    vm_t vm = b->vm;
-    b->vm = (vm_t){0};
-    return vm;
-}
-
-bool vmb_add_byte(vm_builder_t* b, uint8_t byte, int64_t line, const sv_allocator_t* a)
-{
-    int success = 0;
-    sv_vec_push(&b->vm.chunk.bytecode, byte, &success, a);
-    if (!success)
-        return false;
-    sv_vec_push(&b->vm.chunk.lines, line, &success, a);
-    return success;
-}
-
-bool vmb_add_bytes(vm_builder_t* b, uint8_t b1, uint8_t b2, int64_t line, const sv_allocator_t* a)
-{
-    return vmb_add_byte(b, b1, line, a) && vmb_add_byte(b, b2, line, a);
-}
-
-bool vmb_add_arg(vm_builder_t* b, uint8_t op, uint32_t arg, int64_t line, const sv_allocator_t* a)
-{
-    uint8_t width = arg > 0xFFFFFF ? 4 : arg > 0xFFFF ? 3 : arg > 0xFF ? 2 : 1;
-    if (width > 1 && !vmb_add_bytes(b, OP_EXTENDED_ARG, width, line, a))
-        return false;
-    if (!vmb_add_byte(b, op, line, a))
-        return false;
-    for (uint8_t i = 0; i < width; i++)
-        if (!vmb_add_byte(b, (uint8_t)(arg >> (8 * i)), line, a))
-            return false;
-    return true;
-}
-
-sv_opt_t(uint32_t) vmb_add_constant(vm_builder_t* b, value_t c, const sv_allocator_t* a)
-{
-    int success = 0;
-    sv_vec_push(&b->vm.chunk.constants, c, &success, a);
-    if (!success)
-        return sv_opt_none_t(uint32_t);
-
-    int64_t i = b->vm.chunk.constants.size - 1;
-    if (i > UINT32_MAX || !vmb_add_arg(b, OP_LOAD_CONSTANT, (uint32_t)i, 0, a))
-        return sv_opt_none_t(uint32_t);
-    return sv_opt_some_t(uint32_t, (uint32_t)i);
-}
-
-sv_opt_t(uint32_t) vmb_add_closure(vm_builder_t* b, uint8_t cls_args_n, vm_t fn_vm, const sv_allocator_t* a)
-{
-    int success = 0;
-    sv_vec_push(&b->vm.chunk.functions, fn_vm, &success, a);
-    if (!success)
-        return sv_opt_none_t(uint32_t);
-
-    int64_t i = b->vm.chunk.functions.size - 1;
-    if (i > UINT32_MAX || !vmb_add_arg(b, OP_LOAD_CLOSURE, (uint32_t)i, 0, a) || !vmb_add_byte(b, cls_args_n, 0, a))
-        return sv_opt_none_t(uint32_t);
-    return sv_opt_some_t(uint32_t, (uint32_t)i);
-}
-
-void vmb_patch_jump(vm_builder_t* b, int64_t index, uint16_t value)
-{
-    b->vm.chunk.bytecode.arr[index] = (uint8_t)value;
-    b->vm.chunk.bytecode.arr[index + 1] = (uint8_t)(value >> 8);
-}
-
-sv_opt_t(int64_t) vmb_add_jump(vm_builder_t* b, int64_t line, const sv_allocator_t* a)
-{
-    if (!vmb_add_byte(b, OP_JUMP, line, a) || !vmb_add_bytes(b, 255, 255, line, a))
-        return sv_opt_none_t(int64_t);
-    return sv_opt_some_t(int64_t, b->vm.chunk.bytecode.size - 2);
-}
-
-bool vmb_add_jump_back(vm_builder_t* b, int64_t to, int64_t line, const sv_allocator_t* a)
-{
-    if (!vmb_add_byte(b, OP_JUMP_BACK, line, a))
-        return false;
-    uint16_t offset = (uint16_t)(b->vm.chunk.bytecode.size - to);
-    return vmb_add_bytes(b, (uint8_t)offset, (uint8_t)(offset >> 8), line, a);
-}
-
-sv_opt_t(int64_t) vmb_add_jump_if_false(vm_builder_t* b, int64_t line, const sv_allocator_t* a)
-{
-    if (!vmb_add_byte(b, OP_JUMP_IF_FALSE, line, a) || !vmb_add_bytes(b, 255, 255, line, a))
-        return sv_opt_none_t(int64_t);
-    return sv_opt_some_t(int64_t, b->vm.chunk.bytecode.size - 2);
-}
-
-bool vmb_add_global(vm_builder_t* b, value_t v, const sv_allocator_t* a)
-{
-    int success = 0;
-    sv_vec_push(&b->vm.globals, v, &success, a);
-    return success > 0;
-}
-

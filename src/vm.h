@@ -6,22 +6,13 @@
 #include "std/logger.h"
 #include "value.h"
 #include "obj.h"
+#include "obj/fn.h"
 #include "common.h"
-#include "std/string.h"
 #include "std/vector.h"
 
 typedef struct vm_t vm_t;
 
-sv_vec_def(uint8_t);
-
 typedef sv_vec_t(value_t) value_arr;
-
-typedef struct {
-    sv_vec_t(uint8_t) bytecode;
-    sv_vec_t(int64_t) lines;
-    sv_vec_t(value_t) constants;
-    sv_vec_t(vm_t) functions;
-} chunk_t;
 
 /**
  * A VM context to be passed to native functions.
@@ -34,10 +25,8 @@ typedef struct vm_ctx_t {
     uint32_t record_names_sizes;
 } vm_ctx_t;
 
-#define VM_MAX_FRAMES 1000000
-
 typedef struct {
-    vm_t* vm;
+    fn_t* fn;
     int64_t ip;
 
     int64_t locals_offset;
@@ -51,12 +40,11 @@ sv_vec_def(call_frame_t);
 
 typedef struct vm_t {
     sv_vec_t(call_frame_t) call_frames;
-    int64_t max_frames;
+    int64_t max_call_frames;
 
-    sv_str_t name;
-    uint8_t arity;
+    hashmap_t globals_names_to_index;
 
-    chunk_t chunk;
+    fn_t fn;
 
     value_arr globals;
     value_arr locals;
@@ -177,21 +165,10 @@ typedef struct {
     obj_kind expected_o;
 } vm_wrong_type_err;
 
-sv_opt_def(uint8_t);
-sv_opt_def(uint32_t);
-sv_opt_def(int64_t);
-
-typedef struct {
-    vm_t vm;
-} vm_builder_t;
-
-chunk_t chunk_init(void);
-void chunk_deinit(chunk_t*, const sv_allocator_t*);
-
 /**
- * Creates an empty vm that owns `name`.
+ * Creates a vm that owns and runs `fn`.
  */
-vm_t vm_init(sv_str_t);
+vm_t vm_init(fn_t, int64_t max_call_frames, hashmap_t globals_names_to_index);
 void vm_deinit(vm_t*, const sv_allocator_t*);
 
 /**
@@ -203,61 +180,5 @@ sv_opt_t(error_t) vm_run(vm_t*);
  * Frees the payload of an error returned by vm_run.
  */
 void vm_err_deinit(error_t*, const sv_allocator_t*);
-
-/**
- * Initializes a new builder wrapping an empty vm that owns `name`.
- */
-vm_builder_t vmb_init(sv_str_t);
-
-/**
- * Adds a global variable to the vm. Returns true on success, false otherwise.
- */
-bool vmb_add_global(vm_builder_t*, value_t, const sv_allocator_t*);
-/**
- * Returns the built vm and invalidates the builder.
- */
-vm_t vmb_build(vm_builder_t*);
-/**
- * Adds a byte to the bytecode with its source line.
- */
-bool vmb_add_byte(vm_builder_t*, uint8_t, int64_t, const sv_allocator_t*);
-/**
- * Adds two bytes to the bytecode, both tagged with the source line.
- */
-bool vmb_add_bytes(vm_builder_t*, uint8_t, uint8_t, int64_t, const sv_allocator_t*);
-/**
- * Emits an instruction with an operand of up to four bytes, prefixed with
- * OP_EXTENDED_ARG when it does not fit one.
- */
-bool vmb_add_arg(vm_builder_t*, uint8_t, uint32_t, int64_t, const sv_allocator_t*);
-/**
- * Registers a constant and emits its load instruction. Returns the constant
- * index, none on allocation failure or past the uint32 index space.
- */
-sv_opt_t(uint32_t) vmb_add_constant(vm_builder_t*, value_t, const sv_allocator_t*);
-/**
- * Registers a function vm and emits its load instruction with the closure
- * argument count. Returns the function index, none on allocation failure or
- * past the uint32 index space.
- */
-sv_opt_t(uint32_t) vmb_add_closure(vm_builder_t*, uint8_t, vm_t, const sv_allocator_t*);
-/**
- * Writes the jump offset over the placeholder at the given bytecode index.
- */
-void vmb_patch_jump(vm_builder_t*, int64_t, uint16_t);
-/**
- * Emits a jump with a placeholder offset. Returns the index to patch, none on
- * allocation failure.
- */
-sv_opt_t(int64_t) vmb_add_jump(vm_builder_t*, int64_t, const sv_allocator_t*);
-/**
- * Emits a jump back to the given bytecode index.
- */
-bool vmb_add_jump_back(vm_builder_t*, int64_t, int64_t, const sv_allocator_t*);
-/**
- * Emits a conditional jump with a placeholder offset. Returns the index to
- * patch, none on allocation failure.
- */
-sv_opt_t(int64_t) vmb_add_jump_if_false(vm_builder_t*, int64_t, const sv_allocator_t*);
 
 #endif

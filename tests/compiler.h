@@ -15,19 +15,19 @@
 
 /* The n-th field a program interns: compile() reserves two ids first, for map iteration. */
 #define SV_TEST_RESERVED_FIELDS 2
+#define SV_TEST_MAX_FRAMES 1000000
 #define SV_TEST_FIELD(n) sv_test_compiler_val(SV_TEST_RESERVED_FIELDS + (n))
 
 static inline value_t sv_test_compiler_eval_frames(const char* src, int64_t max_frames, bool* ok)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile(SV_TEST_PATH, src, &ctx);
-   if (vm.chunk.bytecode.arr == NULL) {
+   vm_t vm = compile(SV_TEST_PATH, src, max_frames, &ctx);
+   if (vm.fn.chunk.bytecode.arr == NULL) {
       sv_str_deinit(&ctx.err.msg, &sv_gpa);
       *ok = false;
       return (value_t){ .kind = VALUE_NIL };
    }
 
-   vm.max_frames = max_frames;
    sv_opt_t(error_t) err = vm_run(&vm);
    *ok = !err.is_some && vm.stack.size == 1;
    value_t res = *ok ? value_borrow(sv_vec_last(vm.stack)) : (value_t){ .kind = VALUE_NIL };
@@ -39,7 +39,7 @@ static inline value_t sv_test_compiler_eval_frames(const char* src, int64_t max_
 
 static inline value_t sv_test_compiler_eval(const char* src, bool* ok)
 {
-   return sv_test_compiler_eval_frames(src, VM_MAX_FRAMES, ok);
+   return sv_test_compiler_eval_frames(src, SV_TEST_MAX_FRAMES, ok);
 }
 
 static inline bool sv_test_compiler_num_frames(const char* src, double expected, int64_t max_frames)
@@ -87,12 +87,11 @@ static inline value_t sv_test_compiler_val(double n)
 static inline int sv_test_compiler_runtime_err_frames(const char* src, int64_t max_frames)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile(SV_TEST_PATH, src, &ctx);
-   if (vm.chunk.bytecode.arr == NULL) {
+   vm_t vm = compile(SV_TEST_PATH, src, max_frames, &ctx);
+   if (vm.fn.chunk.bytecode.arr == NULL) {
       sv_str_deinit(&ctx.err.msg, &sv_gpa);
       return -1;
    }
-   vm.max_frames = max_frames;
    sv_opt_t(error_t) err = vm_run(&vm);
    int code = err.is_some ? err.value.error_code : -2;
    if (err.is_some)
@@ -103,14 +102,14 @@ static inline int sv_test_compiler_runtime_err_frames(const char* src, int64_t m
 
 static inline int sv_test_compiler_runtime_err(const char* src)
 {
-   return sv_test_compiler_runtime_err_frames(src, VM_MAX_FRAMES);
+   return sv_test_compiler_runtime_err_frames(src, SV_TEST_MAX_FRAMES);
 }
 
 static inline int sv_test_compiler_err(const char* src)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile(SV_TEST_PATH, src, &ctx);
-   if (vm.chunk.bytecode.arr != NULL) {
+   vm_t vm = compile(SV_TEST_PATH, src, SV_TEST_MAX_FRAMES, &ctx);
+   if (vm.fn.chunk.bytecode.arr != NULL) {
       vm_deinit(&vm, &sv_gpa);
       return -1;
    }
@@ -256,8 +255,8 @@ static inline void sv_test_compiler_tuples(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("t = 5\nt.x") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t pctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t pvm = compile(SV_TEST_PATH, "t = {x: 10, y: 20}\nt", &pctx);
-   sv_test_run(t, pvm.chunk.bytecode.arr != NULL);
+   vm_t pvm = compile(SV_TEST_PATH, "t = {x: 10, y: 20}\nt", SV_TEST_MAX_FRAMES, &pctx);
+   sv_test_run(t, pvm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) perr = vm_run(&pvm);
    sv_test_run(t, !perr.is_some);
    sv_str_t ptext = value_to_str(pvm.stack.arr[pvm.stack.size - 1], &pvm.ctx);
@@ -282,8 +281,8 @@ static inline void sv_test_compiler_tuple_type(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("(1, 2)[0.5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t tctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t tvm = compile(SV_TEST_PATH, "t = (1, (2, \"s\"))\nt", &tctx);
-   sv_test_run(t, tvm.chunk.bytecode.arr != NULL);
+   vm_t tvm = compile(SV_TEST_PATH, "t = (1, (2, \"s\"))\nt", SV_TEST_MAX_FRAMES, &tctx);
+   sv_test_run(t, tvm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) terr = vm_run(&tvm);
    sv_test_run(t, !terr.is_some);
    sv_str_t ttext = value_to_str(tvm.stack.arr[tvm.stack.size - 1], &tvm.ctx);
@@ -292,8 +291,8 @@ static inline void sv_test_compiler_tuple_type(sv_testing_t* t)
    vm_deinit(&tvm, &sv_gpa);
 
    ctx_t octx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t ovm = compile(SV_TEST_PATH, "(1,)", &octx);
-   sv_test_run(t, ovm.chunk.bytecode.arr != NULL);
+   vm_t ovm = compile(SV_TEST_PATH, "(1,)", SV_TEST_MAX_FRAMES, &octx);
+   sv_test_run(t, ovm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) oerr = vm_run(&ovm);
    sv_test_run(t, !oerr.is_some);
    sv_str_t otext = value_to_str(ovm.stack.arr[ovm.stack.size - 1], &ovm.ctx);
@@ -341,8 +340,8 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("for x in 5 do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t actx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t avm = compile(SV_TEST_PATH, "fun f(x) do x end f(1, 2)", &actx);
-   sv_test_run(t, avm.chunk.bytecode.arr != NULL);
+   vm_t avm = compile(SV_TEST_PATH, "fun f(x) do x end f(1, 2)", SV_TEST_MAX_FRAMES, &actx);
+   sv_test_run(t, avm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) aerr = vm_run(&avm);
    sv_test_run(t, aerr.is_some);
    sv_test_run(t, aerr.value.error_code == VM_ERR_BAD_ARITY);
@@ -352,8 +351,8 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    vm_deinit(&avm, &sv_gpa);
 
    ctx_t cctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t cvm = compile(SV_TEST_PATH, "[1] < 2", &cctx);
-   sv_test_run(t, cvm.chunk.bytecode.arr != NULL);
+   vm_t cvm = compile(SV_TEST_PATH, "[1] < 2", SV_TEST_MAX_FRAMES, &cctx);
+   sv_test_run(t, cvm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) cerr = vm_run(&cvm);
    sv_test_run(t, cerr.is_some);
    sv_test_run(t, cerr.value.error_code == VM_ERR_OP_UNSUPPORTED_ARGS);

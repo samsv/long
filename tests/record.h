@@ -81,16 +81,16 @@ static inline void sv_test_record_print(sv_testing_t* t)
 
 static inline void sv_test_record_vm_ops(sv_testing_t* t)
 {
-   vm_builder_t b = vmb_init(sv_str_copy(sv_str_init("tuple test"), &sv_gpa));
-   sv_test_run(t, vmb_add_constant(&b, sv_test_record_num(0), &sv_gpa).is_some);
-   sv_test_run(t, vmb_add_constant(&b, sv_test_record_num(10), &sv_gpa).is_some);
-   sv_test_run(t, vmb_add_constant(&b, sv_test_record_num(1), &sv_gpa).is_some);
-   sv_test_run(t, vmb_add_constant(&b, sv_test_record_num(20), &sv_gpa).is_some);
-   sv_test_run(t, vmb_add_bytes(&b, OP_RECORD, 2, 0, &sv_gpa));
-   sv_test_run(t, vmb_add_bytes(&b, OP_RECORD_GET, 1, 0, &sv_gpa));
-   sv_test_run(t, vmb_add_byte(&b, OP_RETURN, 0, &sv_gpa));
+   fn_builder_t b = fnb_init(sv_str_copy(sv_str_init("tuple test"), &sv_gpa));
+   sv_test_run(t, fnb_add_constant(&b, sv_test_record_num(0), &sv_gpa).is_some);
+   sv_test_run(t, fnb_add_constant(&b, sv_test_record_num(10), &sv_gpa).is_some);
+   sv_test_run(t, fnb_add_constant(&b, sv_test_record_num(1), &sv_gpa).is_some);
+   sv_test_run(t, fnb_add_constant(&b, sv_test_record_num(20), &sv_gpa).is_some);
+   sv_test_run(t, fnb_add_bytes(&b, OP_RECORD, 2, 0, &sv_gpa));
+   sv_test_run(t, fnb_add_bytes(&b, OP_RECORD_GET, 1, 0, &sv_gpa));
+   sv_test_run(t, fnb_add_byte(&b, OP_RETURN, 0, &sv_gpa));
 
-   vm_t vm = vmb_build(&b);
+   vm_t vm = vm_init(fnb_build(&b), 1000000, map_init(NULL, 0, &sv_gpa));
    vm.ctx.alloc = &sv_gpa;
    sv_opt_t(error_t) err = vm_run(&vm);
    sv_test_run(t, !err.is_some);
@@ -98,14 +98,14 @@ static inline void sv_test_record_vm_ops(sv_testing_t* t)
    sv_test_run(t, vm.stack.arr[0].kind == VALUE_NUMBER && vm.stack.arr[0].number == 20);
    vm_deinit(&vm, &sv_gpa);
 
-   vm_builder_t mb = vmb_init(sv_str_copy(sv_str_init("tuple miss"), &sv_gpa));
-   sv_test_run(t, vmb_add_constant(&mb, sv_test_record_num(0), &sv_gpa).is_some);
-   sv_test_run(t, vmb_add_constant(&mb, sv_test_record_num(10), &sv_gpa).is_some);
-   sv_test_run(t, vmb_add_bytes(&mb, OP_RECORD, 1, 0, &sv_gpa));
-   sv_test_run(t, vmb_add_bytes(&mb, OP_RECORD_GET, 7, 0, &sv_gpa));
-   sv_test_run(t, vmb_add_byte(&mb, OP_RETURN, 0, &sv_gpa));
+   fn_builder_t mb = fnb_init(sv_str_copy(sv_str_init("tuple miss"), &sv_gpa));
+   sv_test_run(t, fnb_add_constant(&mb, sv_test_record_num(0), &sv_gpa).is_some);
+   sv_test_run(t, fnb_add_constant(&mb, sv_test_record_num(10), &sv_gpa).is_some);
+   sv_test_run(t, fnb_add_bytes(&mb, OP_RECORD, 1, 0, &sv_gpa));
+   sv_test_run(t, fnb_add_bytes(&mb, OP_RECORD_GET, 7, 0, &sv_gpa));
+   sv_test_run(t, fnb_add_byte(&mb, OP_RETURN, 0, &sv_gpa));
 
-   vm_t miss = vmb_build(&mb);
+   vm_t miss = vm_init(fnb_build(&mb), 1000000, map_init(NULL, 0, &sv_gpa));
    miss.ctx.alloc = &sv_gpa;
    sv_opt_t(error_t) merr = vm_run(&miss);
    sv_test_run(t, merr.is_some);

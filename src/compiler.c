@@ -68,7 +68,8 @@ compiler_t compiler_init(const char* base_path, ctx_t* ctx, bool* success)
         .members = { .depth = 0 },
         .record_fields = NULL,
         .fail_targets = NULL,
-        .builder = { .vm = vm_init(sv_str_init("")) },
+        .builder = fnb_init(sv_str_init("")),
+        .global_values = sv_vec_init(value_t),
         .current_path = base_path,
         .modules = modules,
     };
@@ -115,14 +116,14 @@ static bool compiler_malformed(ctx_t* ctx, const char* what, int64_t line)
 
 static bool emit(compiler_t* c, ctx_t* ctx, uint8_t byte, int64_t line)
 {
-    if (!vmb_add_byte(&c->builder, byte, line, &ctx->alloc))
+    if (!fnb_add_byte(&c->builder, byte, line, &ctx->alloc))
         return compiler_oom(ctx, line);
     return true;
 }
 
 static bool emit2(compiler_t* c, ctx_t* ctx, uint8_t b1, uint8_t b2, int64_t line)
 {
-    if (!vmb_add_bytes(&c->builder, b1, b2, line, &ctx->alloc))
+    if (!fnb_add_bytes(&c->builder, b1, b2, line, &ctx->alloc))
         return compiler_oom(ctx, line);
     return true;
 }
@@ -143,7 +144,7 @@ static bool compile_source(compiler_t* c, const char* source_code, ctx_t* ctx)
         if (token.kind == TOKEN_EOF || token.kind == TOKEN_ERROR)
             break;
 
-        if (!first && !vmb_add_byte(&c->builder, OP_POP, token.line, &ctx->alloc)) {
+        if (!first && !fnb_add_byte(&c->builder, OP_POP, token.line, &ctx->alloc)) {
             compiler_oom(ctx, token.line);
             goto fail;
         }
@@ -171,7 +172,7 @@ fail:
 
 static bool add_const(compiler_t* c, ctx_t* ctx, value_t v, int64_t line)
 {
-    sv_opt_t(uint32_t) i = vmb_add_constant(&c->builder, v, &ctx->alloc);
+    sv_opt_t(uint32_t) i = fnb_add_constant(&c->builder, v, &ctx->alloc);
     if (!i.is_some) {
         value_free(&v, &ctx->alloc);
         return compiler_oom(ctx, line);
@@ -197,7 +198,7 @@ static bool emit_narrow(compiler_t* c, ctx_t* ctx, uint8_t op, int64_t arg,
 
 static bool emit_wide(compiler_t* c, ctx_t* ctx, uint8_t op, uint32_t arg, int64_t line)
 {
-    if (!vmb_add_arg(&c->builder, op, arg, line, &ctx->alloc))
+    if (!fnb_add_arg(&c->builder, op, arg, line, &ctx->alloc))
         return compiler_oom(ctx, line);
     return true;
 }
@@ -219,13 +220,13 @@ static bool jump_emit(ctx_t* ctx, sv_opt_t(int64_t) ji, int64_t* out, int64_t li
 
 static bool patch_jump(compiler_t* c, ctx_t* ctx, int64_t ji, int64_t line)
 {
-    int64_t offset = c->builder.vm.chunk.bytecode.size - ji;
+    int64_t offset = c->builder.fn.chunk.bytecode.size - ji;
     if (offset > UINT16_MAX) {
         char msg[64];
         snprintf(msg, sizeof(msg), "Jump too long at line %" PRId64, line);
         return compiler_error(ctx, C_ERR_JUMP_TOO_LONG, msg);
     }
-    vmb_patch_jump(&c->builder, ji, (uint16_t)offset);
+    fnb_patch_jump(&c->builder, ji, (uint16_t)offset);
     return true;
 }
 
@@ -362,11 +363,11 @@ static bool expect_id(sexpr_t e, ctx_t* ctx, sv_str_t* out)
 
 void compiler_free(compiler_t* c, const sv_allocator_t* a)
 {
-    thm_deinit(&c->globals.name_indexes, a);
     thm_deinit(&c->upvalues.name_indexes, a);
     thm_deinit(&c->members, a);
     thm_deinit(&c->modules.compiled_modules, a);
     thm_deinit(&c->modules.to_be_compiled_modules, a);
+    value_arr_deinit(&c->global_values, a);
     while (c->locals != NULL) {
         locals_t* l = c->locals;
         c->locals = l->next;
@@ -943,11 +944,11 @@ static bool compile_if(compiler_t* c, const sexpr_t* args, int64_t n, int64_t li
     TRY(compile_sexpr(c, args[0], false, ctx));
 
     int64_t j1 = 0;
-    TRY(jump_emit(ctx, vmb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
+    TRY(jump_emit(ctx, fnb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
     TRY(compile_sexpr(c, args[1], is_tail, ctx));
 
     int64_t j2 = 0;
-    TRY(jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &j2, line));
+    TRY(jump_emit(ctx, fnb_add_jump(&c->builder, line, &ctx->alloc), &j2, line));
     TRY(patch_jump(c, ctx, j1, line));
     if (n == 3)
         TRY(compile_sexpr(c, args[2], is_tail, ctx));
@@ -974,7 +975,7 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     TRY(emit_wide(c, ctx, OP_GET_LOCAL, iter_slot.value, line));
 
     TRY(init_scope(c, ctx, line));
-    int64_t loop_start = c->builder.vm.chunk.bytecode.size;
+    int64_t loop_start = c->builder.fn.chunk.bytecode.size;
 
     sv_opt_t(uint32_t) iter_idx = locals_get(c->locals, iter_name, ctx);
     TRY(emit_wide(c, ctx, OP_GET_LOCAL, iter_idx.value, line));
@@ -992,7 +993,7 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     TRY(emit_wide(c, ctx, OP_GET_LOCAL, id_slot.value, line));
 
     int64_t j1 = 0;
-    TRY(jump_emit(ctx, vmb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
+    TRY(jump_emit(ctx, fnb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
     TRY(emit(c, ctx, OP_POP, line));
 
     /* The pattern's names get their own scope: the exit path jumps here having
@@ -1010,7 +1011,7 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
         TRY(deinit_scope(c, ctx));
 
     TRY(emit_pop_locals(c, ctx, names_count(c->locals->name_indexes), 0));
-    if (!vmb_add_jump_back(&c->builder, loop_start, line, &ctx->alloc))
+    if (!fnb_add_jump_back(&c->builder, loop_start, line, &ctx->alloc))
         return compiler_oom(ctx, line);
     TRY(patch_jump(c, ctx, j1, line));
 
@@ -1082,7 +1083,7 @@ static bool compile_and_or(compiler_t* c, bool is_and, const sexpr_t* args, int6
     TRY(emit(c, ctx, OP_DUP, line));
 
     int64_t j1 = 0;
-    TRY(jump_emit(ctx, vmb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
+    TRY(jump_emit(ctx, fnb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
 
     if (is_and) {
         TRY(emit(c, ctx, OP_POP, line));
@@ -1091,7 +1092,7 @@ static bool compile_and_or(compiler_t* c, bool is_and, const sexpr_t* args, int6
     }
 
     int64_t j2 = 0;
-    TRY(jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &j2, line));
+    TRY(jump_emit(ctx, fnb_add_jump(&c->builder, line, &ctx->alloc), &j2, line));
     TRY(patch_jump(c, ctx, j1, line));
     TRY(emit(c, ctx, OP_POP, line));
     TRY(compile_sexpr(c, args[1], false, ctx));
@@ -1131,7 +1132,7 @@ static sv_str_t param_slot(char* buf, size_t n, int i)
 
 static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* params, sexpr_t body,
                           sv_str_t name, int64_t upvalue_offset, transient_hashmap_t members, int64_t line,
-                          ctx_t* ctx, vm_t* out)
+                          ctx_t* ctx, fn_t* out)
 {
     bool success;
     compiler_t fc = compiler_init(c->current_path, ctx, &success);
@@ -1146,7 +1147,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
         fc.members = (transient_hashmap_t){0};                                                                \
         fc.globals.name_indexes = (transient_hashmap_t){0};                                                   \
         compiler_free(&fc, &ctx->alloc);                                                                      \
-        vm_deinit(&fc.builder.vm, &ctx->alloc);                                                               \
+        fn_deinit(&fc.builder.fn, &ctx->alloc);                                                               \
         return false;                                                                                         \
 } } while (0)
 
@@ -1184,10 +1185,10 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
     }
 
     FN_TRY(compile_sexpr(&fc, body, true, ctx));
-    FN_TRY(vmb_add_byte(&fc.builder, OP_RETURN, 0, &ctx->alloc));
+    FN_TRY(fnb_add_byte(&fc.builder, OP_RETURN, 0, &ctx->alloc));
 #undef FN_TRY
 
-    *out = vmb_build(&fc.builder);
+    *out = fnb_build(&fc.builder);
     out->name = sv_str_copy(name, &ctx->alloc);
     out->arity = (uint8_t)params->cons.size;
     fc.members = (transient_hashmap_t){0};
@@ -1227,21 +1228,21 @@ static bool compile_fun(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     sv_str_t name;
     TRY(expect_id(args[0], ctx, &name));
 
-    vm_t fn_vm;
+    fn_t fn_vm;
     TRY(compile_fn_vm(c, cls, params, body, name, 0, (transient_hashmap_t){0}, line, ctx, &fn_vm));
 
     if (!compile_upvalue_loads(c, cls, 0, ctx)) {
-        vm_deinit(&fn_vm, &ctx->alloc);
+        fn_deinit(&fn_vm, &ctx->alloc);
         return false;
     }
 
-    sv_opt_t(uint32_t) fi = vmb_add_closure(
+    sv_opt_t(uint32_t) fi = fnb_add_closure(
         &c->builder,
         has_cls ? (uint8_t)cls->cons.size : 0,
         fn_vm,
         &ctx->alloc);
     if (!fi.is_some) {
-        vm_deinit(&fn_vm, &ctx->alloc);
+        fn_deinit(&fn_vm, &ctx->alloc);
         return compiler_oom(ctx, line);
     }
     return add_var(c, name, line, ctx);
@@ -1249,7 +1250,7 @@ static bool compile_fun(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
 
 static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, int64_t line, ctx_t* ctx)
 {
-    int64_t first = c->builder.vm.chunk.functions.size;
+    int64_t first = c->builder.fn.chunk.functions.size;
 
     transient_hashmap_t member_names = {0};
 #define G_TRY(call) do {                                                                                      \
@@ -1285,13 +1286,11 @@ static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, 
         sv_str_t name;
         G_TRY(expect_id(item[0], ctx, &name));
 
-        vm_t fn_vm;
+        fn_t fn_vm;
         G_TRY(compile_fn_vm(c, cls, params, body, name, upvalue_base, member_names, line, ctx, &fn_vm));
 
-        int success = 0;
-        sv_vec_push(&c->builder.vm.chunk.functions, fn_vm, &success, &ctx->alloc);
-        if (!success) {
-            vm_deinit(&fn_vm, &ctx->alloc);
+        if (!fnb_add_function(&c->builder, fn_vm, &ctx->alloc).is_some) {
+            fn_deinit(&fn_vm, &ctx->alloc);
             G_TRY(compiler_oom(ctx, line));
         }
 
@@ -1348,7 +1347,7 @@ static bool compile_fatbar(compiler_t* c, const sexpr_t* args, int64_t n,
         && deinit_scope(c, ctx);
 
     int64_t over = 0;
-    ok = ok && jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &over, line);
+    ok = ok && jump_emit(ctx, fnb_add_jump(&c->builder, line, &ctx->alloc), &over, line);
 
     c->fail_targets = target.next;
     for (int64_t i = 0; ok && i < target.jumps.size; i++)
@@ -1375,7 +1374,7 @@ static bool compile_fail(compiler_t* c, int64_t line, ctx_t* ctx)
     TRY(emit_pop_locals(c, ctx, live_locals(c) - target->locals, line));
 
     int64_t j = 0;
-    TRY(jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &j, line));
+    TRY(jump_emit(ctx, fnb_add_jump(&c->builder, line, &ctx->alloc), &j, line));
 
     int success;
     sv_vec_push(&target->jumps, j, &success, &ctx->alloc);
@@ -1605,7 +1604,7 @@ static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx
         CLEANUP();
         return false;
     }
-    if (!vmb_add_byte(&c->builder, OP_POP, 0, &ctx->alloc))
+    if (!fnb_add_byte(&c->builder, OP_POP, 0, &ctx->alloc))
         goto error_oom;
     c->current_path = current_path;
     c->var_to_modules = var_to_modules;
@@ -1718,14 +1717,20 @@ bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
     TRY(globals_add(&c->globals, sv_str_init(fn.name), sv_str_init(""), ctx, 0));
     value_t fn_val = value_init_native(fn, &ctx->alloc);
     TRY(fn_val.obj.cell != NULL);
-    return vmb_add_global(&c->builder, fn_val, &ctx->alloc);
+    int success = 0;
+    sv_vec_push(&c->global_values, fn_val, &success, &ctx->alloc);
+    if (!success) {
+        value_free(&fn_val, &ctx->alloc);
+        return false;
+    }
+    return true;
 }
 
-vm_t compile(const char* base_path, const char* source_code, ctx_t* ctx)
+vm_t compile(const char* base_path, const char* source_code, int64_t max_frames, ctx_t* ctx)
 {
 #define ERR_RETURN do {                                                                                       \
         compiler_free(&compiler, &ctx->alloc);                                                                \
-        vm_deinit(&compiler.builder.vm, &ctx->alloc);                                                         \
+        fn_deinit(&compiler.builder.fn, &ctx->alloc);                                                         \
         thm_deinit(&record_fields, &ctx->alloc);                                                              \
         return (vm_t){0}; } while (0)
 
@@ -1758,13 +1763,20 @@ vm_t compile(const char* base_path, const char* source_code, ctx_t* ctx)
     if (!compile_source(&compiler, source_code, ctx)) {
         ERR_RETURN;
     }
-    if (!vmb_add_byte(&compiler.builder, OP_RETURN, 0, &ctx->alloc)) {
+    if (!fnb_add_byte(&compiler.builder, OP_RETURN, 0, &ctx->alloc)) {
         compiler_oom(ctx, 0);
         ERR_RETURN;
     }
 
+    hashmap_t globals_map = transient_to_map(&compiler.globals.name_indexes, &ctx->alloc);
+    if (globals_map.cell == NULL)
+        ERR_RETURN;
+
+    vm_t vm = vm_init(fnb_build(&compiler.builder), max_frames, globals_map);
+    vm.globals = compiler.global_values;
+
+    compiler.global_values = sv_vec_init(value_t);
     compiler_free(&compiler, &ctx->alloc);
-    vm_t vm = vmb_build(&compiler.builder);
     vm.ctx.alloc = &ctx->alloc;
 
     int64_t n_fields = names_count(record_fields);

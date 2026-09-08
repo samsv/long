@@ -17,6 +17,13 @@ void value_free(value_t* v, const sv_allocator_t* a)
         sv_rc_deinit(&v->obj, a);
 }
 
+void value_arr_deinit(sv_vec_t(value_t)* arr, const sv_allocator_t* a)
+{
+    sv_vec_foreach(value_t, v, arr)
+        value_free(&v, a);
+    sv_vec_deinit(arr, a);
+}
+
 value_t value_borrow(value_t v)
 {
     switch (v.kind) {
@@ -173,7 +180,7 @@ value_t value_init_iter(value_t from, const sv_allocator_t* a)
     return v;
 }
 
-value_t value_init_closure(vm_t* function, const value_t* ups, int64_t n, const sv_allocator_t* a)
+value_t value_init_closure(fn_t* function, const value_t* ups, int64_t n, const sv_allocator_t* a)
 {
     closure_t cls = { .function = function, .upvalues = sv_vec_init(value_t) };
     if (n > 0) {

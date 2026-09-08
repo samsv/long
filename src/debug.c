@@ -106,11 +106,11 @@ static bool truncated(int64_t i, vm_instructions op, int64_t left, int64_t need)
     return true;
 }
 
-void print_chunk(vm_t v)
+void print_chunk(chunk_t chunk)
 {
     printf("========= INSTRUCTIONS =========\n");
-    const uint8_t* code = v.chunk.bytecode.arr;
-    int64_t size = v.chunk.bytecode.size;
+    const uint8_t* code = chunk.bytecode.arr;
+    int64_t size = chunk.bytecode.size;
     uint8_t width = 1;
     int64_t i = 0;
     while (i < size) {
@@ -252,7 +252,7 @@ void print_stack(vm_t v)
 
 void print_vm(vm_t v)
 {
-    print_chunk(v);
+    print_chunk(v.fn.chunk);
     print_globals(v);
     print_locals(v);
     print_stack(v);

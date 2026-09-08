@@ -9,9 +9,10 @@
 ✅ Call Frames
 ✅ Tail Recursion
 Embedding API
-    - Global Names on VM;
+    - ✅ Global Names on VM;
     - Call Closure from C;
 STDLib
 String escapes
+Non linear patterns
 Map, mapf, reduce
 Line Table on VM

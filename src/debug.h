@@ -3,7 +3,7 @@
 
 #include "vm.h"
 
-void print_chunk(vm_t);
+void print_chunk(chunk_t);
 void print_globals(vm_t);
 void print_locals(vm_t);
 void print_stack(vm_t);

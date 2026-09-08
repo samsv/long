@@ -1,8 +1,7 @@
 #include "closure.h"
 #include "../value.h"
-#include "../vm.h"
 
-vm_t* cls_get_vm(closure_t cls)
+fn_t* cls_get_vm(closure_t cls)
 {
     return cls.function;
 }
@@ -21,7 +20,7 @@ void clsg_deinit(closure_group_t* g, const sv_allocator_t* a)
     sv_vec_deinit(&g->upvalues, a);
 }
 
-vm_t* clsm_get_vm(closure_member_t m)
+fn_t* clsm_get_vm(closure_member_t m)
 {
     return &m.group.cell->value.members.arr[m.index];
 }

@@ -64,6 +64,10 @@ static const value_t value_false = { .kind = VALUE_BOOL, .boolean = false };
 sv_opt_def(value_t);
 
 void value_free(value_t*, const sv_allocator_t*);
+/**
+ * Frees every value in the vector and the vector itself.
+ */
+void value_arr_deinit(sv_vec_t(value_t)*, const sv_allocator_t*);
 value_t value_borrow(value_t);
 bool value_eql(value_t, value_t);
 
@@ -93,7 +97,7 @@ value_t value_init_iter(value_t, const sv_allocator_t*);
  * Creates a closure value over the function, borrowing the upvalues.
  * obj.cell is NULL on allocation failure.
  */
-value_t value_init_closure(vm_t*, const value_t*, int64_t, const sv_allocator_t*);
+value_t value_init_closure(fn_t*, const value_t*, int64_t, const sv_allocator_t*);
 
 /**
  * Creates a new error value.
