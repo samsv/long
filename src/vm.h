@@ -51,6 +51,7 @@ sv_vec_def(call_frame_t);
 
 typedef struct vm_t {
     sv_vec_t(call_frame_t) call_frames;
+    int64_t max_frames;
 
     sv_str_t name;
     uint8_t arity;
@@ -71,6 +72,7 @@ typedef enum {
     OP_DIV,
     OP_EQUALS,
     OP_CALL,
+    OP_TAIL_CALL,
     OP_LOAD_CLOSURE,
     OP_CREATE_GROUP,
     OP_GET_MEMBER,

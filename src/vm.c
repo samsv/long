@@ -78,6 +78,7 @@ vm_t vm_init(sv_str_t name)
         .locals = sv_vec_init(value_t),
         .stack = sv_vec_init(value_t),
         .call_frames = sv_vec_init(call_frame_t),
+        .max_frames = VM_MAX_FRAMES,
         .ctx = { .alloc = NULL, .logger = sv_std_logger, .record_key_names = NULL, .record_names_sizes = 0 },
     };
 }
@@ -150,7 +151,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
     vm_op_err* op_err_payload = sv_malloc(a, sizeof(vm_op_err));                                              \
     if (op_err_payload != NULL)                                                                               \
         *op_err_payload = (vm_op_err){                                                                        \
-            .vm_err = { .line = LINE() },                                              \
+            .vm_err = { .line = LINE() },                                                                     \
             .ops = { v },                                                                                     \
             .ops_len = 1 };                                                                                   \
     err = (error_t) { .error_code = code,                                                                     \
@@ -186,7 +187,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
     vm_op_err* op_err_payload = sv_malloc(a, sizeof(vm_op_err));                                              \
     if (op_err_payload != NULL)                                                                               \
         *op_err_payload = (vm_op_err){                                                                        \
-            .vm_err = { .line = LINE() },                                              \
+            .vm_err = { .line = LINE() },                                                                     \
             .ops = { v1, v2 },                                                                                \
             .ops_len = 2 };                                                                                   \
     err = (error_t) { .error_code = code,                                                                     \
@@ -574,7 +575,6 @@ break; }
             TRY_PUSH_OWNED(member);
             break;
         }
-        case OP_CALL: {
 #define ERR_WRONG_ARITY(arity) do {                                                                           \
     vm_arity_err* p = sv_malloc(a, sizeof(vm_arity_err));                                                     \
     if (p != NULL)                                                                                            \
@@ -585,51 +585,69 @@ break; }
     value_free(&value, a);                                                                                    \
     goto error; } while (0)
 
-            value_t value = sv_vec_pop(vm->stack);
-            uint8_t arg_count = READ_BYTE();
+#define LOAD_FN()                                                                                             \
+    value_t value = sv_vec_pop(vm->stack);                                                                    \
+    uint8_t arg_count = READ_BYTE();                                                                          \
+    if (!IS_CLOSURE(value) && !IS_NATIVE(value) && !IS_CLOSURE_MEMBER(value))                                 \
+        UNSUPPORTED_1(value, "Type is not callable");                                                         \
+    const value_t* args = &vm->stack.arr[vm->stack.size - arg_count];                                         \
+    if (IS_NATIVE(value)) {                                                                                   \
+        CALL_NATIVE(value);                                                                                   \
+        break;                                                                                                \
+    }
 
-            if (!IS_CLOSURE(value) && !IS_NATIVE(value) && !IS_CLOSURE_MEMBER(value))
-                UNSUPPORTED_1(value, "Type is not callable");
+#define CALL_NATIVE(value) do {                                                                               \
+    native_fn_t fn = AS_NATIVE(value);                                                                        \
+    if (fn.arity != arg_count)                                                                                \
+        ERR_WRONG_ARITY(fn.arity);                                                                            \
+    value_t ret = fn.fn(args, arg_count, &vm->ctx);                                                           \
+    if (IS_ERR(ret)) {                                                                                        \
+        err = AS_ERR(ret);                                                                                    \
+        vm_err_t* vm_err = err.payload;                                                                       \
+        vm_err->line = LINE();                                                                                \
+        value_free(&value, a);                                                                                \
+        goto error;                                                                                           \
+    }                                                                                                         \
+    arr_remove_n(&vm->stack, arg_count, a);                                                                   \
+    value_free(&value, a);                                                                                    \
+    TRY_PUSH_OWNED(ret);                                                                                      \
+} while (0)
 
-            const value_t* args = &vm->stack.arr[vm->stack.size - arg_count];
+#define INIT_FN_VM(fn, upvalues, group)                                                                       \
+    vm_t* fn;                                                                                                 \
+    value_arr upvalues;                                                                                       \
+    sv_rc_t(closure_group_t) group = { 0 };                                                                   \
+    do {                                                                                                      \
+    if (IS_CLOSURE(value)) {                                                                                  \
+        closure_t* cls = &AS_CLOSURE(value);                                                                  \
+        fn = cls_get_vm(*cls);                                                                                \
+        upvalues = cls->upvalues;                                                                             \
+    } else {                                                                                                  \
+        closure_member_t* member = &AS_CLOSURE_MEMBER(value);                                                 \
+        fn = clsm_get_vm(*member);                                                                            \
+        upvalues = member->group.cell->value.upvalues;                                                        \
+        group = member->group;                                                                                \
+    }                                                                                                         \
+    if (arg_count != fn->arity)                                                                               \
+        ERR_WRONG_ARITY(fn->arity);                                                                           \
+} while (0)
 
-            if (IS_NATIVE(value)) {
-                native_fn_t fn = AS_NATIVE(value);
-                if (fn.arity != arg_count)
-                    ERR_WRONG_ARITY(fn.arity);
+#define LOAD_ARGS(locals_offset)                                                                              \
+    int64_t locals_offset = vm->locals.size;                                                                  \
+    do {                                                                                                      \
+    if (arg_count > 0) {                                                                                      \
+        sv_vec_push_many(&vm->locals, args, arg_count, &success, a);                                          \
+        TRY_OR(success, value_free(&value, a), "OOM when passing arguments");                                 \
+        vm->stack.size -= arg_count;                                                                          \
+    }                                                                                                         \
+    sv_vec_push(&vm->locals, value, &success, a);                                                             \
+    TRY_OR(success, value_free(&value, a), "OOM when passing arguments");                                     \
+} while (0)
+        case OP_CALL: {
+            LOAD_FN();
+            INIT_FN_VM(fn, upvalues, group);
 
-                value_t ret = fn.fn(args, arg_count, &vm->ctx);
-                if (IS_ERR(ret)) {
-                    err = AS_ERR(ret);
-                    vm_err_t* vm_err = err.payload;
-                    vm_err->line = LINE();
-                    value_free(&value, a);
-                    goto error;
-                }
-                arr_remove_n(&vm->stack, arg_count, a);
-                value_free(&value, a);
-                TRY_PUSH_OWNED(ret);
-                break;
-            }
-
-            vm_t* fn;
-            value_arr upvalues;
-            sv_rc_t(closure_group_t) group = { 0 };
-            if (IS_CLOSURE(value)) {
-                closure_t* cls = &AS_CLOSURE(value);
-                fn = cls_get_vm(*cls);
-                upvalues = cls->upvalues;
-            } else {
-                closure_member_t* member = &AS_CLOSURE_MEMBER(value);
-                fn = clsm_get_vm(*member);
-                upvalues = member->group.cell->value.upvalues;
-                group = member->group;
-            }
-
-            if (arg_count != fn->arity)
-                ERR_WRONG_ARITY(fn->arity);
-
-            if (vm->call_frames.size >= VM_MAX_FRAMES) {
+            if (vm->call_frames.size >= vm->max_frames) {
                 vm_err_t* p = sv_malloc(a, sizeof(vm_err_t));
                 if (p != NULL)
                     *p = (vm_err_t){ .line = LINE() };
@@ -642,19 +660,30 @@ break; }
 
             // The arguments move into the callee's locals and the callee takes the
             // self slot, which keeps its upvalues and group alive for the frame.
-            int64_t locals_offset = vm->locals.size;
-            if (arg_count > 0) {
-                sv_vec_push_many(&vm->locals, args, arg_count, &success, a);
-                TRY_OR(success, value_free(&value, a), "OOM when passing arguments");
-                vm->stack.size -= arg_count;
-            }
-            sv_vec_push(&vm->locals, value, &success, a);
-            TRY_OR(success, value_free(&value, a), "OOM when passing arguments");
+            LOAD_ARGS(locals_offset);
 
             TRY_PUSH(vm->call_frames, init_frame(fn, locals_offset, vm->stack.size, upvalues, group));
             frame = &sv_vec_last(vm->call_frames);
             break;
+        }
+        case OP_TAIL_CALL: {
+            LOAD_FN();
+            INIT_FN_VM(fn, upvalues, group);
+
+            // free locals
+            arr_remove_n(&vm->locals, vm->locals.size - frame->locals_offset, a);
+            LOAD_ARGS(locals_offset);
+            // now free stack
+            arr_remove_n(&vm->stack, vm->stack.size - frame->stack_offset, a);
+
+            sv_vec_last(vm->call_frames) = init_frame(fn, locals_offset, vm->stack.size, upvalues, group);
+            frame = &sv_vec_last(vm->call_frames);
+            break;
 #undef ERR_WRONG_ARITY
+#undef LOAD_ARGS
+#undef LOAD_FN
+#undef INIT_FN_VM
+#undef CALL_NATIVE
         }
         case OP_IS_STR: IS_KIND(IS_STR(v))
         case OP_IS_NUMBER: IS_KIND(IS_NUMBER(v))

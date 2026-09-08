@@ -17,7 +17,7 @@
 #define SV_TEST_RESERVED_FIELDS 2
 #define SV_TEST_FIELD(n) sv_test_compiler_val(SV_TEST_RESERVED_FIELDS + (n))
 
-static inline value_t sv_test_compiler_eval(const char* src, bool* ok)
+static inline value_t sv_test_compiler_eval_frames(const char* src, int64_t max_frames, bool* ok)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
    vm_t vm = compile(SV_TEST_PATH, src, &ctx);
@@ -27,12 +27,27 @@ static inline value_t sv_test_compiler_eval(const char* src, bool* ok)
       return (value_t){ .kind = VALUE_NIL };
    }
 
+   vm.max_frames = max_frames;
    sv_opt_t(error_t) err = vm_run(&vm);
    *ok = !err.is_some && vm.stack.size == 1;
    value_t res = *ok ? value_borrow(sv_vec_last(vm.stack)) : (value_t){ .kind = VALUE_NIL };
    if (err.is_some)
       vm_err_deinit(&err.value, &sv_gpa);
    vm_deinit(&vm, &sv_gpa);
+   return res;
+}
+
+static inline value_t sv_test_compiler_eval(const char* src, bool* ok)
+{
+   return sv_test_compiler_eval_frames(src, VM_MAX_FRAMES, ok);
+}
+
+static inline bool sv_test_compiler_num_frames(const char* src, double expected, int64_t max_frames)
+{
+   bool ok = false;
+   value_t v = sv_test_compiler_eval_frames(src, max_frames, &ok);
+   bool res = ok && v.kind == VALUE_NUMBER && v.number == expected;
+   value_free(&v, &sv_gpa);
    return res;
 }
 
@@ -69,7 +84,7 @@ static inline value_t sv_test_compiler_val(double n)
    return (value_t){ .kind = VALUE_NUMBER, .number = n };
 }
 
-static inline int sv_test_compiler_runtime_err(const char* src)
+static inline int sv_test_compiler_runtime_err_frames(const char* src, int64_t max_frames)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
    vm_t vm = compile(SV_TEST_PATH, src, &ctx);
@@ -77,12 +92,18 @@ static inline int sv_test_compiler_runtime_err(const char* src)
       sv_str_deinit(&ctx.err.msg, &sv_gpa);
       return -1;
    }
+   vm.max_frames = max_frames;
    sv_opt_t(error_t) err = vm_run(&vm);
    int code = err.is_some ? err.value.error_code : -2;
    if (err.is_some)
       vm_err_deinit(&err.value, &sv_gpa);
    vm_deinit(&vm, &sv_gpa);
    return code;
+}
+
+static inline int sv_test_compiler_runtime_err(const char* src)
+{
+   return sv_test_compiler_runtime_err_frames(src, VM_MAX_FRAMES);
 }
 
 static inline int sv_test_compiler_err(const char* src)
@@ -512,20 +533,20 @@ static inline void sv_test_compiler_recursion(sv_testing_t* t)
 
 static inline void sv_test_compiler_call_stack(sv_testing_t* t)
 {
-   /* Depth is bounded by the heap, not the C stack. */
+   /* Deeper than the C stack ever allowed; frames live on the heap. */
    sv_test_run(t, sv_test_compiler_num(
-      "fun count(n) if n == 0 do 0 else count(n - 1) + 1 end\ncount(100000)", 100000));
+      "fun count(n) if n == 0 do 0 else count(n - 1) + 1 end\ncount(20000)", 20000));
    sv_test_run(t, sv_test_compiler_num(
-      "fun sum(n, acc) if n == 0 do acc else sum(n - 1, acc + n) end\nsum(50000, 0)", 1250025000));
+      "fun sum(n, acc) if n == 0 do acc else sum(n - 1, acc + n) + 0 end\nsum(20000, 0)", 200010000));
 
-   /* Mutual recursion through a group, 20001 frames deep. */
+   /* Mutual recursion through a group, 10001 frames deep. */
    bool ok = false;
    value_t v = sv_test_compiler_eval(
       "fun\n"
-      "| is_even(x) if x == 0 do true else is_odd(x - 1) end\n"
-      "| is_odd(x) if x == 0 do false else is_even(x - 1) end\n"
+      "| is_even(x) if x == 0 do true else not not is_odd(x - 1) end\n"
+      "| is_odd(x) if x == 0 do false else not not is_even(x - 1) end\n"
       "end\n"
-      "is_even(20000)", &ok);
+      "is_even(10000)", &ok);
    sv_test_run(t, ok && v.kind == VALUE_BOOL && v.boolean);
 
    /* A closure made deep in the stack outlives its frames. */
@@ -541,8 +562,30 @@ static inline void sv_test_compiler_call_stack(sv_testing_t* t)
 
    /* Errors deep in the stack unwind; the sanitizer checks the frees. */
    sv_test_run(t, sv_test_compiler_runtime_err(
-      "fun f(n) if n == 0 do 1 + \"a\" else f(n - 1) end\nf(1000)") == VM_ERR_OP_UNSUPPORTED_ARGS);
-   sv_test_run(t, sv_test_compiler_runtime_err("fun f(n) f(n + 1)\nf(0)") == VM_ERR_STACK_OVERFLOW);
+      "fun f(n) if n == 0 do 1 + \"a\" else f(n - 1) + 1 end\nf(1000)") == VM_ERR_OP_UNSUPPORTED_ARGS);
+
+   /* The frame limit is enforced, and only non-tail calls consume frames. */
+   sv_test_run(t, sv_test_compiler_runtime_err_frames("fun f(n) f(n + 1) + 1\nf(0)", 100) == VM_ERR_STACK_OVERFLOW);
+   sv_test_run(t, sv_test_compiler_runtime_err_frames(
+      "fun count(n) if n == 0 do 0 else count(n - 1) + 1 end\ncount(200)", 100) == VM_ERR_STACK_OVERFLOW);
+   sv_test_run(t, sv_test_compiler_num_frames(
+      "fun loop(n, acc) if n == 0 do acc else loop(n - 1, acc + 1) end\nloop(1000, 0)", 1000, 100));
+   ok = false;
+   v = sv_test_compiler_eval_frames(
+      "fun\n"
+      "| is_even(x) if x == 0 do true else is_odd(x - 1) end\n"
+      "| is_odd(x) if x == 0 do false else is_even(x - 1) end\n"
+      "end\n"
+      "is_even(1001)", 100, &ok);
+   sv_test_run(t, ok && v.kind == VALUE_BOOL && !v.boolean);
+   sv_test_run(t, sv_test_compiler_num_frames(
+      "fun loop(n) do\n  m = n - 1\n  if n == 0 do 0 else loop(m) end\nend\nloop(1000)", 0, 100));
+   sv_test_run(t, sv_test_compiler_num_frames(
+      "fun loop(n) if n == 0 do 0 else n - 1 |> loop() end\nloop(1000)", 0, 100));
+
+   /* In a curried call only the outer call is the tail call. */
+   sv_test_run(t, sv_test_compiler_num(
+      "fun k(a) do\n  fun g[a](b) a + b\n  g\nend\nfun h(x) k(x)(1)\nh(41)", 42));
 }
 
 static inline void sv_test_compiler_groups(sv_testing_t* t)

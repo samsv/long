@@ -15,7 +15,7 @@
 #include "deps/cwalk.h"
 
 void compiler_free(compiler_t* c, const sv_allocator_t* a);
-bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx);
+bool compile_sexpr(compiler_t* c, sexpr_t sexpr, bool is_tail, ctx_t* ctx);
 
 typedef struct {
     const char* name;
@@ -152,7 +152,7 @@ static bool compile_source(compiler_t* c, const char* source_code, ctx_t* ctx)
         if (is_error_sexpr(sexpr))
             goto fail;
 
-        bool ok = compile_sexpr(c, sexpr, ctx);
+        bool ok = compile_sexpr(c, sexpr, false, ctx);
         sexpr_free(&sexpr, &ctx->alloc);
         if (!ok)
             goto fail;
@@ -569,12 +569,12 @@ static bool bind_hashmap(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* see
     for (int64_t i = 0; i < n; i++) {
         sexpr_t key = pattern.cons.arr[1 + 2 * i];
         TRY(emit(c, ctx, OP_DUP, line));
-        TRY(compile_sexpr(c, key, ctx));
+        TRY(compile_sexpr(c, key, false, ctx));
         TRY(emit(c, ctx, OP_HAS_KEY, line));
         TRY(emit_assert(c, line, ctx));
 
         TRY(emit(c, ctx, OP_DUP, line));
-        TRY(compile_sexpr(c, key, ctx));
+        TRY(compile_sexpr(c, key, false, ctx));
         TRY(emit(c, ctx, OP_INDEX, line));
         TRY(bind_part(c, pattern.cons.arr[2 + 2 * i], seen, line, ctx));
     }
@@ -624,7 +624,7 @@ static bool bind_list(compiler_t* c, sexpr_t pattern, sv_vec_t(sv_str_t)* seen,
 static bool bind_literal(compiler_t* c, sexpr_t pattern, int64_t line, ctx_t* ctx)
 {
     TRY(emit(c, ctx, OP_DUP, line));
-    TRY(compile_sexpr(c, pattern, ctx));
+    TRY(compile_sexpr(c, pattern, false, ctx));
     TRY(emit(c, ctx, OP_EQUALS, line));
     return emit_assert(c, line, ctx);
 }
@@ -720,21 +720,21 @@ static bool compile_equal(compiler_t* c, const sexpr_t* args, int64_t n, int64_t
     if (args[0].tag == S_CONS || is_pattern_wildcard(args[0])
         || args[0].atom.kind != TOKEN_LITERAL
         || args[0].atom.literal.kind != LITERAL_IDENTIFIER) {
-        TRY(compile_sexpr(c, args[1], ctx));
+        TRY(compile_sexpr(c, args[1], false, ctx));
         return compile_destructure(c, args[0], line, ctx);
     }
 
     sv_str_t id;
     TRY(expect_id(args[0], ctx, &id));
-    TRY(compile_sexpr(c, args[1], ctx));
+    TRY(compile_sexpr(c, args[1], false, ctx));
     return add_var(c, id, line, ctx);
 }
 
-static bool compile_pipe(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+static bool compile_pipe(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, bool is_tail, ctx_t* ctx)
 {
     if (n != 2)
         return compiler_malformed(ctx, "pipe", line);
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
 
     sexpr_t rhs = args[1];
     if (rhs.tag != S_CONS || rhs.cons.size == 0)
@@ -743,9 +743,10 @@ static bool compile_pipe(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
     sv_str_t fn_name;
     TRY(expect_id(rhs.cons.arr[0], ctx, &fn_name));
     for (int64_t i = 1; i < rhs.cons.size; i++)
-        TRY(compile_sexpr(c, rhs.cons.arr[i], ctx));
+        TRY(compile_sexpr(c, rhs.cons.arr[i], false, ctx));
     TRY(compile_id(c, fn_name, line, ctx));
-    return emit_narrow(c, ctx, OP_CALL, rhs.cons.size, "arguments", line);
+    uint8_t op = is_tail ? OP_TAIL_CALL : OP_CALL;
+    return emit_narrow(c, ctx, op, rhs.cons.size, "arguments", line);
 }
 
 static bool record_field_id(compiler_t* c, sv_str_t name, int64_t line, ctx_t* ctx, uint32_t* out)
@@ -770,7 +771,7 @@ static bool compile_tuple(compiler_t* c, const sexpr_t* args, int64_t n, int64_t
         return compiler_malformed(ctx, "tuple", line);
 
     for (int64_t i = 0; i < n; i++)
-        TRY(compile_sexpr(c, args[i], ctx));
+        TRY(compile_sexpr(c, args[i], false, ctx));
     return emit2(c, ctx, OP_TUPLE, (uint8_t)n, line);
 }
 
@@ -806,13 +807,13 @@ static bool compile_record(compiler_t* c, const sexpr_t* args, int64_t n, int64_
 
     for (int64_t i = 0; i < n_fields; i++) {
         TRY(add_const(c, ctx, (value_t){ .kind = VALUE_NUMBER, .number = (double)fields[i].id }, line));
-        TRY(compile_sexpr(c, *fields[i].value, ctx));
+        TRY(compile_sexpr(c, *fields[i].value, false, ctx));
     }
     if (base == NULL)
         return emit2(c, ctx, OP_RECORD, (uint8_t)n_fields, line);
 
     // id_1 v_1 ... base => record_update n
-    TRY(compile_sexpr(c, *base, ctx));
+    TRY(compile_sexpr(c, *base, false, ctx));
     return emit2(c, ctx, OP_RECORD_UPDATE, (uint8_t)n_fields, line);
 }
 
@@ -826,7 +827,7 @@ static bool compile_dot(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     uint32_t id = 0;
     TRY(record_field_id(c, name, line, ctx, &id));
 
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
     return emit2(c, ctx, OP_RECORD_GET, (uint8_t)id, line);
 }
 
@@ -868,7 +869,7 @@ static bool compile_record_get_or_nil(compiler_t* c, const sexpr_t* args, int64_
     uint32_t id = 0;
     TRY(record_field_id(c, name, line, ctx, &id));
 
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
     return emit2(c, ctx, OP_RECORD_GET_OR_UNDEF, (uint8_t)id, line);
 }
 
@@ -877,8 +878,8 @@ static bool compile_hashmap_get_or_nil(compiler_t* c, const sexpr_t* args, int64
     if (n != 2)
         return compiler_malformed(ctx, "field access", line);
 
-    TRY(compile_sexpr(c, args[0], ctx));
-    TRY(compile_sexpr(c, args[1], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
+    TRY(compile_sexpr(c, args[1], false, ctx));
     return emit(c, ctx, OP_HASHMAP_GET_OR_UNDEF, line);
 }
 
@@ -887,7 +888,7 @@ static bool compile_length(compiler_t* c, const sexpr_t* args, int64_t n, int64_
     if (n != 1)
         return compiler_malformed(ctx, "length", line);
 
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
     return emit(c, ctx, OP_LENGTH, line);
 }
 
@@ -896,13 +897,13 @@ static bool compile_binary_op(compiler_t* c, uint8_t instruction, const char* wh
 {
     if (n != 2)
         return compiler_malformed(ctx, what, line);
-    TRY(compile_sexpr(c, args[0], ctx));
-    TRY(compile_sexpr(c, args[1], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
+    TRY(compile_sexpr(c, args[1], false, ctx));
     return emit(c, ctx, instruction, line);
 }
 
 static bool compile_operator(compiler_t* c, operator_kind op, const sexpr_t* args,
-                             int64_t n, int64_t line, ctx_t* ctx)
+                             int64_t n, int64_t line, bool is_tail, ctx_t* ctx)
 {
     uint8_t instruction = 0;
     switch (op) {
@@ -918,7 +919,7 @@ static bool compile_operator(compiler_t* c, operator_kind op, const sexpr_t* arg
         case OPERATOR_LESS: return compile_binary_op(c, OP_LESS, "comparison", args, n, line, ctx);
         case OPERATOR_LESS_EQUAL: return compile_binary_op(c, OP_LESS_EQUAL, "comparison", args, n, line, ctx);
         case OPERATOR_LEFT_BRACKET: return compile_binary_op(c, OP_INDEX, "index", args, n, line, ctx);
-        case OPERATOR_PIPE_FORWARD: return compile_pipe(c, args, n, line, ctx);
+        case OPERATOR_PIPE_FORWARD: return compile_pipe(c, args, n, line, is_tail, ctx);
         case OPERATOR_DOT: return compile_dot(c, args, n, line, ctx);
         case OPERATOR_DOUBLE_COLON: return compile_double_colon(c, args, n, line, ctx);
         case OPERATOR_LEFT_PAREN: {
@@ -929,27 +930,27 @@ static bool compile_operator(compiler_t* c, operator_kind op, const sexpr_t* arg
     }
 
     for (int64_t i = 0; i < n; i++)
-        TRY(compile_sexpr(c, args[i], ctx));
+        TRY(compile_sexpr(c, args[i], false, ctx));
     return emit(c, ctx, instruction, line);
 }
 
-static bool compile_if(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+static bool compile_if(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, bool is_tail, ctx_t* ctx)
 {
     if (n != 2 && n != 3)
         return compiler_malformed(ctx, "if", line);
 
     TRY(init_scope(c, ctx, line));
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
 
     int64_t j1 = 0;
     TRY(jump_emit(ctx, vmb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
-    TRY(compile_sexpr(c, args[1], ctx));
+    TRY(compile_sexpr(c, args[1], is_tail, ctx));
 
     int64_t j2 = 0;
     TRY(jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &j2, line));
     TRY(patch_jump(c, ctx, j1, line));
     if (n == 3)
-        TRY(compile_sexpr(c, args[2], ctx));
+        TRY(compile_sexpr(c, args[2], is_tail, ctx));
     else
         TRY(add_const(c, ctx, (value_t){ .kind = VALUE_NIL }, line));
 
@@ -965,7 +966,7 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     sv_str_t iter_name = sv_str_init(" list_iter ");
 
     TRY(init_scope(c, ctx, line));
-    TRY(compile_sexpr(c, binding[1], ctx));
+    TRY(compile_sexpr(c, binding[1], false, ctx));
     TRY(emit(c, ctx, OP_ITER_CREATE, line));
     TRY(emit(c, ctx, OP_SET_LOCAL, line));
     TRY(locals_add(c->locals, iter_name, ctx, line));
@@ -1003,7 +1004,7 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
         TRY(emit(c, ctx, OP_POP, line));
     }
 
-    TRY(compile_sexpr(c, args[1], ctx));
+    TRY(compile_sexpr(c, args[1], false, ctx));
 
     if (destructure)
         TRY(deinit_scope(c, ctx));
@@ -1039,7 +1040,7 @@ static bool compile_list(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
     for (int64_t i = 0; i < fixed; i++) {
         if (spread_of(&args[i], 1) != NULL)
             return compiler_malformed(ctx, "list spread", line);
-        TRY(compile_sexpr(c, args[i], ctx));
+        TRY(compile_sexpr(c, args[i], false, ctx));
     }
     if (tail == NULL) {
         TRY(check_limit(ctx, n, UINT32_MAX, "list elements", line));
@@ -1047,7 +1048,7 @@ static bool compile_list(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
     }
 
     // e_1 ... e_n tail => list_prepend n
-    TRY(compile_sexpr(c, *tail, ctx));
+    TRY(compile_sexpr(c, *tail, false, ctx));
     TRY(check_limit(ctx, fixed, UINT32_MAX, "list elements", line));
     return emit_wide(c, ctx, OP_LIST_PREPEND, (uint32_t)fixed, line);
 }
@@ -1064,12 +1065,12 @@ static bool compile_hashmap(compiler_t* c, const sexpr_t* args, int64_t n, int64
     TRY(check_limit(ctx, n_kvs / 2, UINT32_MAX, "hashmap entries", line));
 
     for (int64_t i = 0; i < n_kvs; i++)
-        TRY(compile_sexpr(c, args[i], ctx));
+        TRY(compile_sexpr(c, args[i], false, ctx));
     if (base == NULL)
         return emit_wide(c, ctx, OP_HASHMAP, (uint32_t)(n_kvs / 2), line);
 
     // k_1 v_1 ... base => hashmap_update n
-    TRY(compile_sexpr(c, *base, ctx));
+    TRY(compile_sexpr(c, *base, false, ctx));
     return emit_wide(c, ctx, OP_HASHMAP_UPDATE, (uint32_t)(n_kvs / 2), line);
 }
 
@@ -1077,7 +1078,7 @@ static bool compile_and_or(compiler_t* c, bool is_and, const sexpr_t* args, int6
 {
     if (n != 2)
         return compiler_malformed(ctx, is_and ? "and" : "or", line);
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
     TRY(emit(c, ctx, OP_DUP, line));
 
     int64_t j1 = 0;
@@ -1085,7 +1086,7 @@ static bool compile_and_or(compiler_t* c, bool is_and, const sexpr_t* args, int6
 
     if (is_and) {
         TRY(emit(c, ctx, OP_POP, line));
-        TRY(compile_sexpr(c, args[1], ctx));
+        TRY(compile_sexpr(c, args[1], false, ctx));
         return patch_jump(c, ctx, j1, line);
     }
 
@@ -1093,7 +1094,7 @@ static bool compile_and_or(compiler_t* c, bool is_and, const sexpr_t* args, int6
     TRY(jump_emit(ctx, vmb_add_jump(&c->builder, line, &ctx->alloc), &j2, line));
     TRY(patch_jump(c, ctx, j1, line));
     TRY(emit(c, ctx, OP_POP, line));
-    TRY(compile_sexpr(c, args[1], ctx));
+    TRY(compile_sexpr(c, args[1], false, ctx));
     return patch_jump(c, ctx, j2, line);
 }
 
@@ -1101,16 +1102,17 @@ static bool compile_not(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
 {
     if (n != 1)
         return compiler_malformed(ctx, "not", line);
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
     return emit(c, ctx, OP_NOT, line);
 }
 
-static bool compile_do(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+static bool compile_do(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, bool is_tail, ctx_t* ctx)
 {
     TRY(init_scope(c, ctx, line));
     for (int64_t i = 0; i < n; i++) {
-        TRY(compile_sexpr(c, args[i], ctx));
-        if (i < n - 1)
+        bool is_last = i == n - 1;
+        TRY(compile_sexpr(c, args[i], is_last && is_tail, ctx));
+        if (!is_last)
             TRY(emit(c, ctx, OP_POP, 0));
     }
     return deinit_scope(c, ctx);
@@ -1181,7 +1183,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
         FN_TRY(emit(&fc, ctx, OP_POP, line));
     }
 
-    FN_TRY(compile_sexpr(&fc, body, ctx));
+    FN_TRY(compile_sexpr(&fc, body, true, ctx));
     FN_TRY(vmb_add_byte(&fc.builder, OP_RETURN, 0, &ctx->alloc));
 #undef FN_TRY
 
@@ -1328,7 +1330,8 @@ static int64_t live_locals(const compiler_t* c)
  * instead. Each arm gets its own scope so A cannot add a local to the scope the
  * fail target was measured against.
  */
-static bool compile_fatbar(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+static bool compile_fatbar(compiler_t* c, const sexpr_t* args, int64_t n,
+                           int64_t line, bool is_tail, ctx_t* ctx)
 {
     if (n != 2)
         return compiler_malformed(ctx, "alternative", line);
@@ -1341,7 +1344,7 @@ static bool compile_fatbar(compiler_t* c, const sexpr_t* args, int64_t n, int64_
     c->fail_targets = &target;
 
     bool ok = init_scope(c, ctx, line)
-        && compile_sexpr(c, args[0], ctx)
+        && compile_sexpr(c, args[0], is_tail, ctx)
         && deinit_scope(c, ctx);
 
     int64_t over = 0;
@@ -1354,7 +1357,7 @@ static bool compile_fatbar(compiler_t* c, const sexpr_t* args, int64_t n, int64_
 
     return ok
         && init_scope(c, ctx, line)
-        && compile_sexpr(c, args[1], ctx)
+        && compile_sexpr(c, args[1], is_tail, ctx)
         && deinit_scope(c, ctx)
         && patch_jump(c, ctx, over, line);
 }
@@ -1393,13 +1396,13 @@ static bool compile_sized_test(compiler_t* c, sv_str_t name, const sexpr_t* args
 {
     bool tuple = is_form(name, "is-tuple?");
     if (n == 1 && !tuple) {
-        TRY(compile_sexpr(c, args[0], ctx));
+        TRY(compile_sexpr(c, args[0], false, ctx));
         return emit(c, ctx, OP_IS_RECORD_ANY, line);
     }
     if (n != 2 || args[1].tag != S_ATOM || args[1].atom.literal.kind != LITERAL_NUMBER)
         return compiler_malformed(ctx, tuple ? "is-tuple?" : "is-record?", line);
 
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
     return emit_narrow(c, ctx, tuple ? OP_IS_TUPLE : OP_IS_RECORD,
                        (int64_t)args[1].atom.literal.number,
                        tuple ? "tuple elements" : "record fields", line);
@@ -1419,7 +1422,7 @@ static bool compile_has_field(compiler_t* c, const sexpr_t* args, int64_t n, int
     uint32_t id = 0;
     TRY(record_field_id(c, name, line, ctx, &id));
 
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
     return emit2(c, ctx, OP_HAS_FIELD, (uint8_t)id, line);
 }
 
@@ -1437,7 +1440,7 @@ static bool compile_uncons(compiler_t* c, const sexpr_t* args, int64_t n, int64_
     TRY(expect_id(args[1], ctx, &head));
     TRY(expect_id(args[2], ctx, &tail));
 
-    TRY(compile_sexpr(c, args[0], ctx));
+    TRY(compile_sexpr(c, args[0], false, ctx));
     TRY(emit(c, ctx, OP_LIST_UNCONS, line));
 
     if (c->locals) {
@@ -1469,7 +1472,7 @@ static bool compile_internal(compiler_t* c, sv_str_t name, const sexpr_t* args, 
             continue;
         if (n != 1)
             return compiler_malformed(ctx, TYPE_TESTS[i].name, line);
-        TRY(compile_sexpr(c, args[0], ctx));
+        TRY(compile_sexpr(c, args[0], false, ctx));
         return emit(c, ctx, TYPE_TESTS[i].op, line);
     }
 
@@ -1480,18 +1483,18 @@ static bool compile_internal(compiler_t* c, sv_str_t name, const sexpr_t* args, 
     if (is_form(name, "match-fail")) {
         if (n != 1)
             return compiler_malformed(ctx, "match-fail", line);
-        TRY(compile_sexpr(c, args[0], ctx));
+        TRY(compile_sexpr(c, args[0], false, ctx));
         return emit(c, ctx, OP_NO_MATCH, line);
     }
     if (is_form(name, "is-hashmap?") && n == 1) {
-        TRY(compile_sexpr(c, args[0], ctx));
+        TRY(compile_sexpr(c, args[0], false, ctx));
         return emit(c, ctx, OP_IS_HASHMAP_ANY, line);
     }
     if (is_form(name, "is-hashmap?") || is_form(name, "has-key?")) {
         if (n != 2)
             return compiler_malformed(ctx, "keyed test", line);
-        TRY(compile_sexpr(c, args[is_form(name, "has-key?") ? 0 : 1], ctx));
-        TRY(compile_sexpr(c, args[is_form(name, "has-key?") ? 1 : 0], ctx));
+        TRY(compile_sexpr(c, args[is_form(name, "has-key?") ? 0 : 1], false, ctx));
+        TRY(compile_sexpr(c, args[is_form(name, "has-key?") ? 1 : 0], false, ctx));
         return emit(c, ctx, is_form(name, "has-key?") ? OP_HAS_KEY : OP_IS_HASHMAP, line);
     }
     if (is_form(name, "list-uncons"))
@@ -1501,12 +1504,14 @@ static bool compile_internal(compiler_t* c, sv_str_t name, const sexpr_t* args, 
     return true;
 }
 
-static bool compile_call(compiler_t* c, sv_str_t fn_name, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+static bool compile_call(compiler_t* c, sv_str_t fn_name, const sexpr_t* args, int64_t n,
+                         int64_t line, bool is_tail, ctx_t* ctx)
 {
     for (int64_t i = 0; i < n; i++)
-        TRY(compile_sexpr(c, args[i], ctx));
+        TRY(compile_sexpr(c, args[i], false, ctx));
     TRY(compile_id(c, fn_name, line, ctx));
-    return emit_narrow(c, ctx, OP_CALL, n, "arguments", line);
+    uint8_t op = is_tail ? OP_TAIL_CALL : OP_CALL;
+    return emit_narrow(c, ctx, op, n, "arguments", line);
 }
 
 static bool compile_literal(compiler_t* c, literal_t lit, int64_t line, ctx_t* ctx)
@@ -1621,7 +1626,7 @@ error_oom:
 #undef CLEANUP
 }
 
-static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* ctx)
+static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, bool is_tail, ctx_t* ctx)
 {
     if (n == 0)
         return true;
@@ -1629,17 +1634,18 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
     sexpr_t head = cons[0];
     if (head.tag == S_CONS) {
         for (int64_t i = 1; i < n; i++)
-            TRY(compile_sexpr(c, cons[i], ctx));
-        TRY(compile_cons(c, head.cons.arr, head.cons.size, ctx));
-        return emit_narrow(c, ctx, OP_CALL, n - 1, "arguments", 0);
+            TRY(compile_sexpr(c, cons[i], false, ctx));
+        TRY(compile_cons(c, head.cons.arr, head.cons.size, false, ctx));
+        uint8_t op = is_tail ? OP_TAIL_CALL : OP_CALL;
+        return emit_narrow(c, ctx, op, n - 1, "arguments", 0);
     }
 
     token_t a = head.atom;
     if (a.kind == TOKEN_OPERATOR)
-        return compile_operator(c, a.operator, cons + 1, n - 1, a.line, ctx);
+        return compile_operator(c, a.operator, cons + 1, n - 1, a.line, is_tail, ctx);
     if (a.kind == TOKEN_SP_FUNCTION) {
         switch (a.fn) {
-            case FN_IF: return compile_if(c, cons + 1, n - 1, a.line, ctx);
+            case FN_IF: return compile_if(c, cons + 1, n - 1, a.line, is_tail, ctx);
             case FN_FOR: return compile_for(c, cons + 1, n - 1, a.line, ctx);
             case FN_LIST: return compile_list(c, cons + 1, n - 1, a.line, ctx);
             case FN_HASHMAP: return compile_hashmap(c, cons + 1, n - 1, a.line, ctx);
@@ -1663,19 +1669,19 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
         }
     }
     if (a.kind == TOKEN_KEYWORD && a.keyword == KEYWORD_DO)
-        return compile_do(c, cons + 1, n - 1, a.line, ctx);
+        return compile_do(c, cons + 1, n - 1, a.line, is_tail, ctx);
     if (a.kind == TOKEN_KEYWORD && (a.keyword == KEYWORD_AND || a.keyword == KEYWORD_OR))
         return compile_and_or(c, a.keyword == KEYWORD_AND, cons + 1, n - 1, a.line, ctx);
     if (a.kind == TOKEN_KEYWORD && a.keyword == KEYWORD_NOT)
         return compile_not(c, cons + 1, n - 1, a.line, ctx);
     if (a.kind == TOKEN_PIPE)
-        return compile_fatbar(c, cons + 1, n - 1, a.line, ctx);
+        return compile_fatbar(c, cons + 1, n - 1, a.line, is_tail, ctx);
     if (a.kind == TOKEN_LITERAL && a.literal.kind == LITERAL_IDENTIFIER) {
         bool handled = false;
         TRY(compile_internal(c, a.literal.literal, cons + 1, n - 1, a.line, ctx, &handled));
         if (handled)
             return true;
-        return compile_call(c, a.literal.literal, cons + 1, n - 1, a.line, ctx);
+        return compile_call(c, a.literal.literal, cons + 1, n - 1, a.line, is_tail, ctx);
     }
 
     char msg[96];
@@ -1683,7 +1689,7 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, ctx_t* c
     return compiler_error(ctx, C_ERR_NOT_CALLABLE, msg);
 }
 
-bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx)
+bool compile_sexpr(compiler_t* c, sexpr_t sexpr, bool is_tail, ctx_t* ctx)
 {
     if (sexpr.tag == S_ATOM)
         return compile_atom(c, sexpr.atom, ctx);
@@ -1698,13 +1704,13 @@ bool compile_sexpr(compiler_t* c, sexpr_t sexpr, ctx_t* ctx)
                 sv_arena_deinit(&arena);
                 return false;
             }
-            bool ret = compile_sexpr(c, lower_match, ctx);
+            bool ret = compile_sexpr(c, lower_match, is_tail, ctx);
             sv_arena_deinit(&arena);
             return ret;
         }
     }
 
-    return compile_cons(c, sexpr.cons.arr, sexpr.cons.size, ctx);
+    return compile_cons(c, sexpr.cons.arr, sexpr.cons.size, is_tail, ctx);
 }
 
 bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)

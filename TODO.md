@@ -5,13 +5,13 @@
 ✅ Modules
 ✅ Hashmap iterator
 ✅ Comments
-String escapes
 ✅ Wide Operands
-Call Frames
-Tail Recursion
+✅ Call Frames
+✅ Tail Recursion
 Embedding API
     - Global Names on VM;
     - Call Closure from C;
 STDLib
+String escapes
 Map, mapf, reduce
 Line Table on VM

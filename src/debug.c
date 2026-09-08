@@ -34,6 +34,7 @@ static const char* op_name(vm_instructions op)
         case OP_LESS: return "less";
         case OP_LESS_EQUAL: return "less_equal";
         case OP_CALL: return "call";
+        case OP_TAIL_CALL: return "tail_call";
         case OP_LOAD_CLOSURE: return "load_closure";
         case OP_CREATE_GROUP: return "create_group";
         case OP_GET_MEMBER: return "get_member";
@@ -181,6 +182,7 @@ void print_chunk(vm_t v)
                 printf("%" PRId64 " [ %s ] index %" PRIu32 "\n", i, op_name(op), read_operand(p, width));
                 i += 1 + width;
                 break;
+            case OP_TAIL_CALL:
             case OP_CALL:
                 if (truncated(i, op, left, width))
                     return;
