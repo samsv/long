@@ -29,13 +29,6 @@ static bool value_is_truthy(value_t v)
     return true;
 }
 
-static int64_t vm_get_offset(const fn_t* fn, int64_t i)
-{
-    int64_t low = fn->chunk.bytecode.arr[i];
-    int64_t high = fn->chunk.bytecode.arr[i + 1];
-    return low + (high << 8);
-}
-
 static error_t vm_oom_err(const char* msg)
 {
     return (error_t){ .error_code = VM_ERR_OOM, .msg = sv_str_init(msg) };
@@ -102,16 +95,16 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
 #define TRY_NOT_NULL(v, err_msg) TRY_OR((v) != NULL, (void)0, err_msg)
 
-#define LINE() (frame->fn->chunk.lines.arr[frame->ip - 1])
+#define LINE() (frame->fn->chunk.lines.arr[(ip - code) - 1])
 
 #define TRY_PUSH(arr, v)                                                                                      \
     sv_vec_push(&(arr), v, &success, a);                                                                      \
     TRY_OR(success, (void)0, "OOM when appending to vector")
 
-#define TRY_PUSH_STACK(v) TRY_PUSH(vm->stack, v)
+#define TRY_PUSH_STACK(v) TRY_PUSH(stack, v)
 
 #define TRY_PUSH_OWNED(v)                                                                                     \
-    sv_vec_push(&vm->stack, v, &success, a);                                                                  \
+    sv_vec_push(&stack, v, &success, a);                                                                      \
     TRY_OR(success, value_free(&v, a), "OOM when appending to vector")
 
 #define OP_ERR_1(code, v, err_msg) do {                                                                       \
@@ -129,7 +122,11 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
 #define UNSUPPORTED_1(v, err_msg) OP_ERR_1(VM_ERR_OP_UNSUPPORTED_ARGS, v, err_msg)
 
-#define READ_BYTE() (frame->fn->chunk.bytecode.arr[frame->ip++])
+#define READ_BYTE() (*ip++)
+
+#define OFFSET() ((int64_t)ip[0] | ((int64_t)ip[1] << 8))
+
+#define LOAD_CODE() (code = frame->fn->chunk.bytecode.arr, ip = code + frame->ip)
 
 #define READ_NARROW(name) do { name = READ_BYTE(); } while (0)
 
@@ -140,7 +137,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 } while (0)
 
 #define SET(arr) {                                                                                            \
-    value_t v = sv_vec_pop(vm->stack);                                                                        \
+    value_t v = sv_vec_pop(stack);                                                                            \
     TRY_PUSH(arr, v);                                                                                         \
     break; }
 
@@ -167,7 +164,7 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 #define UNSUPPORTED_2(v1, v2, err_msg) OP_ERR_2(VM_ERR_OP_UNSUPPORTED_ARGS, v1, v2, err_msg)
 
 #define IS_KIND(test) {                                                                                       \
-    value_t v = sv_vec_pop(vm->stack);                                                                        \
+    value_t v = sv_vec_pop(stack);                                                                            \
     value_t res = { .kind = VALUE_BOOL, .boolean = (test) };                                                  \
     value_free(&v, a);                                                                                        \
     TRY_PUSH_STACK(res);                                                                                      \
@@ -175,15 +172,15 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 
 #define IS_SIZED(is, as, field) {                                                                             \
     uint8_t want = READ_BYTE();                                                                               \
-    value_t v = sv_vec_pop(vm->stack);                                                                        \
+    value_t v = sv_vec_pop(stack);                                                                            \
     value_t res = { .kind = VALUE_BOOL, .boolean = is(v) && as(v).field == want };                            \
     value_free(&v, a);                                                                                        \
     TRY_PUSH_STACK(res);                                                                                      \
     break; }
 
 #define NUM_BIN_OP(op, res_kind, res_field) {                                                                 \
-    value_t v2 = sv_vec_pop(vm->stack);                                                                       \
-    value_t v1 = sv_vec_pop(vm->stack);                                                                       \
+    value_t v2 = sv_vec_pop(stack);                                                                           \
+    value_t v1 = sv_vec_pop(stack);                                                                           \
     if (!IS_NUMBER(v1) || !IS_NUMBER(v2))                                                                     \
         UNSUPPORTED_2(v1, v2, "Unsupported args for " #op)                                                    \
     value_t res = {.kind = res_kind, .res_field = v1.number op v2.number};                                    \
@@ -194,8 +191,8 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
 #define CMP_OP(op) NUM_BIN_OP(op, VALUE_BOOL, boolean)
 
 #define EQUALS(want) {                                                                                        \
-    value_t v2 = sv_vec_pop(vm->stack);                                                                       \
-    value_t v1 = sv_vec_pop(vm->stack);                                                                       \
+    value_t v2 = sv_vec_pop(stack);                                                                           \
+    value_t v1 = sv_vec_pop(stack);                                                                           \
     value_t res = {.kind = VALUE_BOOL, .boolean = value_eql(v1, v2) == want};                                 \
     value_free(&v1, a);                                                                                       \
     value_free(&v2, a);                                                                                       \
@@ -206,8 +203,15 @@ break; }
     int success = 0;
     uint8_t arg_bytes = 1;
 
-    TRY_PUSH(vm->call_frames, init_frame(&vm->fn, 0, 0, sv_vec_init(value_t), (sv_rc_t(closure_group_t)){0}));
+    value_arr stack = vm->stack;
+
+    TRY_PUSH(vm->call_frames,
+             init_frame(&vm->fn, 0, 0, sv_vec_init(value_t), (sv_rc_t(closure_group_t)){0})
+    );
     call_frame_t* frame = &sv_vec_last(vm->call_frames);
+
+    const uint8_t* code = frame->fn->chunk.bytecode.arr;
+    const uint8_t* ip = code + frame->ip;
 
     while (1) switch (READ_BYTE()) {
         case OP_SET_LOCAL: SET(vm->locals)
@@ -225,15 +229,15 @@ break; }
         case OP_GREATER_EQUAL: CMP_OP(>=)
         case OP_LESS: CMP_OP(<)
         case OP_LESS_EQUAL: CMP_OP(<=)
-        case OP_JUMP: frame->ip += vm_get_offset(frame->fn, frame->ip); break;
-        case OP_JUMP_BACK: frame->ip -= vm_get_offset(frame->fn, frame->ip); break;
+        case OP_JUMP: ip += OFFSET(); break;
+        case OP_JUMP_BACK: ip -= OFFSET(); break;
         case OP_JUMP_IF_FALSE: {
-            value_t v = sv_vec_pop(vm->stack);
-            frame->ip = value_is_truthy(v) ? frame->ip + 2 : frame->ip + vm_get_offset(frame->fn, frame->ip);
+            value_t v = sv_vec_pop(stack);
+            ip = value_is_truthy(v) ? ip + 2 : ip + OFFSET();
             value_free(&v, a);
             break;
         }
-        case OP_POP: arr_remove(&vm->stack, a); break;
+        case OP_POP: arr_remove(&stack, a); break;
         case OP_POP_LOCAL: {
             uint32_t n = 0;
             READ_ARG(n);
@@ -241,7 +245,7 @@ break; }
             break;
         }
         case OP_NEGATE: {
-            value_t v = sv_vec_pop(vm->stack);
+            value_t v = sv_vec_pop(stack);
             if (!IS_NUMBER(v))
                 UNSUPPORTED_1(v, "Unsupported args for negate");
             value_t res = {.kind = VALUE_NUMBER, .number = -v.number};
@@ -252,9 +256,9 @@ break; }
 #define VALUE_FROM_ARR(mult, init_fn, n_type, read) {                                                         \
             n_type n = 0;                                                                                     \
             read(n);                                                                                          \
-            value_t arr = init_fn(&vm->stack.arr[vm->stack.size - (mult) * n], n, a);                         \
+            value_t arr = init_fn(&stack.arr[stack.size - (mult) * n], n, a);                                 \
             TRY_NOT_NULL(arr.obj.cell, "OOM when creating collection");                                       \
-            arr_remove_n(&vm->stack, (mult) * n, a);                                                          \
+            arr_remove_n(&stack, (mult) * n, a);                                                              \
             TRY_PUSH_OWNED(arr);                                                                              \
             break; }
 
@@ -264,12 +268,12 @@ break; }
         case OP_TUPLE: VALUE_FROM_ARR(1, value_init_tuple, uint8_t, READ_NARROW);
         case OP_RECORD_UPDATE: {
             uint8_t n = READ_BYTE();
-            value_t base = sv_vec_pop(vm->stack);
+            value_t base = sv_vec_pop(stack);
             if (!IS_RECORD(base))
                 UNSUPPORTED_1(base, "Record update needs a record");
 
             int64_t missing = -1;
-            record_t updated = record_update(AS_RECORD(base), &vm->stack.arr[vm->stack.size - 2 * n],
+            record_t updated = record_update(AS_RECORD(base), &stack.arr[stack.size - 2 * n],
                                              n, &missing, a);
             if (missing >= 0) {
                 value_t id = { .kind = VALUE_NUMBER, .number = (double)missing };
@@ -280,7 +284,7 @@ break; }
             TRY_OR(out.obj.cell != NULL, record_deinit(&updated, a); value_free(&base, a),
                    "OOM when updating a record");
 
-            arr_remove_n(&vm->stack, 2 * n, a);
+            arr_remove_n(&stack, 2 * n, a);
             value_free(&base, a);
             TRY_PUSH_OWNED(out);
             break;
@@ -288,14 +292,14 @@ break; }
         case OP_HASHMAP_UPDATE: {
             uint32_t n = 0;
             READ_ARG(n);
-            value_t base = sv_vec_pop(vm->stack);
+            value_t base = sv_vec_pop(stack);
             if (!IS_MAP(base))
                 UNSUPPORTED_1(base, "Hashmap update needs a hashmap");
 
             // map_put borrows the map and the pair, the stack keeps owning them
             hashmap_t cur = sv_rc_borrow(AS_MAP(base));
             value_free(&base, a);
-            const value_t* kvs = &vm->stack.arr[vm->stack.size - 2 * n];
+            const value_t* kvs = &stack.arr[stack.size - 2 * n];
             for (uint32_t i = 0; i < n; i++) {
                 hashmap_t next = map_put(cur, (kv_t){ .key = kvs[2 * i], .value = kvs[2 * i + 1] }, a);
                 map_deinit(&cur, a);
@@ -305,31 +309,31 @@ break; }
             value_t out = value_wrap_map(cur, a);
             TRY_OR(out.obj.cell != NULL, map_deinit(&cur, a), "OOM when updating a hashmap");
 
-            arr_remove_n(&vm->stack, 2 * n, a);
+            arr_remove_n(&stack, 2 * n, a);
             TRY_PUSH_OWNED(out);
             break;
         }
         case OP_LIST_PREPEND: {
             uint32_t n = 0;
             READ_ARG(n);
-            value_t tail = sv_vec_pop(vm->stack);
+            value_t tail = sv_vec_pop(stack);
             if (!IS_LIST(tail))
                 UNSUPPORTED_1(tail, "Spread into a list needs a list");
 
-            list_t list = ll_prepend_arr(AS_LIST(tail), &vm->stack.arr[vm->stack.size - n], n, a);
+            list_t list = ll_prepend_arr(AS_LIST(tail), &stack.arr[stack.size - n], n, a);
             TRY_OR(list.cell != NULL, value_free(&tail, a), "OOM when building a list");
             value_t out = value_wrap_list(list, a);
             TRY_OR(out.obj.cell != NULL, ll_deinit(&list, a); value_free(&tail, a),
                    "OOM when building a list");
 
-            arr_remove_n(&vm->stack, n, a);
+            arr_remove_n(&stack, n, a);
             value_free(&tail, a);
             TRY_PUSH_OWNED(out);
             break;
         }
         case OP_ADD: {
-            value_t v2 = sv_vec_pop(vm->stack);
-            value_t v1 = sv_vec_pop(vm->stack);
+            value_t v2 = sv_vec_pop(stack);
+            value_t v1 = sv_vec_pop(stack);
             if (IS_NUMBER(v1) && IS_NUMBER(v2)) {
                 value_t res = {.kind = VALUE_NUMBER, .number = v1.number + v2.number};
                 TRY_PUSH_STACK(res);
@@ -350,27 +354,27 @@ break; }
             UNSUPPORTED_2(v1, v2, "Unsupported args for +")
         }
         case OP_NOT: {
-            value_t v = sv_vec_pop(vm->stack);
+            value_t v = sv_vec_pop(stack);
             value_t res = {.kind = VALUE_BOOL, .boolean = !value_is_truthy(v)};
             value_free(&v, a);
             TRY_PUSH_STACK(res);
             break;
         }
         case OP_SWAP: {
-            value_t top = sv_vec_pop(vm->stack);
-            value_t under = sv_vec_pop(vm->stack);
+            value_t top = sv_vec_pop(stack);
+            value_t under = sv_vec_pop(stack);
             TRY_PUSH_OWNED(top);
             TRY_PUSH_OWNED(under);
             break;
         }
         case OP_DUP: {
-            value_t top = value_borrow(sv_vec_last(vm->stack));
+            value_t top = value_borrow(sv_vec_last(stack));
             TRY_PUSH_STACK(top);
             break;
         }
         case OP_INDEX: {
-            value_t key = sv_vec_pop(vm->stack);
-            value_t container = sv_vec_pop(vm->stack);
+            value_t key = sv_vec_pop(stack);
+            value_t container = sv_vec_pop(stack);
             if (!IS_MAP(container) && !IS_LIST(container) && !IS_TUPLE(container))
                 UNSUPPORTED_2(container, key, "Type is not indexable")
 
@@ -394,8 +398,8 @@ break; }
             break;
         }
         case OP_HASHMAP_GET_OR_UNDEF: {
-            value_t key = sv_vec_pop(vm->stack);
-            value_t container = sv_vec_pop(vm->stack);
+            value_t key = sv_vec_pop(stack);
+            value_t container = sv_vec_pop(stack);
             if (!IS_MAP(container))
                 UNSUPPORTED_2(container, key, "Type is not indexable")
 
@@ -410,7 +414,7 @@ break; }
             break;
         }
 #define RECORD_GET(...) do {                                                                                  \
-    value_t maybe_tuple = sv_vec_pop(vm->stack);                                                              \
+    value_t maybe_tuple = sv_vec_pop(stack);                                                                  \
     uint8_t id = READ_BYTE();                                                                                 \
     if (!IS_RECORD(maybe_tuple))                                                                              \
         UNSUPPORTED_1(maybe_tuple, "Type is not subscriptable");                                              \
@@ -434,7 +438,7 @@ break; }
             break;
 #undef RECORD_GET
         case OP_LENGTH: {
-            value_t val = sv_vec_pop(vm->stack);
+            value_t val = sv_vec_pop(stack);
             value_t ret = { .kind = VALUE_NUMBER };
             if (IS_RECORD(val))
                 ret.number = AS_RECORD(val).size;
@@ -451,7 +455,7 @@ break; }
             break;
         }
         case OP_ITER_CREATE: {
-            value_t v = sv_vec_pop(vm->stack);
+            value_t v = sv_vec_pop(stack);
             if (!IS_LIST(v) && !IS_STR(v) && !IS_MAP(v))
                 UNSUPPORTED_1(v, "Type is not iterable");
             value_t iter = value_init_iter(v, a);
@@ -461,7 +465,7 @@ break; }
             break;
         }
         case OP_ITER_NEXT: {
-            value_t v = sv_vec_pop(vm->stack);
+            value_t v = sv_vec_pop(stack);
             if (!IS_ITER(v))
                 UNSUPPORTED_1(v, "Type is not an iterator");
             value_t res = iter_next(&AS_ITER(v), a);
@@ -477,11 +481,11 @@ break; }
             uint8_t n_cls = READ_BYTE();
             value_t cls = value_init_closure(
                 &frame->fn->chunk.functions.arr[i],
-                &vm->stack.arr[vm->stack.size - n_cls],
+                &stack.arr[stack.size - n_cls],
                 n_cls,
                 a);
             TRY_NOT_NULL(cls.obj.cell, "OOM when creating closure");
-            arr_remove_n(&vm->stack, n_cls, a);
+            arr_remove_n(&stack, n_cls, a);
             TRY_PUSH_OWNED(cls);
             break;
         }
@@ -491,7 +495,7 @@ break; }
             uint8_t n_members = READ_BYTE();
             uint8_t n_upvalues = READ_BYTE();
 
-            sv_vec_grow_cap(&vm->stack, vm->stack.size + n_members, &success, a);
+            sv_vec_grow_cap(&stack, stack.size + n_members, &success, a);
             TRY_OR(success, (void)0, "OOM when creating closure group")
 
             closure_group_t g = {
@@ -508,17 +512,17 @@ break; }
                 TRY_NOT_NULL(g.upvalues.arr, "OOM when creating closure group");
                 g.upvalues.size = n_upvalues;
                 for (int64_t i = 0; i < n_upvalues; i++)
-                    g.upvalues.arr[i] = value_borrow(vm->stack.arr[vm->stack.size - n_upvalues + i]);
+                    g.upvalues.arr[i] = value_borrow(stack.arr[stack.size - n_upvalues + i]);
             }
 
             sv_rc_t(closure_group_t) group = sv_rc_init(closure_group_t, g, clsg_deinit, a);
             TRY_OR(group.cell != NULL, clsg_deinit(&g, a), "OOM when creating closure group")
-            arr_remove_n(&vm->stack, n_upvalues, a);
+            arr_remove_n(&stack, n_upvalues, a);
 
             for (int64_t i = n_members - 1; i >= 0; i--) {
                 value_t member = value_init_closure_member(sv_rc_borrow(group), i, a);
                 TRY_OR(member.obj.cell != NULL, sv_rc_deinit(&group, a), "OOM when creating closure member")
-                vm->stack.arr[vm->stack.size++] = member;
+                stack.arr[stack.size++] = member;
             }
             sv_rc_deinit(&group, a);
             break;
@@ -553,11 +557,11 @@ break; }
     goto error; } while (0)
 
 #define LOAD_FN()                                                                                             \
-    value_t value = sv_vec_pop(vm->stack);                                                                    \
+    value_t value = sv_vec_pop(stack);                                                                        \
     uint8_t arg_count = READ_BYTE();                                                                          \
     if (!IS_CLOSURE(value) && !IS_NATIVE(value) && !IS_CLOSURE_MEMBER(value))                                 \
         UNSUPPORTED_1(value, "Type is not callable");                                                         \
-    const value_t* args = &vm->stack.arr[vm->stack.size - arg_count];                                         \
+    const value_t* args = &stack.arr[stack.size - arg_count];                                                 \
     if (IS_NATIVE(value)) {                                                                                   \
         CALL_NATIVE(value);                                                                                   \
         break;                                                                                                \
@@ -575,7 +579,7 @@ break; }
         value_free(&value, a);                                                                                \
         goto error;                                                                                           \
     }                                                                                                         \
-    arr_remove_n(&vm->stack, arg_count, a);                                                                   \
+    arr_remove_n(&stack, arg_count, a);                                                                       \
     value_free(&value, a);                                                                                    \
     TRY_PUSH_OWNED(ret);                                                                                      \
 } while (0)
@@ -605,7 +609,7 @@ break; }
     if (arg_count > 0) {                                                                                      \
         sv_vec_push_many(&vm->locals, args, arg_count, &success, a);                                          \
         TRY_OR(success, value_free(&value, a), "OOM when passing arguments");                                 \
-        vm->stack.size -= arg_count;                                                                          \
+        stack.size -= arg_count;                                                                              \
     }                                                                                                         \
     sv_vec_push(&vm->locals, value, &success, a);                                                             \
     TRY_OR(success, value_free(&value, a), "OOM when passing arguments");                                     \
@@ -629,8 +633,10 @@ break; }
             // self slot, which keeps its upvalues and group alive for the frame.
             LOAD_ARGS(locals_offset);
 
-            TRY_PUSH(vm->call_frames, init_frame(fn, locals_offset, vm->stack.size, upvalues, group));
+            frame->ip = ip - code;
+            TRY_PUSH(vm->call_frames, init_frame(fn, locals_offset, stack.size, upvalues, group));
             frame = &sv_vec_last(vm->call_frames);
+            LOAD_CODE();
             break;
         }
         case OP_TAIL_CALL: {
@@ -641,10 +647,11 @@ break; }
             arr_remove_n(&vm->locals, vm->locals.size - frame->locals_offset, a);
             LOAD_ARGS(locals_offset);
             // now free stack
-            arr_remove_n(&vm->stack, vm->stack.size - frame->stack_offset, a);
+            arr_remove_n(&stack, stack.size - frame->stack_offset, a);
 
-            sv_vec_last(vm->call_frames) = init_frame(fn, locals_offset, vm->stack.size, upvalues, group);
+            sv_vec_last(vm->call_frames) = init_frame(fn, locals_offset, stack.size, upvalues, group);
             frame = &sv_vec_last(vm->call_frames);
+            LOAD_CODE();
             break;
 #undef ERR_WRONG_ARITY
 #undef LOAD_ARGS
@@ -663,8 +670,8 @@ break; }
         case OP_IS_TUPLE: IS_SIZED(IS_TUPLE, AS_TUPLE, size)
         case OP_IS_RECORD: IS_SIZED(IS_RECORD, AS_RECORD, size)
         case OP_IS_HASHMAP: {
-            value_t v = sv_vec_pop(vm->stack);
-            value_t want = sv_vec_pop(vm->stack);
+            value_t v = sv_vec_pop(stack);
+            value_t want = sv_vec_pop(stack);
             value_t res = { .kind = VALUE_BOOL,
                             .boolean = IS_MAP(v) && (double)map_count(AS_MAP(v)) == want.number };
             value_free(&v, a);
@@ -673,14 +680,14 @@ break; }
             break;
         }
         case OP_IS_HASHMAP_ANY: {
-            value_t v = sv_vec_pop(vm->stack);
+            value_t v = sv_vec_pop(stack);
             value_t res = { .kind = VALUE_BOOL, .boolean = IS_MAP(v) };
             value_free(&v, a);
             TRY_PUSH_STACK(res);
             break;
         }
         case OP_HAS_FIELD: {
-            value_t v = sv_vec_pop(vm->stack);
+            value_t v = sv_vec_pop(stack);
             uint8_t id = READ_BYTE();
             value_t res = { .kind = VALUE_BOOL,
                             .boolean = IS_RECORD(v) && record_get(AS_RECORD(v), id).is_some };
@@ -689,8 +696,8 @@ break; }
             break;
         }
         case OP_HAS_KEY: {
-            value_t key = sv_vec_pop(vm->stack);
-            value_t v = sv_vec_pop(vm->stack);
+            value_t key = sv_vec_pop(stack);
+            value_t v = sv_vec_pop(stack);
             value_t res = { .kind = VALUE_BOOL,
                             .boolean = IS_MAP(v) && map_get(AS_MAP(v), key).is_some };
             value_free(&key, a);
@@ -699,7 +706,7 @@ break; }
             break;
         }
         case OP_LIST_UNCONS: {
-            value_t v = sv_vec_last(vm->stack);
+            value_t v = sv_vec_last(stack);
             if (!IS_CONS(v))
                 UNSUPPORTED_1(v, "Cannot take the head of an empty list");
 
@@ -715,17 +722,17 @@ break; }
             break;
         }
         case OP_ASSERT_MATCH: {
-            value_t test = sv_vec_pop(vm->stack);
+            value_t test = sv_vec_pop(stack);
             bool passed = IS_BOOL(test) && test.boolean;
             value_free(&test, a);
             if (passed)
                 break;
 
-            value_t subject = value_borrow(sv_vec_last(vm->stack));
+            value_t subject = value_borrow(sv_vec_last(stack));
             OP_ERR_1(VM_ERR_MATCH_FAILED, subject, "Value does not match the pattern");
         }
         case OP_NO_MATCH: {
-            value_t subject = value_borrow(sv_vec_last(vm->stack));
+            value_t subject = value_borrow(sv_vec_last(stack));
             OP_ERR_1(VM_ERR_NO_CLAUSE, subject, "No clause matched");
         }
         case OP_EXTENDED_ARG:
@@ -733,14 +740,16 @@ break; }
             break;
         case OP_RETURN: {
             if (vm->call_frames.size == 1) {
+                vm->stack = stack;
                 vm->call_frames.size = 0;
                 return sv_opt_none_t(error_t);
             }
-            value_t res = sv_vec_pop(vm->stack);
-            arr_remove_n(&vm->stack, vm->stack.size - frame->stack_offset, a);
+            value_t res = sv_vec_pop(stack);
+            arr_remove_n(&stack, stack.size - frame->stack_offset, a);
             arr_remove_n(&vm->locals, vm->locals.size - frame->locals_offset, a);
             vm->call_frames.size--;
             frame = &sv_vec_last(vm->call_frames);
+            LOAD_CODE();
             TRY_PUSH_OWNED(res);
             break;
         }
@@ -749,7 +758,7 @@ break; }
             if (instruction_err_payload != NULL)
                 *instruction_err_payload = (vm_instruction_err){
                     .vm_err = { .line = LINE() },
-                    .instruction = frame->fn->chunk.bytecode.arr[frame->ip - 1],
+                    .instruction = ip[-1],
                 };
             err = (error_t){ .error_code = VM_ERR_NOT_IMPLEMENTED,
                              .payload = instruction_err_payload,
@@ -761,6 +770,7 @@ break; }
     return sv_opt_none_t(error_t);
 
 error:
+    vm->stack = stack;
     vm->call_frames.size = 0;
     return sv_opt_some_t(error_t, err);
 
@@ -781,4 +791,6 @@ error:
 #undef TRY_NOT_NULL
 #undef UNSUPPORTED_1
 #undef LINE
+#undef OFFSET
+#undef LOAD_CODE
 }

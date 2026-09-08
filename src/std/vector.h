@@ -47,6 +47,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "allocator.h"
 
 #ifndef VEC_DEFAULT_CAP
@@ -109,28 +110,34 @@
  * Inserts the given data at then end of the vector.
  */
 #define sv_vec_push(vec, data, success, allocator) do {                                                       \
-    int* vec_var_line(_vec_success) = (success);                                                              \
-    char* vec_var_line(res) = sv_vec_allocate_one(                                                            \
-        (void*)&(vec)->arr, &(vec)->size, &(vec)->capacity,                                                   \
-        (vec)->element_size, allocator);                                                                      \
-    if (vec_var_line(res) == NULL)                                                                            \
-        { if (vec_var_line(_vec_success) )*vec_var_line(_vec_success) = 0; break; }                           \
-    (vec)->arr[(vec_var_line(res) - (char*)(vec)->arr) / (vec)->element_size] = (data);                       \
-    if (vec_var_line(_vec_success)) *vec_var_line(_vec_success) = 1;                                          \
+    int* vec_var_line(_s) = (success);                                                                        \
+    if ((vec)->size >= (vec)->capacity                                                                        \
+        && !sv_vec_reserve_raw((void**)&(vec)->arr, &(vec)->capacity, (vec)->size + 1,                        \
+                               (vec)->element_size, allocator)) {                                             \
+        if (vec_var_line(_s)) *vec_var_line(_s) = 0;                                                          \
+        break;                                                                                                \
+    }                                                                                                         \
+    (vec)->arr[(vec)->size++] = (data);                                                                       \
+    if (vec_var_line(_s)) *vec_var_line(_s) = 1;                                                              \
 } while (0)
 
 /**
  * Inserts the given data array at then end of the vector.
  */
 #define sv_vec_push_many(vec, values, amount, success, allocator) do {                                        \
-    int* vec_var_line(_vec_success) = (success);                                                              \
-    char* loc = sv_vec_allocate_many(                                                                         \
-        (void*)&(vec)->arr, &(vec)->size, &(vec)->capacity,                                                   \
-        (vec)->element_size, amount, allocator);                                                              \
-    if (loc == NULL) { if (vec_var_line(_vec_success) )*vec_var_line(_vec_success) = 0; break; }              \
-    int64_t idx = (loc - (char*)(vec)->arr) / (vec)->element_size;                                            \
-    for (int64_t i = idx; i < (vec)->size; i++) (vec)->arr[i] = (values)[i - idx];                            \
-    if (vec_var_line(_vec_success)) *vec_var_line(_vec_success) = 1;                                          \
+    int* vec_var_line(_s) = (success);                                                                        \
+    int64_t vec_var_line(_n) = (amount);                                                                      \
+    if (vec_var_line(_n) < 0                                                                                  \
+        || ((vec)->size + vec_var_line(_n) > (vec)->capacity                                                  \
+            && !sv_vec_reserve_raw((void**)&(vec)->arr, &(vec)->capacity, (vec)->size + vec_var_line(_n),     \
+                                   (vec)->element_size, allocator))) {                                        \
+        if (vec_var_line(_s)) *vec_var_line(_s) = 0;                                                          \
+        break;                                                                                                \
+    }                                                                                                         \
+    for (int64_t vec_var_line(_i) = 0; vec_var_line(_i) < vec_var_line(_n); vec_var_line(_i)++)               \
+        (vec)->arr[(vec)->size + vec_var_line(_i)] = (values)[vec_var_line(_i)];                              \
+    (vec)->size += vec_var_line(_n);                                                                          \
+    if (vec_var_line(_s)) *vec_var_line(_s) = 1;                                                              \
 } while (0)
 
 /**
@@ -246,47 +253,10 @@
 #define vec_concat_macro(a, b) vec_concat_macro_(a, b)
 #define vec_var_line(name) vec_concat_macro(name, __LINE__)
 
-void* sv_vec_realloc(
-    void** arr,
-    int64_t* capacity,
-    const int64_t new_capacity,
-    const int64_t element_size,
-    const sv_allocator_t* a
-);
-
-/**
- * Returns the location of the array where an element can be set.
- * May reallocate the array if needed.
- */
-void* sv_vec_allocate_one(
-    void** arr,
-    int64_t* size,
-    int64_t* capacity,
-    const int64_t element_size,
-    const sv_allocator_t* a
-);
-
-/**
- * Returns the location of the array where `n` elements can be set.
- * May reallocate the array if needed.
- */
-void* sv_vec_allocate_many(
-    void** arr,
-    int64_t* size,
-    int64_t* capacity,
-    const int64_t element_size,
-    int64_t n,
-    const sv_allocator_t* a
-);
-
-#ifdef SV_IMPLEMENTATION
 /**
  * Reallocates the given array to the given size.
  */
-
-#define GROW_CAPACITY(capacity) ((capacity) == 0 ? VEC_DEFAULT_CAP : (capacity) * 2)
-
-void* sv_vec_realloc(
+static inline void* sv_vec_realloc(
     void** arr,
     int64_t* capacity,
     const int64_t new_capacity,
@@ -303,56 +273,15 @@ void* sv_vec_realloc(
 }
 
 /**
- * Returns the location of the array where an element can be set.
- * May reallocate the array if needed.
+ * Grows the array so that `need` elements fit, doubling the capacity.
  */
-void* sv_vec_allocate_one(
-    void** arr,
-    int64_t* size,
-    int64_t* capacity,
-    const int64_t element_size,
-    const sv_allocator_t* a
-) {
-    if (*size + 1 >= *capacity) {
-        void* new_arr = sv_vec_realloc(arr, capacity, GROW_CAPACITY(*capacity), element_size, a);
-        if (new_arr == NULL) {
-            return NULL;
-        }
-    }
-
-    void* loc = (char*)(*arr) + (*size * element_size);
-    *size += 1;
-    return loc;
+static inline bool sv_vec_reserve_raw(void** arr, int64_t* capacity, int64_t need,
+                                      int64_t element_size, const sv_allocator_t* a)
+{
+    int64_t cap = *capacity == 0 ? VEC_DEFAULT_CAP : *capacity;
+    while (cap < need)
+        cap *= 2;
+    return sv_vec_realloc(arr, capacity, cap, element_size, a) != NULL;
 }
 
-/**
- * Returns the location of the array where `n` elements can be set.
- * May reallocate the array if needed.
- */
-void* sv_vec_allocate_many(
-    void** arr,
-    int64_t* size,
-    int64_t* capacity,
-    const int64_t element_size,
-    int64_t n,
-    const sv_allocator_t* a
-) {
-    if (n < 0)
-        return NULL;
-
-    while (*size + n >= *capacity) {
-        void* new_arr = sv_vec_realloc(arr, capacity, GROW_CAPACITY(*capacity), element_size, a);
-        if (new_arr == NULL) {
-            return NULL;
-        }
-    }
-
-    void* loc = (char*)(*arr) + (*size * element_size);
-    *size += n;
-    return loc;
-}
-
-#undef GROW_CAPACITY
-
-#endif
 #endif

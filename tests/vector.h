@@ -101,7 +101,7 @@ static inline void sv_test_vector_boundary(sv_testing_t* t)
    }
    sv_test_run(t, all == 1);
    sv_test_run(t, vs.size == 8);
-   sv_test_run(t, vs.capacity > 8);
+   sv_test_run(t, vs.capacity == 8);
    sv_test_run(t, sv_vec_at(vs, 0) == 0);
    sv_test_run(t, sv_vec_at(vs, 7) == 21);
    sv_vec_deinit(&vs, &sv_gpa);
