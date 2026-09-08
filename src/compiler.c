@@ -363,6 +363,7 @@ static bool expect_id(sexpr_t e, ctx_t* ctx, sv_str_t* out)
 
 void compiler_free(compiler_t* c, const sv_allocator_t* a)
 {
+    thm_deinit(&c->globals.name_indexes, a);
     thm_deinit(&c->upvalues.name_indexes, a);
     thm_deinit(&c->members, a);
     thm_deinit(&c->modules.compiled_modules, a);
