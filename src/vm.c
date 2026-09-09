@@ -3,6 +3,7 @@
 #include "obj/map.h"
 #include "std/logger.h"
 #include "value.h"
+#include "ctx.h"
 
 static void arr_remove(value_arr* arr, const sv_allocator_t* a)
 {
@@ -34,7 +35,7 @@ static error_t vm_oom_err(const char* msg)
     return (error_t){ .error_code = VM_ERR_OOM, .msg = sv_str_init(msg) };
 }
 
-vm_t vm_init(fn_t fn, int64_t max_call_frames, hashmap_t globals_names_to_index)
+vm_t vm_init(fn_t fn, int64_t max_call_frames, globals_t globals_names_to_index)
 {
     return (vm_t){
         .call_frames = sv_vec_init(call_frame_t),
@@ -59,7 +60,7 @@ void vm_deinit(vm_t* vm, const sv_allocator_t* a)
     value_arr_deinit(&vm->stack, a);
     value_arr_deinit(&vm->locals, a);
     sv_vec_deinit(&vm->call_frames, a);
-    map_deinit(&vm->globals_names_to_index, a);
+    thm_deinit(&vm->globals_names_to_index.name_indexes, a);
     fn_deinit(&vm->fn, a);
 }
 
@@ -82,9 +83,97 @@ void vm_err_deinit(error_t* err, const sv_allocator_t* a)
     err->payload = NULL;
 }
 
+static sv_opt_t(error_t) vm_run_frame(vm_t* vm);
+
+value_t vm_call(vm_t* vm, uint32_t index, value_t* args, uint8_t arg_count)
+{
+#define ERROR(_msg, code) (error_t) {.msg = sv_str_init(_msg), .error_code = code}
+    const sv_allocator_t* a = vm->ctx.alloc;
+    if (index >= vm->globals.size)
+        return value_init_err(ERROR("Undefined global", VM_ERR_UNDEFINED_VARIABLE), a);
+
+    value_t value = vm->globals.arr[index];
+    if (!IS_CLOSURE(value) && !IS_NATIVE(value) && !IS_CLOSURE_MEMBER(value))
+        return value_init_err(ERROR("Type is not callable", VM_ERR_WRONG_TYPE), a);
+
+    if (IS_NATIVE(value)) {
+        native_fn_t fn = AS_NATIVE(value);
+        if (fn.arity != arg_count)
+            return value_init_err(ERROR("Wrong number of arguments", VM_ERR_BAD_ARITY), a);
+        return fn.fn(args, arg_count, &vm->ctx);
+    }
+
+    fn_t* fn;
+    value_arr upvalues;
+    sv_rc_t(closure_group_t) group = { 0 };
+    if (IS_CLOSURE(value)) {
+        closure_t* cls = &AS_CLOSURE(value);
+        fn = cls_get_vm(*cls);
+        upvalues = cls->upvalues;
+    } else {
+        closure_member_t* member = &AS_CLOSURE_MEMBER(value);
+        fn = clsm_get_vm(*member);
+        upvalues = member->group.cell->value.upvalues;
+        group = member->group;
+    }
+    if (arg_count != fn->arity)
+        return value_init_err(ERROR("Wrong number of arguments", VM_ERR_BAD_ARITY), a);
+
+    int success;
+    sv_vec_push(&vm->call_frames, init_frame(fn, 0, 0, upvalues, group), &success, a);
+    if (!success)
+        return value_init_err(ERROR("OOM when creating call frame", VM_ERR_OOM), a);
+
+    if (arg_count > 0) {
+        sv_vec_push_many(&vm->locals, args, arg_count, &success, a);
+        if (!success)
+            return value_init_err(ERROR("OOM when passing arguments", VM_ERR_OOM), a);
+    }
+    sv_vec_push(&vm->locals, value, &success, a);
+    if (!success)
+        return value_init_err(ERROR("OOM when passing arguments", VM_ERR_OOM), a);
+
+    sv_opt_t(error_t) ret = vm_run_frame(vm);
+    if (ret.is_some)
+        return value_init_err(ret.value, a);
+
+    return vm->stack.arr[vm->stack.size--];
+}
+
+value_t vm_call_name(vm_t* vm, value_t* args, uint8_t arg_count,
+                     sv_str_t function_name, sv_str_t file_name)
+{
+    ctx_t ctx = { .logger = vm->ctx.logger, .alloc = *vm->ctx.alloc };
+    sv_opt_t(uint32_t) index = globals_get(vm->globals_names_to_index, function_name, file_name, &ctx);
+    if (!index.is_some)
+        return value_init_err(ERROR("Undefined global", VM_ERR_UNDEFINED_VARIABLE), vm->ctx.alloc);
+    return vm_call(vm, index.value, args, arg_count);
+#undef ERROR
+}
+
 sv_opt_t(error_t) vm_run(vm_t* vm)
 {
     const sv_allocator_t* a = vm->ctx.alloc;
+
+    error_t err = {0};
+    int success = 0;
+    sv_vec_push(
+        &vm->call_frames,
+        init_frame(&vm->fn, 0, 0, sv_vec_init(value_t), (sv_rc_t(closure_group_t)){0}),
+        &success,
+        a
+    );
+    if (!success)
+        return sv_opt_some_t(error_t, err);
+
+    return vm_run_frame(vm);
+}
+
+static sv_opt_t(error_t) vm_run_frame(vm_t* vm)
+{
+#define TRY_NOT_NULL(v, err_msg) TRY_OR((v) != NULL, (void)0, err_msg)
+
+#define LINE() (frame->fn->chunk.lines.arr[(ip - code) - 1])
 
 #define TRY_OR(cond, cleanup, err_msg) {                                                                      \
     if (!(cond)) {                                                                                            \
@@ -93,13 +182,10 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
         goto error;                                                                                           \
     } }
 
-#define TRY_NOT_NULL(v, err_msg) TRY_OR((v) != NULL, (void)0, err_msg)
-
-#define LINE() (frame->fn->chunk.lines.arr[(ip - code) - 1])
-
 #define TRY_PUSH(arr, v)                                                                                      \
     sv_vec_push(&(arr), v, &success, a);                                                                      \
     TRY_OR(success, (void)0, "OOM when appending to vector")
+
 
 #define TRY_PUSH_STACK(v) TRY_PUSH(stack, v)
 
@@ -199,15 +285,13 @@ sv_opt_t(error_t) vm_run(vm_t* vm)
     TRY_PUSH_STACK(res);                                                                                      \
 break; }
 
+    const sv_allocator_t* a = vm->ctx.alloc;
+
     error_t err;
     int success = 0;
     uint8_t arg_bytes = 1;
 
     value_arr stack = vm->stack;
-
-    TRY_PUSH(vm->call_frames,
-             init_frame(&vm->fn, 0, 0, sv_vec_init(value_t), (sv_rc_t(closure_group_t)){0})
-    );
     call_frame_t* frame = &sv_vec_last(vm->call_frames);
 
     const uint8_t* code = frame->fn->chunk.bytecode.arr;

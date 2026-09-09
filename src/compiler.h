@@ -5,10 +5,7 @@
 #include "vm.h"
 #include "obj/map.h"
 #include "obj/native_fns.h"
-
-typedef struct {
-    transient_hashmap_t name_indexes;
-} globals_t;
+#include "globals.h"
 
 typedef struct locals_t {
     transient_hashmap_t name_indexes;

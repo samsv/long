@@ -180,15 +180,6 @@ static bool add_const(compiler_t* c, ctx_t* ctx, value_t v, int64_t line)
     return true;
 }
 
-static bool check_limit(ctx_t* ctx, int64_t n, uint32_t max, const char* what, int64_t line)
-{
-    if (n <= (int64_t)max)
-        return true;
-    char msg[128];
-    snprintf(msg, sizeof(msg), "More than %" PRIu32 " %s at line %" PRId64, max, what, line);
-    return compiler_error(ctx, C_ERR_LIMIT_EXCEEDED, msg);
-}
-
 static bool emit_narrow(compiler_t* c, ctx_t* ctx, uint8_t op, int64_t arg,
                         const char* what, int64_t line)
 {
@@ -230,103 +221,6 @@ static bool patch_jump(compiler_t* c, ctx_t* ctx, int64_t ji, int64_t line)
     return true;
 }
 
-static int64_t names_count(transient_hashmap_t names)
-{
-    return names.set.dense.cell != NULL ? thm_count(names) : 0;
-}
-
-static sv_opt_t(uint32_t) names_get(transient_hashmap_t names, sv_str_t id, ctx_t* ctx)
-{
-    if (names.set.dense.cell == NULL)
-        return sv_opt_none_t(uint32_t);
-
-    value_t key = value_init_str(id, &ctx->alloc);
-    if (key.obj.cell == NULL)
-        return sv_opt_none_t(uint32_t);
-
-    sv_opt_t(value_t) v = thm_get(names, key);
-    value_free(&key, &ctx->alloc);
-    if (!v.is_some)
-        return sv_opt_none_t(uint32_t);
-    return sv_opt_some_t(uint32_t, (uint32_t)v.value.number);
-}
-
-static bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
-{
-    if (names->set.dense.cell == NULL) {
-        *names = thm_init(4, &ctx->alloc);
-        if (names->set.dense.cell == NULL)
-            return false;
-    }
-
-    *existed = names_get(*names, id, ctx).is_some;
-    if (*existed)
-        return true;
-
-    value_t key = value_init_str(id, &ctx->alloc);
-    if (key.obj.cell == NULL)
-        return false;
-
-    kv_t kv = { .key = key, .value = { .kind = VALUE_NUMBER, .number = (double)thm_count(*names) } };
-    bool ok = thm_put(names, kv, &ctx->alloc);
-    value_free(&key, &ctx->alloc);
-    return ok;
-}
-
-static sv_str_t append_prefix(sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t line)
-{
-#define CHECK_OOM(cond) do { if (!(cond)) { \
-    sv_strb_deinit(&b, &ctx->alloc); \
-    compiler_oom(ctx, line); \
-    return (sv_str_t){0}; \
-} } while (0)
-
-    if (prefix.size == 0)
-        return sv_str_copy(id, &ctx->alloc);
-
-    sv_str_builder b = sv_strb_init();
-    CHECK_OOM(sv_strb_add(&b, prefix.chars, prefix.size, &ctx->alloc) > -1);
-    CHECK_OOM(sv_strb_add_char(&b, '$', &ctx->alloc) > -1);
-    CHECK_OOM(sv_strb_add(&b, id.chars, id.size, &ctx->alloc) > -1);
-    sv_str_t name = sv_strb_to_str(&b);
-    return name;
-#undef CHECK_OOM
-}
-
-static bool globals_add(globals_t* g, sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t line)
-{
-    TRY(check_limit(ctx, names_count(g->name_indexes), UINT32_MAX, "globals", line));
-    sv_str_t name = append_prefix(id, prefix, ctx, line);
-    if (name.chars == NULL)
-        return compiler_oom(ctx, line);
-
-    bool existed = false;
-    if (!names_add(&g->name_indexes, name, ctx, &existed)) {
-        sv_str_deinit(&name, &ctx->alloc);
-        return compiler_oom(ctx, line);
-    }
-    if (existed) {
-        sv_str_deinit(&name, &ctx->alloc);
-        return compiler_error_name(ctx, C_ERR_REDEFINED, line, "Global redefined", id);
-    }
-
-    sv_str_deinit(&name, &ctx->alloc);
-    return true;
-}
-
-static sv_opt_t(uint32_t) globals_get(const globals_t g, sv_str_t id, sv_str_t prefix, ctx_t* ctx, int64_t line)
-{
-    sv_str_t name = append_prefix(id, prefix, ctx, line);
-    if (name.chars == NULL)
-        return sv_opt_none_t(uint32_t);
-
-    sv_opt_t(uint32_t) maybe = names_get(g.name_indexes, name, ctx);
-    sv_str_deinit(&name, &ctx->alloc);
-    if (maybe.is_some)
-        return maybe;
-
-    return names_get(g.name_indexes, id, ctx);
-}
 
 static bool locals_add(locals_t* l, sv_str_t id, ctx_t* ctx, int64_t line)
 {
@@ -363,7 +257,6 @@ static bool expect_id(sexpr_t e, ctx_t* ctx, sv_str_t* out)
 
 void compiler_free(compiler_t* c, const sv_allocator_t* a)
 {
-    thm_deinit(&c->globals.name_indexes, a);
     thm_deinit(&c->upvalues.name_indexes, a);
     thm_deinit(&c->members, a);
     thm_deinit(&c->modules.compiled_modules, a);
@@ -395,7 +288,7 @@ static bool compile_id(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
     if (idx.is_some)
         return emit_wide(c, ctx, OP_GET_UPVALUE, idx.value, line);
 
-    idx = globals_get(c->globals, id, sv_str_init(c->current_path), ctx, line);
+    idx = globals_get(c->globals, id, sv_str_init(c->current_path), ctx);
     if (idx.is_some)
         return emit_wide(c, ctx, OP_GET_GLOBAL, idx.value, line);
 
@@ -415,8 +308,8 @@ static bool add_var(compiler_t* c, sv_str_t id, int64_t line, ctx_t* ctx)
         return emit_wide(c, ctx, OP_GET_LOCAL, idx.value, line);
     }
     TRY(emit(c, ctx, OP_SET_GLOBAL, line));
-    TRY(globals_add(&c->globals, id, sv_str_init(c->current_path), ctx, line));
-    sv_opt_t(uint32_t) idx = globals_get(c->globals, id, sv_str_init(c->current_path), ctx, line);
+    TRY(!globals_add(&c->globals, id, sv_str_init(c->current_path), line, ctx).is_some);
+    sv_opt_t(uint32_t) idx = globals_get(c->globals, id, sv_str_init(c->current_path), ctx);
     return emit_wide(c, ctx, OP_GET_GLOBAL, idx.value, line);
 }
 
@@ -854,7 +747,7 @@ static bool compile_double_colon(compiler_t* c, const sexpr_t* args, int64_t n, 
         return false;
     }
     value_free(&module_name_value, &ctx->alloc);
-    sv_opt_t(uint32_t) id = globals_get(c->globals, var_name, AS_STR(module_path.value), ctx, line);
+    sv_opt_t(uint32_t) id = globals_get(c->globals, var_name, AS_STR(module_path.value), ctx);
     if (!id.is_some)
         return compiler_error_name(ctx, C_ERR_UNDEFINED_VARIABLE, line, "Undefined variable", var_name);
 
@@ -1450,9 +1343,9 @@ static bool compile_uncons(compiler_t* c, const sexpr_t* args, int64_t n, int64_
         TRY(locals_add(c->locals, tail, ctx, line));
     } else {
         TRY(emit(c, ctx, OP_SET_GLOBAL, line));
-        TRY(globals_add(&c->globals, head, sv_str_init(c->current_path), ctx, line));
+        TRY(!globals_add(&c->globals, head, sv_str_init(c->current_path), line, ctx).is_some);
         TRY(emit(c, ctx, OP_SET_GLOBAL, line));
-        TRY(globals_add(&c->globals, tail, sv_str_init(c->current_path), ctx, line));
+        TRY(!globals_add(&c->globals, tail, sv_str_init(c->current_path), line, ctx).is_some);
     }
 
     return true;
@@ -1715,7 +1608,7 @@ bool compile_sexpr(compiler_t* c, sexpr_t sexpr, bool is_tail, ctx_t* ctx)
 
 bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
 {
-    TRY(globals_add(&c->globals, sv_str_init(fn.name), sv_str_init(""), ctx, 0));
+    TRY(!globals_add(&c->globals, sv_str_init(fn.name), sv_str_init(""), 0, ctx).is_some);
     value_t fn_val = value_init_native(fn, &ctx->alloc);
     TRY(fn_val.obj.cell != NULL);
     int success = 0;
@@ -1769,11 +1662,7 @@ vm_t compile(const char* base_path, const char* source_code, int64_t max_frames,
         ERR_RETURN;
     }
 
-    hashmap_t globals_map = transient_to_map(&compiler.globals.name_indexes, &ctx->alloc);
-    if (globals_map.cell == NULL)
-        ERR_RETURN;
-
-    vm_t vm = vm_init(fnb_build(&compiler.builder), max_frames, globals_map);
+    vm_t vm = vm_init(fnb_build(&compiler.builder), max_frames, compiler.globals);
     vm.globals = compiler.global_values;
 
     compiler.global_values = sv_vec_init(value_t);

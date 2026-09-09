@@ -9,6 +9,7 @@
 #include "obj/fn.h"
 #include "common.h"
 #include "std/vector.h"
+#include "globals.h"
 
 typedef struct vm_t vm_t;
 
@@ -42,7 +43,7 @@ typedef struct vm_t {
     sv_vec_t(call_frame_t) call_frames;
     int64_t max_call_frames;
 
-    hashmap_t globals_names_to_index;
+    globals_t globals_names_to_index;
 
     fn_t fn;
 
@@ -168,13 +169,21 @@ typedef struct {
 /**
  * Creates a vm that owns and runs `fn`.
  */
-vm_t vm_init(fn_t, int64_t max_call_frames, hashmap_t globals_names_to_index);
+vm_t vm_init(fn_t, int64_t max_call_frames, globals_t globals_names_to_index);
 void vm_deinit(vm_t*, const sv_allocator_t*);
 
 /**
  * Interprets the VM bytecode.
  */
 sv_opt_t(error_t) vm_run(vm_t*);
+/**
+ * Calls the given function by globals index.
+ */
+value_t vm_call(vm_t*, uint32_t, value_t*, uint8_t);
+/**
+ * Calls the given function by name.
+ */
+value_t vm_call_name(vm_t*, value_t*, uint8_t, sv_str_t function_name, sv_str_t file_name);
 
 /**
  * Frees the payload of an error returned by vm_run.
