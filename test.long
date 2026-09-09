@@ -1,0 +1,17 @@
+import m1("m1.long")
+
+x = 5
+
+m1::add_x(5)
+|> println()
+
+println(m1::x == x)
+y = m1::y
+
+m1::point.x |> println()
+
+fun f(x, y)
+    x + y * 2
+    |> println()
+
+f(2, 1)

@@ -1,0 +1,122 @@
+#ifndef LONG_TOKEN_H
+#define LONG_TOKEN_H
+
+#include "std/allocator.h"
+#include "std/string.h"
+
+typedef enum {
+    TOKEN_OPERATOR,
+    TOKEN_SP_FUNCTION,
+    TOKEN_LITERAL,
+    TOKEN_KEYWORD,
+
+    TOKEN_RIGHT_PAREN,
+    TOKEN_RIGHT_BRACE,
+    TOKEN_RIGHT_BRACKET,
+    TOKEN_LEFT_BRACE,
+    TOKEN_PERCENT_BRACE,
+    TOKEN_COLON,
+    TOKEN_DOT_DOT,
+    TOKEN_COMMA,
+    TOKEN_SEMICOLON,
+    TOKEN_NEWLINE,
+    TOKEN_PIPE,
+
+    TOKEN_EOF,
+    TOKEN_ERROR,
+} token_kind;
+
+typedef enum {
+    OPERATOR_DOT,
+    OPERATOR_DOUBLE_COLON,
+    OPERATOR_MINUS,
+    OPERATOR_PLUS,
+    OPERATOR_PIPE_FORWARD,
+    OPERATOR_STAR,
+    OPERATOR_SLASH,
+
+    OPERATOR_LEFT_PAREN,
+    OPERATOR_LEFT_BRACKET,
+
+    OPERATOR_BANG_EQUAL,
+    OPERATOR_EQUAL,
+    OPERATOR_EQUAL_EQUAL,
+    OPERATOR_GREATER,
+    OPERATOR_GREATER_EQUAL,
+    OPERATOR_LESS,
+    OPERATOR_LESS_EQUAL,
+} operator_kind;
+
+typedef enum {
+    FN_FUN,
+    FN_FOR,
+    FN_IF,
+    FN_LIST,
+    FN_MAP,
+    FN_HASHMAP,
+    FN_RECORD,
+    FN_TUPLE,
+    FN_MAPF,
+    FN_MATCH,
+    FN_REDUCE,
+    FN_WHILE,
+    FN_IMPORT, // must be last
+
+    // ignored by parse
+    FN_LENGTH,
+    FN_RECORD_GET_OR_NIL,
+    FN_HASHMAP_GET_OR_NIL,
+} special_fn_kind;
+
+typedef enum {
+    KEYWORD_AND,
+    KEYWORD_ELSE,
+    KEYWORD_DO,
+    KEYWORD_END,
+    KEYWORD_IN,
+    KEYWORD_OR,
+    KEYWORD_NOT,
+    KEYWORD_SELF,
+    KEYWORD_WHEN,
+} keyword_kind;
+
+typedef enum {
+    LITERAL_STRING,
+    LITERAL_IDENTIFIER,
+    LITERAL_NUMBER,
+    LITERAL_NIL,
+    LITERAL_TRUE,
+    LITERAL_FALSE,
+} literal_kind;
+
+typedef struct {
+    literal_kind kind;
+    union {
+        sv_str_t str;
+        sv_str_t literal;
+        double number; // hopefully a float 64
+    };
+} literal_t;
+
+typedef struct {
+    token_kind kind;
+    int64_t line;
+    union {
+        operator_kind operator;
+        special_fn_kind fn;
+        keyword_kind keyword;
+        literal_t literal;
+    };
+} token_t;
+
+
+/**
+ * Returns the source text of the special function / keyword.
+ */
+const char* special_fn_text(special_fn_kind);
+const char* keyword_text(keyword_kind);
+
+bool token_format_builder(token_t, sv_str_builder*, const sv_allocator_t*);
+sv_str_t token_format(token_t, const sv_allocator_t*);
+
+#endif
