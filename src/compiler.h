@@ -43,15 +43,22 @@ typedef struct {
     sv_vec_t(value_t) global_values;
 } compiler_t;
 
+typedef struct {
+    int64_t max_frames;
+    native_fn_t* native_funs;
+    int64_t native_count;
+} compile_opts_t;
+
+#define COMPILER_DEFAULT_OPTS (compile_opts_t) { .max_frames = 1000000 }
+
 /**
  * Compiles a file.
  */
-vm_t compile(const char* base_path, int64_t max_frames, ctx_t*);
+vm_t compile(const char* base_path, compile_opts_t, ctx_t*);
 /**
  * Compiles many files at once, each namespaced by its own name.
  */
-vm_t compile_files(const char** files, int64_t count, int64_t max_frames, ctx_t*);
-bool add_native_fn(compiler_t*, native_fn_t, ctx_t*);
+vm_t compile_files(const char** files, int64_t count, compile_opts_t, ctx_t*);
 
 typedef enum {
     C_ERR_OOM = 1,

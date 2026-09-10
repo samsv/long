@@ -1606,7 +1606,7 @@ bool compile_sexpr(compiler_t* c, sexpr_t sexpr, bool is_tail, ctx_t* ctx)
     return compile_cons(c, sexpr.cons.arr, sexpr.cons.size, is_tail, ctx);
 }
 
-bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
+static bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
 {
     TRY(!globals_add(&c->globals, sv_str_init(fn.name), sv_str_init(""), 0, ctx).is_some);
     value_t fn_val = value_init_native(fn, &ctx->alloc);
@@ -1620,12 +1620,12 @@ bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
     return true;
 }
 
-vm_t compile(const char* base_path, int64_t max_frames, ctx_t* ctx)
+vm_t compile(const char* base_path, compile_opts_t opts, ctx_t* ctx)
 {
-    return compile_files(&base_path, 1, max_frames, ctx);
+    return compile_files(&base_path, 1, opts, ctx);
 }
 
-vm_t compile_files(const char** files, int64_t count, int64_t max_frames, ctx_t* ctx)
+vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t* ctx)
 {
 #define ERR_RETURN do {                                                                                       \
         compiler_free(&compiler, &ctx->alloc);                                                                \
@@ -1659,6 +1659,10 @@ vm_t compile_files(const char** files, int64_t count, int64_t max_frames, ctx_t*
             ERR_RETURN;
 #undef FNS_SIZE
 
+    for (int64_t i = 0; i < opts.native_count; i++)
+        if(!add_native_fn(&compiler, opts.native_funs[i], ctx))
+            ERR_RETURN;
+
     for (int64_t i = 0; i < count; i++) {
         char* source_code = read_file(files[i], &ctx->alloc);
         if (source_code == NULL) {
@@ -1682,7 +1686,7 @@ vm_t compile_files(const char** files, int64_t count, int64_t max_frames, ctx_t*
         ERR_RETURN;
     }
 
-    vm_t vm = vm_init(fnb_build(&compiler.builder), max_frames, compiler.globals);
+    vm_t vm = vm_init(fnb_build(&compiler.builder), opts.max_frames, compiler.globals);
     vm.globals = compiler.global_values;
 
     compiler.global_values = sv_vec_init(value_t);

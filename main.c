@@ -34,7 +34,7 @@ static int run_file(const char* path)
         .err = { 0 },
     };
 
-    vm_t vm = compile(path, 1000000, &ctx);
+    vm_t vm = compile(path, COMPILER_DEFAULT_OPTS, &ctx);
 
     int ret = run(&vm, ctx);
     if (ret > 0) {
