@@ -8,9 +8,9 @@
 ✅ Wide Operands
 ✅ Call Frames
 ✅ Tail Recursion
-Embedding API
+✅ Embedding API
     - ✅ Global Names on VM;
-    - Call Closure from C;
+    - ✅ Call Closure from C;
 STDLib
 String escapes
 Non linear patterns

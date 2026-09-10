@@ -1,6 +1,4 @@
-.zig-cache
-zig-out
-
-zig-pkg/
-
 build/
+*.out
+*.a
+*.so
