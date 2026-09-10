@@ -22,7 +22,7 @@ static int run(vm_t* vm, ctx_t ctx)
     }
     print_vm(*vm);
 
-    //vm_deinit(&vm, &ctx.alloc);
+    vm_deinit(vm, &ctx.alloc);
     return 0;
 }
 
@@ -46,12 +46,6 @@ static int run_file(const char* path)
     if (ret > 0) {
         return ret;
     }
-
-    value_t args[2] = {
-        (value_t){ .number = 5.0, .kind = VALUE_NUMBER },
-        (value_t){ .number = 4.0, .kind = VALUE_NUMBER },
-    };
-    vm_call_name(&vm, args, 2, sv_str_init("f"), sv_str_init(path));
 
     return 0;
 }

@@ -21,7 +21,7 @@ BIN = build/$(TARGET)
 TEST_BIN = build/$(TARGET)-test
 DEBUG_BIN = build/$(TARGET)-debug
 
-.PHONY: build run test debug clean
+.PHONY: build run test debug clean static
 
 build: $(BIN)
 
@@ -32,6 +32,9 @@ test: $(TEST_BIN)
 	./$(TEST_BIN)
 
 debug: $(DEBUG_BIN)
+
+static: $(OBJ)
+	ar rcs $(TARGET).a $^
 
 clean:
 	rm -rf build
