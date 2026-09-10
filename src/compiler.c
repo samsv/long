@@ -75,7 +75,7 @@ compiler_t compiler_init(const char* base_path, ctx_t* ctx, bool* success)
     };
 }
 
-char* read_file(const char* path, const sv_allocator_t* a)
+static char* read_file(const char* path, const sv_allocator_t* a)
 {
     FILE* file = fopen(path, "r");
     if (file == NULL) {
@@ -1620,7 +1620,12 @@ bool add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
     return true;
 }
 
-vm_t compile(const char* base_path, const char* source_code, int64_t max_frames, ctx_t* ctx)
+vm_t compile(const char* base_path, int64_t max_frames, ctx_t* ctx)
+{
+    return compile_files(&base_path, 1, max_frames, ctx);
+}
+
+vm_t compile_files(const char** files, int64_t count, int64_t max_frames, ctx_t* ctx)
 {
 #define ERR_RETURN do {                                                                                       \
         compiler_free(&compiler, &ctx->alloc);                                                                \
@@ -1629,7 +1634,7 @@ vm_t compile(const char* base_path, const char* source_code, int64_t max_frames,
         return (vm_t){0}; } while (0)
 
     bool success;
-    compiler_t compiler = compiler_init(base_path, ctx, &success);
+    compiler_t compiler = compiler_init("", ctx, &success);
     if (!success)
         return (vm_t){0};
 
@@ -1654,8 +1659,23 @@ vm_t compile(const char* base_path, const char* source_code, int64_t max_frames,
             ERR_RETURN;
 #undef FNS_SIZE
 
-    if (!compile_source(&compiler, source_code, ctx)) {
-        ERR_RETURN;
+    for (int64_t i = 0; i < count; i++) {
+        char* source_code = read_file(files[i], &ctx->alloc);
+        if (source_code == NULL) {
+            compiler_oom(ctx, 0);
+            ERR_RETURN;
+        }
+        compiler.current_path = files[i];
+
+        bool ok = compile_source(&compiler, source_code, ctx);
+        sv_free(&ctx->alloc, source_code);
+        if (!ok)
+            ERR_RETURN;
+
+        if (i < count - 1 && !fnb_add_byte(&compiler.builder, OP_POP, 0, &ctx->alloc)) {
+            compiler_oom(ctx, 0);
+            ERR_RETURN;
+        }
     }
     if (!fnb_add_byte(&compiler.builder, OP_RETURN, 0, &ctx->alloc)) {
         compiler_oom(ctx, 0);

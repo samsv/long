@@ -34,13 +34,7 @@ static int run_file(const char* path)
         .err = { 0 },
     };
 
-    const char* source = read_file(path, &ctx.alloc);
-    if (source == NULL) {
-        return 1;
-    }
-
-    vm_t vm = compile(path, source, 1000000, &ctx);
-    free((void*)source);
+    vm_t vm = compile(path, 1000000, &ctx);
 
     int ret = run(&vm, ctx);
     if (ret > 0) {

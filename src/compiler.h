@@ -43,8 +43,14 @@ typedef struct {
     sv_vec_t(value_t) global_values;
 } compiler_t;
 
-char* read_file(const char*, const sv_allocator_t*);
-vm_t compile(const char* base_path, const char* source_code, int64_t, ctx_t*);
+/**
+ * Compiles a file.
+ */
+vm_t compile(const char* base_path, int64_t max_frames, ctx_t*);
+/**
+ * Compiles many files at once, each namespaced by its own name.
+ */
+vm_t compile_files(const char** files, int64_t count, int64_t max_frames, ctx_t*);
 bool add_native_fn(compiler_t*, native_fn_t, ctx_t*);
 
 typedef enum {
