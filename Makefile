@@ -12,7 +12,8 @@ DEPFLAGS = -MMD -MP
 LIB_SRC = $(wildcard src/*.c) $(wildcard src/obj/*.c) $(wildcard src/deps/*.c)
 TEST_SRC = $(wildcard tests/*.c)
 
-OBJ = $(LIB_SRC:src/%.c=build/release/%.o) build/release/main.o
+LIB_OBJ = $(LIB_SRC:src/%.c=build/release/%.o)
+OBJ = $(LIB_OBJ) build/release/main.o
 TEST_OBJ = $(LIB_SRC:src/%.c=build/test/%.o) \
        $(patsubst tests/%.c,build/test/tests_%.o,$(TEST_SRC))
 DEBUG_OBJ = $(LIB_SRC:src/%.c=build/debug/%.o) build/debug/main.o
@@ -33,7 +34,8 @@ test: $(TEST_BIN)
 
 debug: $(DEBUG_BIN)
 
-static: $(OBJ)
+static: $(LIB_OBJ)
+	rm -f $(TARGET).a
 	ar rcs $(TARGET).a $^
 
 clean:
