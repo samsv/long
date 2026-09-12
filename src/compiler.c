@@ -1629,6 +1629,7 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
 {
 #define ERR_RETURN do {                                                                                       \
         compiler_free(&compiler, &ctx->alloc);                                                                \
+        thm_deinit(&compiler.globals.name_indexes, &ctx->alloc);                                              \
         fn_deinit(&compiler.builder.fn, &ctx->alloc);                                                         \
         thm_deinit(&record_fields, &ctx->alloc);                                                              \
         return (vm_t){0}; } while (0)
@@ -1709,7 +1710,7 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
         for (int64_t i = 0; i < n_fields; i++)
             names[i] = NULL;
 
-        map_iter_t it = map_iter_init(vm.ctx.record_fields);
+        map_iter_t it = map_iter_init_no_borrow(vm.ctx.record_fields);
         for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it)) {
             sv_str_t name = AS_STR(kv.value.key);
             char* copy = sv_malloc(&ctx->alloc, (size_t)name.size + 1);

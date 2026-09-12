@@ -10,18 +10,30 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Only has to be stable: it namespaces the globals. */
-#define SV_TEST_PATH "tests/main.long"
+/* Scratch file the source under test is written to; its name namespaces the globals. */
+#define SV_TEST_PATH "build/test/main.long"
 
 /* The n-th field a program interns: compile() reserves two ids first, for map iteration. */
 #define SV_TEST_RESERVED_FIELDS 2
 #define SV_TEST_MAX_FRAMES 1000000
 #define SV_TEST_FIELD(n) sv_test_compiler_val(SV_TEST_RESERVED_FIELDS + (n))
 
+/* compile() reads a file, so the source goes through the scratch file. */
+static inline vm_t sv_test_compiler_compile(const char* src, int64_t max_frames, ctx_t* ctx)
+{
+   FILE* f = fopen(SV_TEST_PATH, "w");
+   if (f == NULL)
+      return (vm_t){0};
+   bool written = fputs(src, f) != EOF;
+   if (fclose(f) != 0 || !written)
+      return (vm_t){0};
+   return compile(SV_TEST_PATH, (compile_opts_t){ .max_frames = max_frames }, ctx);
+}
+
 static inline value_t sv_test_compiler_eval_frames(const char* src, int64_t max_frames, bool* ok)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile(SV_TEST_PATH, src, max_frames, &ctx);
+   vm_t vm = sv_test_compiler_compile(src, max_frames, &ctx);
    if (vm.fn.chunk.bytecode.arr == NULL) {
       sv_str_deinit(&ctx.err.msg, &sv_gpa);
       *ok = false;
@@ -33,7 +45,7 @@ static inline value_t sv_test_compiler_eval_frames(const char* src, int64_t max_
    value_t res = *ok ? value_borrow(sv_vec_last(vm.stack)) : (value_t){ .kind = VALUE_NIL };
    if (err.is_some)
       vm_err_deinit(&err.value, &sv_gpa);
-   vm_deinit(&vm, &sv_gpa);
+   vm_deinit(&vm);
    return res;
 }
 
@@ -87,7 +99,7 @@ static inline value_t sv_test_compiler_val(double n)
 static inline int sv_test_compiler_runtime_err_frames(const char* src, int64_t max_frames)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile(SV_TEST_PATH, src, max_frames, &ctx);
+   vm_t vm = sv_test_compiler_compile(src, max_frames, &ctx);
    if (vm.fn.chunk.bytecode.arr == NULL) {
       sv_str_deinit(&ctx.err.msg, &sv_gpa);
       return -1;
@@ -96,7 +108,7 @@ static inline int sv_test_compiler_runtime_err_frames(const char* src, int64_t m
    int code = err.is_some ? err.value.error_code : -2;
    if (err.is_some)
       vm_err_deinit(&err.value, &sv_gpa);
-   vm_deinit(&vm, &sv_gpa);
+   vm_deinit(&vm);
    return code;
 }
 
@@ -108,9 +120,9 @@ static inline int sv_test_compiler_runtime_err(const char* src)
 static inline int sv_test_compiler_err(const char* src)
 {
    ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = compile(SV_TEST_PATH, src, SV_TEST_MAX_FRAMES, &ctx);
+   vm_t vm = sv_test_compiler_compile(src, SV_TEST_MAX_FRAMES, &ctx);
    if (vm.fn.chunk.bytecode.arr != NULL) {
-      vm_deinit(&vm, &sv_gpa);
+      vm_deinit(&vm);
       return -1;
    }
    int code = ctx.err.error_code;
@@ -251,18 +263,18 @@ static inline void sv_test_compiler_tuples(sv_testing_t* t)
    value_free(&inner, &sv_gpa);
 
    sv_test_run(t, sv_test_compiler_err("{x: 1, x: 2}") == C_ERR_REDEFINED);
-   sv_test_run(t, sv_test_compiler_runtime_err("{x: 1}.y") == VM_ERR_KEY_NOT_FOUND);
+   sv_test_run(t, sv_test_compiler_runtime_err("{x: 1}.y") == VM_ERR_FIELD_NOT_FOUND);
    sv_test_run(t, sv_test_compiler_runtime_err("t = 5\nt.x") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t pctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t pvm = compile(SV_TEST_PATH, "t = {x: 10, y: 20}\nt", SV_TEST_MAX_FRAMES, &pctx);
+   vm_t pvm = sv_test_compiler_compile("t = {x: 10, y: 20}\nt", SV_TEST_MAX_FRAMES, &pctx);
    sv_test_run(t, pvm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) perr = vm_run(&pvm);
    sv_test_run(t, !perr.is_some);
    sv_str_t ptext = value_to_str(pvm.stack.arr[pvm.stack.size - 1], &pvm.ctx);
    sv_test_run(t, sv_str_comp(ptext, sv_str_init("{x: 10, y: 20}")));
    sv_str_deinit(&ptext, &sv_gpa);
-   vm_deinit(&pvm, &sv_gpa);
+   vm_deinit(&pvm);
 }
 
 static inline void sv_test_compiler_tuple_type(sv_testing_t* t)
@@ -281,24 +293,24 @@ static inline void sv_test_compiler_tuple_type(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("(1, 2)[0.5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t tctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t tvm = compile(SV_TEST_PATH, "t = (1, (2, \"s\"))\nt", SV_TEST_MAX_FRAMES, &tctx);
+   vm_t tvm = sv_test_compiler_compile("t = (1, (2, \"s\"))\nt", SV_TEST_MAX_FRAMES, &tctx);
    sv_test_run(t, tvm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) terr = vm_run(&tvm);
    sv_test_run(t, !terr.is_some);
    sv_str_t ttext = value_to_str(tvm.stack.arr[tvm.stack.size - 1], &tvm.ctx);
    sv_test_run(t, sv_str_comp(ttext, sv_str_init("(1, (2, s))")));
    sv_str_deinit(&ttext, &sv_gpa);
-   vm_deinit(&tvm, &sv_gpa);
+   vm_deinit(&tvm);
 
    ctx_t octx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t ovm = compile(SV_TEST_PATH, "(1,)", SV_TEST_MAX_FRAMES, &octx);
+   vm_t ovm = sv_test_compiler_compile("(1,)", SV_TEST_MAX_FRAMES, &octx);
    sv_test_run(t, ovm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) oerr = vm_run(&ovm);
    sv_test_run(t, !oerr.is_some);
    sv_str_t otext = value_to_str(ovm.stack.arr[ovm.stack.size - 1], &ovm.ctx);
    sv_test_run(t, sv_str_comp(otext, sv_str_init("(1,)")));
    sv_str_deinit(&otext, &sv_gpa);
-   vm_deinit(&ovm, &sv_gpa);
+   vm_deinit(&ovm);
 }
 
 static inline void sv_test_compiler_logic(sv_testing_t* t)
@@ -340,7 +352,7 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("for x in 5 do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
    ctx_t actx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t avm = compile(SV_TEST_PATH, "fun f(x) do x end f(1, 2)", SV_TEST_MAX_FRAMES, &actx);
+   vm_t avm = sv_test_compiler_compile("fun f(x) do x end f(1, 2)", SV_TEST_MAX_FRAMES, &actx);
    sv_test_run(t, avm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) aerr = vm_run(&avm);
    sv_test_run(t, aerr.is_some);
@@ -348,16 +360,16 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    sv_test_run(t, ((vm_arity_err*)aerr.value.payload)->expected == 1);
    sv_test_run(t, ((vm_arity_err*)aerr.value.payload)->got == 2);
    vm_err_deinit(&aerr.value, &sv_gpa);
-   vm_deinit(&avm, &sv_gpa);
+   vm_deinit(&avm);
 
    ctx_t cctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t cvm = compile(SV_TEST_PATH, "[1] < 2", SV_TEST_MAX_FRAMES, &cctx);
+   vm_t cvm = sv_test_compiler_compile("[1] < 2", SV_TEST_MAX_FRAMES, &cctx);
    sv_test_run(t, cvm.fn.chunk.bytecode.arr != NULL);
    sv_opt_t(error_t) cerr = vm_run(&cvm);
    sv_test_run(t, cerr.is_some);
    sv_test_run(t, cerr.value.error_code == VM_ERR_OP_UNSUPPORTED_ARGS);
    vm_err_deinit(&cerr.value, &sv_gpa);
-   vm_deinit(&cvm, &sv_gpa);
+   vm_deinit(&cvm);
 }
 
 static inline void sv_test_compiler_for(sv_testing_t* t)
@@ -649,37 +661,37 @@ static inline void sv_test_compiler_wide_operands(sv_testing_t* t)
    /* One-byte operands still stop at 255: parameters, arguments, upvalues, group members,
     * group upvalues, tuple pattern elements. */
    src = sv_test_compiler_gen("fun f(a0", ", a%lld", 1, 255, ") 1");
-   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   sv_test_run(t, sv_test_compiler_err(src) == GLOBAL_ERROR_TOO_MANY);
    free(src);
 
    src = sv_test_compiler_gen("fun f(a) a\nf(0", ", %lld", 1, 255, ")");
-   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   sv_test_run(t, sv_test_compiler_err(src) == GLOBAL_ERROR_TOO_MANY);
    free(src);
 
    char* defs = sv_test_compiler_gen("", "v%lld = 1\n", 0, 255, "fun f[v0");
    src = sv_test_compiler_gen(defs, ", v%lld", 1, 255, "](x) x");
-   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   sv_test_run(t, sv_test_compiler_err(src) == GLOBAL_ERROR_TOO_MANY);
    free(defs);
    free(src);
 
    src = sv_test_compiler_gen("fun\n", "| m%lld() 1\n", 0, 255, "end");
-   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   sv_test_run(t, sv_test_compiler_err(src) == GLOBAL_ERROR_TOO_MANY);
    free(src);
 
    /* Two members of 128 upvalues each: neither is over the limit alone, the group is. */
    defs = sv_test_compiler_gen("", "v%lld = 1\n", 0, 255, "fun\n| a[v0");
    char* half = sv_test_compiler_gen(defs, ", v%lld", 1, 127, "](x) x\n| b[v128");
    src = sv_test_compiler_gen(half, ", v%lld", 129, 255, "](x) x\nend");
-   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   sv_test_run(t, sv_test_compiler_err(src) == GLOBAL_ERROR_TOO_MANY);
    free(defs);
    free(half);
    free(src);
 
    src = sv_test_compiler_gen("(a0", ", a%lld", 1, 255, ") = 1");
-   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   sv_test_run(t, sv_test_compiler_err(src) == GLOBAL_ERROR_TOO_MANY);
    free(src);
    src = sv_test_compiler_gen("t = 1\nmatch t | (a0", ", a%lld", 1, 255, ") do 1 end");
-   sv_test_run(t, sv_test_compiler_err(src) == C_ERR_LIMIT_EXCEEDED);
+   sv_test_run(t, sv_test_compiler_err(src) == GLOBAL_ERROR_TOO_MANY);
    free(src);
 }
 
@@ -711,7 +723,7 @@ static inline void sv_test_compiler_newlines(sv_testing_t* t)
 static inline void sv_test_compiler_errors(sv_testing_t* t)
 {
    sv_test_run(t, sv_test_compiler_err("y + 1") == C_ERR_UNDEFINED_VARIABLE);
-   sv_test_run(t, sv_test_compiler_err("x = 1\nx = 2") == C_ERR_REDEFINED);
+   sv_test_run(t, sv_test_compiler_err("x = 1\nx = 2") == GLOBAL_ERROR_REDEFINED);
    sv_test_run(t, sv_test_compiler_err("1 |> 2") == C_ERR_UNEXPECTED_SEXPR);
 }
 
@@ -1090,9 +1102,10 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_err("x = {a: 1, ..}\nx") == C_ERR_UNEXPECTED_SEXPR);
    sv_test_run(t, sv_test_compiler_err("x = %{\"a\": 1, ..}\nx") == C_ERR_UNEXPECTED_SEXPR);
 
-   /* A match with no matching clause raises rather than yielding nil. */
+   /* A match with no matching clause raises rather than yielding nil; a match
+    * with no clauses at all is rejected at compile time. */
    sv_test_run(t, sv_test_compiler_runtime_err("match 5 | 1 do 2 end") == VM_ERR_NO_CLAUSE);
-   sv_test_run(t, sv_test_compiler_runtime_err("match 5 end") == VM_ERR_NO_CLAUSE);
+   sv_test_run(t, sv_test_compiler_err("match 5 end") == C_ERR_UNEXPECTED_SEXPR);
 
    /* An alias binds the whole value and goes on matching the other side, in either order. */
    sv_test_run(t, sv_test_compiler_num(
