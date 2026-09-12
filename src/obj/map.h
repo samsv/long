@@ -24,14 +24,19 @@ typedef struct {
 
 sv_vec_def(sparse_item_t);
 
-sv_rc_def(sv_vec_t(sparse_item_t));
-sv_rc_def(sv_vec_t(int64_t));
-typedef sv_rc_t(sv_vec_t(sparse_item_t)) dense_t;
-typedef sv_rc_t(sv_vec_t(int64_t)) sparse_t;
+/**
+ * Arrays shared by the versions of one node: dense holds the items in
+ * insertion order, sparse maps hash slots to dense indices (-1 is empty).
+ */
+typedef struct {
+    sv_vec_t(sparse_item_t) dense;
+    sv_vec_t(int64_t) sparse;
+} set_store_t;
+
+sv_rc_def(set_store_t);
 
 typedef struct {
-    dense_t dense;
-    sparse_t sparse;
+    sv_rc_t(set_store_t) store;
     int64_t len;
 } sparse_set_t;
 
@@ -155,7 +160,7 @@ bool thm_delete(transient_hashmap_t*, value_t, const sv_allocator_t*);
 /**
  * Turns a persistent map into a transient, consuming the handle. Only valid
  * when this is the map's only reference: a shared map is left intact and the
- * error transient (NULL dense cell) is returned. Adopts the storage in O(1)
+ * error transient (NULL store cell) is returned. Adopts the storage in O(1)
  * when it is exclusively owned; only a map whose storage is still woven into
  * sibling versions is flattened into a fresh node.
  */

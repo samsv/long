@@ -3,7 +3,7 @@
 
 sv_opt_t(uint32_t) names_get(transient_hashmap_t names, sv_str_t id, ctx_t* ctx)
 {
-    if (names.set.dense.cell == NULL)
+    if (names.set.store.cell == NULL)
         return sv_opt_none_t(uint32_t);
 
     value_t key = value_init_str(id, &ctx->alloc);
@@ -36,14 +36,14 @@ static global_error_t error_redefined(ctx_t* ctx, const char* what, sv_str_t id)
 
 int64_t names_count(transient_hashmap_t names)
 {
-    return names.set.dense.cell != NULL ? thm_count(names) : 0;
+    return names.set.store.cell != NULL ? thm_count(names) : 0;
 }
 
 bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
 {
-    if (names->set.dense.cell == NULL) {
+    if (names->set.store.cell == NULL) {
         *names = thm_init(4, &ctx->alloc);
-        if (names->set.dense.cell == NULL)
+        if (names->set.store.cell == NULL)
             return false;
     }
 

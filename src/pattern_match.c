@@ -795,7 +795,7 @@ static sexpr_t compile_kv_container(cons_t match, int* start_i, sexpr_t u, patte
 
         // hashmap where the keys are the literals and the values are the indices of the expression inside match
         transient_hashmap_t map = thm_init(record_cond.size / 2, &ctx->alloc);
-        CHECK(map.set.dense.cell != NULL);
+        CHECK(map.set.store.cell != NULL);
 
         for (int j = 1; j < record_cond.size - 1; j += 2) {
             sv_opt_t(value_t) maybe_key = literal_to_value(record_cond.arr[j].atom.literal, ctx);

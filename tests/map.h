@@ -154,6 +154,43 @@ static inline void sv_test_map_fork(sv_testing_t* t)
    map_deinit(&forked, &sv_gpa);
 }
 
+static inline void sv_test_map_fork_update(sv_testing_t* t)
+{
+   value_t base[] = { sv_test_map_num(1), sv_test_map_num(10) };
+   hashmap_t m0 = map_init(base, 2, &sv_gpa);
+   hashmap_t m1 = map_put(m0, sv_test_map_kv(1, 11), &sv_gpa);
+   hashmap_t m2 = map_put(m1, sv_test_map_kv(2, 20), &sv_gpa);
+   hashmap_t m3 = map_put(m0, sv_test_map_kv(3, 30), &sv_gpa);
+   hashmap_t m4 = map_put(m3, sv_test_map_kv(2, 99), &sv_gpa);
+
+   sv_test_run(t, map_count(m2) == 2);
+   sv_test_run(t, sv_test_map_get_num(m2, 1) == 11);
+   sv_test_run(t, sv_test_map_get_num(m2, 2) == 20);
+   sv_test_run(t, !map_get(m2, sv_test_map_num(3)).is_some);
+
+   sv_test_run(t, map_count(m4) == 3);
+   sv_test_run(t, sv_test_map_get_num(m4, 1) == 10);
+   sv_test_run(t, sv_test_map_get_num(m4, 2) == 99);
+   sv_test_run(t, sv_test_map_get_num(m4, 3) == 30);
+
+   sv_test_run(t, map_count(m0) == 1 && sv_test_map_get_num(m0, 1) == 10);
+   sv_test_run(t, map_count(m1) == 1 && sv_test_map_get_num(m1, 1) == 11);
+   sv_test_run(t, map_count(m3) == 2 && !map_get(m3, sv_test_map_num(2)).is_some);
+
+   hashmap_t maps[] = { m2, m4 };
+   for (int i = 0; i < 2; i++) {
+      map_iter_t it = map_iter_init_no_borrow(maps[i]);
+      for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it))
+         sv_test_run(t, sv_test_map_get_num(maps[i], kv.value.key.number) == kv.value.value.number);
+   }
+
+   map_deinit(&m0, &sv_gpa);
+   map_deinit(&m1, &sv_gpa);
+   map_deinit(&m2, &sv_gpa);
+   map_deinit(&m3, &sv_gpa);
+   map_deinit(&m4, &sv_gpa);
+}
+
 static inline void sv_test_map_delete(sv_testing_t* t)
 {
    value_t kvs[] = {
@@ -346,6 +383,20 @@ static inline void sv_test_map_oom(sv_testing_t* t)
       if (partial.cell != NULL)
          map_deinit(&partial, &countdown);
    }
+
+   value_t upd_kvs[] = { sv_test_map_num(1), v, sv_test_map_num(2), sv_test_map_num(2) };
+   hashmap_t upd = map_init(upd_kvs, 4, &sv_gpa);
+   for (int64_t remaining = 1; remaining < 6; remaining++) {
+      sv_test_countdown_t counter = { .remaining = remaining };
+      sv_allocator_t countdown = {
+         .vtable = &sv_test_countdown_vtable,
+         .self = &counter,
+      };
+      hashmap_t updated = map_put(upd, sv_test_map_kv(2, 5), &countdown);
+      if (updated.cell != NULL)
+         map_deinit(&updated, &countdown);
+   }
+   map_deinit(&upd, &sv_gpa);
    sv_test_run(t, v.obj.cell->count == 1);
    sv_test_run(t, sv_test_map_obj_frees == 0);
    sv_rc_deinit(&v.obj, &sv_gpa);
@@ -355,7 +406,7 @@ static inline void sv_test_map_oom(sv_testing_t* t)
 static inline void sv_test_map_transient(sv_testing_t* t)
 {
    transient_hashmap_t tm = thm_init(4, &sv_gpa);
-   sv_test_run(t, tm.set.dense.cell != NULL);
+   sv_test_run(t, tm.set.store.cell != NULL);
 
    sv_test_map_obj_frees = 0;
    for (double k = 1; k <= 3; k++) {
@@ -399,12 +450,12 @@ static inline void sv_test_map_transient(sv_testing_t* t)
 
    hashmap_t persisted = transient_to_map(&tm, &sv_gpa);
    sv_test_run(t, persisted.cell != NULL);
-   sv_test_run(t, tm.set.dense.cell == NULL);
+   sv_test_run(t, tm.set.store.cell == NULL);
    sv_test_run(t, map_count(persisted) == 103);
    sv_test_run(t, sv_test_map_get_num(persisted, 1042) == 42);
 
    transient_hashmap_t back = map_to_transient(&persisted, &sv_gpa);
-   sv_test_run(t, back.set.dense.cell != NULL);
+   sv_test_run(t, back.set.store.cell != NULL);
    sv_test_run(t, persisted.cell == NULL);
    sv_test_run(t, thm_put(&back, sv_test_map_kv(5000, 1), &sv_gpa));
    sv_test_run(t, thm_count(back) == 104);
@@ -412,7 +463,7 @@ static inline void sv_test_map_transient(sv_testing_t* t)
    hashmap_t shared = transient_to_map(&back, &sv_gpa);
    hashmap_t borrow = sv_rc_borrow(shared);
    transient_hashmap_t denied = map_to_transient(&shared, &sv_gpa);
-   sv_test_run(t, denied.set.dense.cell == NULL);
+   sv_test_run(t, denied.set.store.cell == NULL);
    sv_test_run(t, shared.cell != NULL);
    sv_test_run(t, map_count(shared) == 104);
    map_deinit(&borrow, &sv_gpa);
@@ -425,7 +476,7 @@ static inline void sv_test_map_transient(sv_testing_t* t)
    hashmap_t v0 = map_init(base, 4, &sv_gpa);
    hashmap_t v1 = map_put(v0, sv_test_map_kv(3, 3), &sv_gpa);
    transient_hashmap_t flat = map_to_transient(&v1, &sv_gpa);
-   sv_test_run(t, flat.set.dense.cell != NULL);
+   sv_test_run(t, flat.set.store.cell != NULL);
    sv_test_run(t, thm_count(flat) == 3);
    sv_test_run(t, thm_get(flat, sv_test_map_num(3)).is_some);
    sv_test_run(t, map_count(v0) == 2);
@@ -439,6 +490,7 @@ static inline void sv_test_map(sv_testing_t* t)
    sv_test_map_init_get(t);
    sv_test_map_put(t);
    sv_test_map_fork(t);
+   sv_test_map_fork_update(t);
    sv_test_map_delete(t);
    sv_test_map_count_flat(t);
    sv_test_map_flatten(t);

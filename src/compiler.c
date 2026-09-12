@@ -50,8 +50,8 @@ compiler_t compiler_init(const char* base_path, ctx_t* ctx, bool* success)
         .compiled_modules = thm_init(8, &ctx->alloc),
         .to_be_compiled_modules = thm_init(8, &ctx->alloc),
     };
-    if (modules.compiled_modules.set.dense.cell == NULL
-        || modules.to_be_compiled_modules.set.dense.cell == NULL
+    if (modules.compiled_modules.set.store.cell == NULL
+        || modules.to_be_compiled_modules.set.store.cell == NULL
     ) {
         thm_deinit(&modules.compiled_modules, &ctx->alloc);
         thm_deinit(&modules.to_be_compiled_modules, &ctx->alloc);
@@ -132,7 +132,7 @@ static bool compile_source(compiler_t* c, const char* source_code, ctx_t* ctx)
 {
     scanner_t s = scanner_init(sv_str_init(source_code));
     c->var_to_modules = thm_init(8, &ctx->alloc);
-    if (c->var_to_modules.set.dense.cell == NULL) {
+    if (c->var_to_modules.set.store.cell == NULL) {
         return compiler_oom(ctx, 0);
     }
 
