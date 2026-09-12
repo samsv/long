@@ -1686,7 +1686,7 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
         ERR_RETURN;
     }
 
-    vm_t vm = vm_init(fnb_build(&compiler.builder), opts.max_frames, compiler.globals);
+    vm_t vm = vm_init(fnb_build(&compiler.builder), opts.max_frames, compiler.globals, &ctx->alloc);
     vm.globals = compiler.global_values;
 
     compiler.global_values = sv_vec_init(value_t);
@@ -1695,18 +1695,21 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
 
     int64_t n_fields = names_count(record_fields);
     if (n_fields > 0) {
+        vm.ctx.record_fields = transient_to_map(&record_fields, &ctx->alloc);
+        thm_deinit(&record_fields, &ctx->alloc);
+
         const char** names = sv_malloc(&ctx->alloc, sizeof(char*) * (size_t)n_fields);
-        if (names == NULL) {
+        if (vm.ctx.record_fields.cell == NULL ||names == NULL) {
             compiler_oom(ctx, 0);
-            vm_deinit(&vm, &ctx->alloc);
             thm_deinit(&record_fields, &ctx->alloc);
+            vm_deinit(&vm);
             return (vm_t){0};
         }
 
         for (int64_t i = 0; i < n_fields; i++)
             names[i] = NULL;
 
-        map_iter_t it = thm_iter_init(record_fields);
+        map_iter_t it = map_iter_init(vm.ctx.record_fields);
         for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it)) {
             sv_str_t name = AS_STR(kv.value.key);
             char* copy = sv_malloc(&ctx->alloc, (size_t)name.size + 1);
@@ -1716,7 +1719,7 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
                     if (names[i] != NULL)
                         sv_free(&ctx->alloc, (void*)names[i]);
                 sv_free(&ctx->alloc, names);
-                vm_deinit(&vm, &ctx->alloc);
+                vm_deinit(&vm);
                 thm_deinit(&record_fields, &ctx->alloc);
                 return (vm_t){0};
             }
@@ -1728,7 +1731,6 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
         vm.ctx.record_names_sizes = (uint32_t)n_fields;
     }
 
-    thm_deinit(&record_fields, &ctx->alloc);
     return vm;
 #undef ERR_RETURN
 }

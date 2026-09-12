@@ -22,6 +22,7 @@ typedef struct vm_ctx_t {
     const sv_allocator_t* alloc;
     sv_logger_t logger;
 
+    hashmap_t record_fields;
     const char** record_key_names;
     uint32_t record_names_sizes;
 } vm_ctx_t;
@@ -53,6 +54,30 @@ typedef struct vm_t {
 
     vm_ctx_t ctx;
 } vm_t;
+
+/**
+ * Creates a vm that owns and runs `fn`.
+ */
+vm_t vm_init(fn_t, int64_t max_call_frames, globals_t globals_names_to_index, const sv_allocator_t*);
+void vm_deinit(vm_t*);
+
+/**
+ * Returns the compiled index of the given record name.
+ */
+sv_opt_t(uint32_t) vm_get_record_idx(vm_t, sv_str_t);
+
+/**
+ * Interprets the VM bytecode.
+ */
+sv_opt_t(error_t) vm_run(vm_t*);
+/**
+ * Calls the given function by globals index.
+ */
+value_t vm_call(vm_t*, uint32_t, value_t*, uint8_t);
+/**
+ * Calls the given function by name.
+ */
+value_t vm_call_name(vm_t*, value_t*, uint8_t, sv_str_t function_name, sv_str_t file_name);
 
 typedef enum {
     OP_ADD,
@@ -165,25 +190,6 @@ typedef struct {
     value_kind expected_v;
     obj_kind expected_o;
 } vm_wrong_type_err;
-
-/**
- * Creates a vm that owns and runs `fn`.
- */
-vm_t vm_init(fn_t, int64_t max_call_frames, globals_t globals_names_to_index);
-void vm_deinit(vm_t*, const sv_allocator_t*);
-
-/**
- * Interprets the VM bytecode.
- */
-sv_opt_t(error_t) vm_run(vm_t*);
-/**
- * Calls the given function by globals index.
- */
-value_t vm_call(vm_t*, uint32_t, value_t*, uint8_t);
-/**
- * Calls the given function by name.
- */
-value_t vm_call_name(vm_t*, value_t*, uint8_t, sv_str_t function_name, sv_str_t file_name);
 
 /**
  * Frees the payload of an error returned by vm_run.

@@ -35,7 +35,7 @@ static error_t vm_oom_err(const char* msg)
     return (error_t){ .error_code = VM_ERR_OOM, .msg = sv_str_init(msg) };
 }
 
-vm_t vm_init(fn_t fn, int64_t max_call_frames, globals_t globals_names_to_index)
+vm_t vm_init(fn_t fn, int64_t max_call_frames, globals_t globals_names_to_index, const sv_allocator_t* a)
 {
     return (vm_t){
         .call_frames = sv_vec_init(call_frame_t),
@@ -45,12 +45,13 @@ vm_t vm_init(fn_t fn, int64_t max_call_frames, globals_t globals_names_to_index)
         .globals = sv_vec_init(value_t),
         .locals = sv_vec_init(value_t),
         .stack = sv_vec_init(value_t),
-        .ctx = { .alloc = NULL, .logger = sv_std_logger, .record_key_names = NULL, .record_names_sizes = 0 },
+        .ctx = { .alloc = a, .logger = sv_std_logger, .record_key_names = NULL, .record_names_sizes = 0 },
     };
 }
 
-void vm_deinit(vm_t* vm, const sv_allocator_t* a)
+void vm_deinit(vm_t* vm)
 {
+    const sv_allocator_t* a = vm->ctx.alloc;
     if (vm->ctx.record_key_names != NULL) {
         for (uint32_t i = 0; i < vm->ctx.record_names_sizes; i++)
             sv_free(a, (void*)vm->ctx.record_key_names[i]);
@@ -61,6 +62,7 @@ void vm_deinit(vm_t* vm, const sv_allocator_t* a)
     value_arr_deinit(&vm->locals, a);
     sv_vec_deinit(&vm->call_frames, a);
     thm_deinit(&vm->globals_names_to_index.name_indexes, a);
+    map_deinit(&vm->ctx.record_fields, a);
     fn_deinit(&vm->fn, a);
 }
 
@@ -75,6 +77,22 @@ static call_frame_t init_frame(fn_t* fn, int64_t locals_offset, int64_t stack_of
         .group = group,
         .upvalues = upvalues,
     };
+}
+
+sv_opt_t(uint32_t) vm_get_record_idx(vm_t vm, sv_str_t s)
+{
+    if (vm.ctx.record_fields.cell == NULL)
+        return sv_opt_none_t(uint32_t);
+
+    obj_t str_obj = { .kind = OBJ_STR, .str = s };
+    sv_rc_cell_t(obj_t) cell = { .value = str_obj };
+    sv_rc_t(obj_t) obj = { .cell =  &cell };
+    value_t v = { .kind = VALUE_OBJ, .obj = obj };
+    sv_opt_t(value_t) index_val = map_get(vm.ctx.record_fields, v);
+    sv_opt_t(uint32_t) index = index_val.is_some ?
+        sv_opt_some_t(uint32_t, (uint32_t)AS_NUMBER(index_val.value))
+        : sv_opt_none_t(uint32_t);
+    return index;
 }
 
 void vm_err_deinit(error_t* err, const sv_allocator_t* a)

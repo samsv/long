@@ -45,6 +45,7 @@ typedef struct value_t {
 #define IS_TUPLE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_TUPLE)
 #define IS_MAP(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_MAP)
 
+#define AS_NUMBER(v) ((v).number)
 #define AS_STR(v) ((v).obj.cell->value.str)
 #define AS_ERR(v) ((v).obj.cell->value.err)
 #define AS_LIST(v) ((v).obj.cell->value.list)
