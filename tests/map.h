@@ -191,6 +191,54 @@ static inline void sv_test_map_fork_update(sv_testing_t* t)
    map_deinit(&m4, &sv_gpa);
 }
 
+static inline void sv_test_map_reinsert_deleted(sv_testing_t* t)
+{
+   /* m1, m2 and m3 share one store. Slots are key % 8, so 9 probes past the
+    * tombstone of 1; re-inserting 1 must not take that slot away from m2. */
+   value_t base[] = { sv_test_map_num(1), sv_test_map_num(10) };
+   hashmap_t m0 = map_init(base, 2, &sv_gpa);
+   hashmap_t m1 = map_delete(m0, sv_test_map_num(1), &sv_gpa);
+   hashmap_t m2 = map_put(m1, sv_test_map_kv(9, 90), &sv_gpa);
+   hashmap_t m3 = map_put(m2, sv_test_map_kv(1, 11), &sv_gpa);
+
+   sv_test_run(t, !map_get(m1, sv_test_map_num(1)).is_some);
+   sv_test_run(t, map_count(m1) == 0);
+   sv_test_run(t, sv_test_map_get_num(m2, 9) == 90);
+   sv_test_run(t, !map_get(m2, sv_test_map_num(1)).is_some);
+   sv_test_run(t, map_count(m2) == 1);
+   sv_test_run(t, sv_test_map_get_num(m3, 1) == 11);
+   sv_test_run(t, sv_test_map_get_num(m3, 9) == 90);
+   sv_test_run(t, map_count(m3) == 2);
+   sv_test_run(t, sv_test_map_get_num(m0, 1) == 10);
+
+   map_deinit(&m0, &sv_gpa);
+   map_deinit(&m1, &sv_gpa);
+   map_deinit(&m2, &sv_gpa);
+   map_deinit(&m3, &sv_gpa);
+
+   /* Deleting from a big map adds a layer whose tombstone shadows the child.
+    * Re-inserting the key in a later version must keep it shadowed for d1 and d2. */
+   hashmap_t big = sv_test_map_big(40, &sv_gpa);
+   hashmap_t d1 = map_delete(big, sv_test_map_num(5), &sv_gpa);
+   hashmap_t d2 = map_put(d1, sv_test_map_kv(100, 1), &sv_gpa);
+   hashmap_t d3 = map_put(d2, sv_test_map_kv(5, 55), &sv_gpa);
+
+   sv_test_run(t, !map_get(d1, sv_test_map_num(5)).is_some);
+   sv_test_run(t, map_count(d1) == 39);
+   sv_test_run(t, !map_get(d2, sv_test_map_num(5)).is_some);
+   sv_test_run(t, sv_test_map_get_num(d2, 100) == 1);
+   sv_test_run(t, map_count(d2) == 40);
+   sv_test_run(t, sv_test_map_get_num(d3, 5) == 55);
+   sv_test_run(t, sv_test_map_get_num(d3, 100) == 1);
+   sv_test_run(t, map_count(d3) == 41);
+   sv_test_run(t, sv_test_map_get_num(big, 5) == 5);
+
+   map_deinit(&big, &sv_gpa);
+   map_deinit(&d1, &sv_gpa);
+   map_deinit(&d2, &sv_gpa);
+   map_deinit(&d3, &sv_gpa);
+}
+
 static inline void sv_test_map_delete(sv_testing_t* t)
 {
    value_t kvs[] = {
@@ -491,6 +539,7 @@ static inline void sv_test_map(sv_testing_t* t)
    sv_test_map_put(t);
    sv_test_map_fork(t);
    sv_test_map_fork_update(t);
+   sv_test_map_reinsert_deleted(t);
    sv_test_map_delete(t);
    sv_test_map_count_flat(t);
    sv_test_map_flatten(t);

@@ -59,11 +59,6 @@ static void set_deinit(sparse_set_t* set, const sv_allocator_t* a)
     sv_rc_deinit(&set->store, a);
 }
 
-static sparse_set_t set_borrow(sparse_set_t set)
-{
-    return (sparse_set_t){ .store = sv_rc_borrow(set.store), .len = set.len };
-}
-
 static int64_t set_capacity(sparse_set_t set)
 {
     return set.store.cell->value.sparse.size;
@@ -410,7 +405,7 @@ static map_node_t node_update(map_node_t node, value_t key, sv_opt_t(value_t) va
     return node_init(new_set, node.child);
 }
 
-static map_node_t node_grow(map_node_t parent, value_t key, sv_opt_t(value_t) value, const sv_allocator_t* a)
+static map_node_t map_flatten(map_node_t parent, value_t key, sv_opt_t(value_t) value, const sv_allocator_t* a)
 {
     map_node_t node = node_init_capacity(capacity_for_size(node_physical_count(parent)), (hashmap_t){0}, a);
     TRY_NOT_NULL(node.set.store.cell, ERR_NODE);
@@ -423,6 +418,25 @@ static map_node_t node_grow(map_node_t parent, value_t key, sv_opt_t(value_t) va
         if (!value.is_some && value_eql(item.value.key, key))
             continue;
         TRY_INSERT_MUT(node, item.value.key, item.value.value, a);
+    }
+
+    return node;
+}
+
+static map_node_t node_grow(map_node_t parent, value_t key, sv_opt_t(value_t) value, const sv_allocator_t* a)
+{
+    map_node_t node = node_init_capacity(capacity_for_size(parent.set.len + 1), parent.child, a);
+    TRY_NOT_NULL(node.set.store.cell, ERR_NODE);
+
+    if (value.is_some || parent.child.cell != NULL)
+        TRY_INSERT_MUT(node, key, value, a);
+
+    sv_vec_t(sparse_item_t) dense = parent.set.store.cell->value.dense;
+    for (int64_t i = 0; i < parent.set.len; i++) {
+        sparse_item_t item = dense.arr[i];
+        if (!item.value.is_some && (parent.child.cell == NULL || value_eql(item.key, key)))
+            continue;
+        TRY_INSERT_MUT(node, item.key, item.value, a);
     }
 
     return node;
@@ -463,10 +477,10 @@ static map_node_t map_update_node(hashmap_t map, value_t key, sv_opt_t(value_t) 
                                   int64_t index, const sv_allocator_t* a)
 {
     map_node_t node = map.cell->value;
-    if (node_physical_count(node) <= MAX_COPY_SIZE)
+    if (node.set.len <= MAX_COPY_SIZE)
         return node_update(node, key, value, index, a);
     if (node.depth >= MAX_DEPTH)
-        return node_grow(node, key, value, a);
+        return map_flatten(node, key, value, a);
     return node_layer(map, key, value, a);
 }
 
@@ -485,6 +499,27 @@ sv_opt_t(value_t) map_get(hashmap_t map, value_t key)
     return thm_get(map.cell->value, key);
 }
 
+static map_node_t map_insert_node(hashmap_t map, value_t key, sv_opt_t(value_t) value, int64_t index, const sv_allocator_t* a)
+{
+    map_node_t node = map.cell->value;
+    if (node.set.len * 100 / set_capacity(node.set) >= MAX_LOAD_PERCENTAGE) {
+        return node_grow(node, key, value, a);
+    } else if (set_has_space(node.set)) {
+        sparse_set_t new_set = set_insert(
+            node.set,
+            (sparse_item_t){ .sparse_index = index, .key = key, .value = value },
+            a);
+        if (new_set.store.cell == NULL)
+            return (map_node_t){0};
+        return node_init(new_set, node.child);
+    } else if (node.depth >= MAX_DEPTH) {
+        return map_flatten(node, key, value, a);
+    } else if (node.set.len <= MAX_COPY_SIZE) {
+        return node_grow(node,key, value, a);
+    }
+    return node_layer(map, key, value, a);
+}
+
 hashmap_t map_put(hashmap_t map, kv_t kv, const sv_allocator_t* a)
 {
     map_node_t node = map.cell->value;
@@ -494,21 +529,7 @@ hashmap_t map_put(hashmap_t map, kv_t kv, const sv_allocator_t* a)
     map_node_t new_node;
     switch (r.kind) {
         case GET_EMPTY:
-            if (node.set.len * 100 / set_capacity(node.set) >= MAX_LOAD_PERCENTAGE) {
-                new_node = node_grow(node, kv.key, value, a);
-            } else if (set_has_space(node.set)) {
-                sparse_set_t new_set = set_insert(
-                    node.set,
-                    (sparse_item_t){ .sparse_index = r.index, .key = kv.key, .value = value },
-                    a);
-                if (new_set.store.cell == NULL)
-                    return ERR_MAP;
-                new_node = node_init(new_set, node.child);
-            } else if (node.depth >= MAX_DEPTH || node_physical_count(node) <= MAX_COPY_SIZE) {
-                new_node = node_grow(node, kv.key, value, a);
-            } else {
-                new_node = node_layer(map, kv.key, value, a);
-            }
+            new_node = map_insert_node(map, kv.key, value, r.index, a);
             break;
         case GET_ITEM:
             new_node = map_update_node(map, kv.key, value, r.index, a);
@@ -521,15 +542,25 @@ hashmap_t map_put(hashmap_t map, kv_t kv, const sv_allocator_t* a)
     return node_wrap(new_node, a);
 }
 
+static sparse_set_t set_borrow(sparse_set_t set)
+{
+    return (sparse_set_t){ .store = sv_rc_borrow(set.store), .len = set.len };
+}
+
 hashmap_t map_delete(hashmap_t map, value_t key, const sv_allocator_t* a)
 {
     map_node_t node = map.cell->value;
-    get_result_t r = node_get_hashed(node, key, value_hash(key), node.child);
+    get_result_t r = node_get_hashed(node, key, value_hash(key), (hashmap_t){0});
 
-    map_node_t new_node = r.kind == GET_ITEM
-        ? map_update_node(map, key, sv_opt_none_t(value_t), r.index, a)
-        : node_init(set_borrow(node.set), node.child);
+    // TODO check for tombstones
+    if (r.kind == GET_EMPTY) {
+        map_node_t new_node = node.child.cell != NULL ?
+            map_insert_node(map, key, sv_opt_none_t(value_t), r.index, a)
+            : node_init(set_borrow(node.set), node.child);
+        return node_wrap(new_node, a);
+    }
 
+    map_node_t new_node = map_update_node(map, key, sv_opt_none_t(value_t), r.index, a);
     return node_wrap(new_node, a);
 }
 
@@ -621,7 +652,7 @@ bool thm_put(transient_hashmap_t* t, kv_t kv, const sv_allocator_t* a)
             break;
     }
 
-    map_node_t bigger = node_grow(*t, kv.key, sv_opt_some_t(value_t, kv.value), a);
+    map_node_t bigger = map_flatten(*t, kv.key, sv_opt_some_t(value_t, kv.value), a);
     if (bigger.set.store.cell == NULL)
         return false;
     node_free(t, a);
