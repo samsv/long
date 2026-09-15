@@ -140,7 +140,7 @@ value_t vm_call(vm_t* vm, uint32_t index, value_t* args, uint8_t arg_count)
         return value_init_err(ERROR("Wrong number of arguments", VM_ERR_BAD_ARITY), a);
 
     int success;
-    sv_vec_push(&vm->call_frames, init_frame(fn, arg_count, 0, upvalues, group), &success, a);
+    sv_vec_push(&vm->call_frames, init_frame(fn, 0, 0, upvalues, group), &success, a);
     if (!success)
         return value_init_err(ERROR("OOM when creating call frame", VM_ERR_OOM), a);
 
