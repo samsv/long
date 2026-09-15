@@ -88,6 +88,8 @@ static sv_opt_t(error_t) vm_run_frame(vm_t* vm);
 value_t vm_call(vm_t* vm, uint32_t index, value_t* args, uint8_t arg_count)
 {
 #define ERROR(_msg, code) (error_t) {.msg = sv_str_init(_msg), .error_code = code}
+    vm->stack.size = 0;
+    vm->locals.size = 0;
     const sv_allocator_t* a = vm->ctx.alloc;
     if (index >= vm->globals.size)
         return value_init_err(ERROR("Undefined global", VM_ERR_UNDEFINED_VARIABLE), a);
@@ -120,7 +122,7 @@ value_t vm_call(vm_t* vm, uint32_t index, value_t* args, uint8_t arg_count)
         return value_init_err(ERROR("Wrong number of arguments", VM_ERR_BAD_ARITY), a);
 
     int success;
-    sv_vec_push(&vm->call_frames, init_frame(fn, 0, 0, upvalues, group), &success, a);
+    sv_vec_push(&vm->call_frames, init_frame(fn, arg_count, 0, upvalues, group), &success, a);
     if (!success)
         return value_init_err(ERROR("OOM when creating call frame", VM_ERR_OOM), a);
 
@@ -134,6 +136,7 @@ value_t vm_call(vm_t* vm, uint32_t index, value_t* args, uint8_t arg_count)
         return value_init_err(ERROR("OOM when passing arguments", VM_ERR_OOM), a);
 
     sv_opt_t(error_t) ret = vm_run_frame(vm);
+    vm->locals.size = 0;
     if (ret.is_some)
         return value_init_err(ret.value, a);
 
