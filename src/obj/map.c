@@ -192,10 +192,11 @@ static uint32_t str_hash(sv_str_t s)
 static uint32_t value_hash(value_t v)
 {
     switch (v.kind) {
-        case VALUE_NUMBER: return number_hash(v.number);
+        case VALUE_NUMBER: return number_hash(AS_NUMBER(v));
         case VALUE_UNDEFINED: return 0;
         case VALUE_NIL: return 1;
-        case VALUE_BOOL: return v.boolean ? 2 : 3;
+        case VALUE_BOOL: return AS_BOOL(v) ? 2 : 3;
+        case VALUE_USERDATA: return (uint32_t)((uintptr_t)AS_USERDATA(v) >> 4);
         case VALUE_OBJ:
             switch (v.obj.cell->value.kind) {
                 case OBJ_STR: return str_hash(v.obj.cell->value.str);

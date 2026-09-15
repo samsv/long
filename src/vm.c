@@ -24,6 +24,7 @@ static bool value_is_truthy(value_t v)
         case VALUE_UNDEFINED:
         case VALUE_NIL: return false;
         case VALUE_BOOL: return v.boolean;
+        case VALUE_USERDATA:
         case VALUE_NUMBER:
         case VALUE_OBJ: return true;
     }

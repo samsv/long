@@ -17,6 +17,7 @@ typedef enum {
     VALUE_NUMBER,
     VALUE_NIL,
     VALUE_BOOL,
+    VALUE_USERDATA,
     VALUE_UNDEFINED,
     VALUE_OBJ,
 } value_kind;
@@ -26,6 +27,7 @@ typedef struct value_t {
     union {
         double number;
         bool boolean;
+        void* userdata;
         sv_rc_t(obj_t) obj;
     };
 } value_t;
@@ -33,6 +35,7 @@ typedef struct value_t {
 #define IS_NUMBER(v) ((v).kind == VALUE_NUMBER)
 #define IS_NIL(v) ((v).kind == VALUE_NIL)
 #define IS_BOOL(v) ((v).kind == VALUE_BOOL)
+#define IS_USERDATA(v) ((v).kind == VALUE_USERDATA)
 #define IS_STR(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_STR)
 #define IS_ERR(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_ERR)
 #define IS_LIST(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_LIST)
@@ -46,6 +49,8 @@ typedef struct value_t {
 #define IS_MAP(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_MAP)
 
 #define AS_NUMBER(v) ((v).number)
+#define AS_BOOL(v) ((v).boolean)
+#define AS_USERDATA(v) ((v).userdata)
 #define AS_STR(v) ((v).obj.cell->value.str)
 #define AS_ERR(v) ((v).obj.cell->value.err)
 #define AS_LIST(v) ((v).obj.cell->value.list)

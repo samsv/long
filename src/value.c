@@ -35,6 +35,7 @@ value_t value_borrow(value_t v)
         case VALUE_NIL:
         case VALUE_BOOL:
         case VALUE_NUMBER:
+        case VALUE_USERDATA:
         case VALUE_UNDEFINED:
         default:
             return v;
@@ -75,10 +76,11 @@ bool value_eql(value_t x, value_t y)
     if (x.kind != y.kind)
         return false;
     switch (x.kind) {
-        case VALUE_NUMBER: return x.number == y.number;
+        case VALUE_NUMBER: return AS_NUMBER(x) == AS_NUMBER(y);
         case VALUE_UNDEFINED: return false;
         case VALUE_NIL: return true;
-        case VALUE_BOOL: return x.boolean == y.boolean;
+        case VALUE_BOOL: return AS_BOOL(x) == AS_BOOL(y);
+        case VALUE_USERDATA: return AS_USERDATA(x) == AS_USERDATA(y);
         case VALUE_OBJ: {
             if (x.obj.cell == y.obj.cell)
                 return true;
@@ -275,6 +277,7 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
         case VALUE_BOOL: return "bool";
         case VALUE_NIL: return "nil";
         case VALUE_NUMBER: return "number";
+        case VALUE_USERDATA: return "userdata";
         case VALUE_OBJ: switch (o_kind) {
             case OBJ_ITER: return "iter";
             case OBJ_ERR: return "error";
@@ -305,6 +308,10 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
             char buf[32];
             int n = snprintf(buf, sizeof(buf), "%g", v.number);
             return sv_strb_add(b, buf, n, a) >= 0;
+        }
+        case VALUE_USERDATA: {
+            const char* userdata = "userdata";
+            return sv_strb_add(b, userdata, strlen(userdata), a) >= 0;
         }
         case VALUE_OBJ: break;
     }
