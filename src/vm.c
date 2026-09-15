@@ -137,7 +137,7 @@ value_t vm_call(vm_t* vm, uint32_t index, value_t* args, uint8_t arg_count)
     if (ret.is_some)
         return value_init_err(ret.value, a);
 
-    return vm->stack.arr[vm->stack.size--];
+    return vm->stack.arr[--vm->stack.size];
 }
 
 value_t vm_call_name(vm_t* vm, value_t* args, uint8_t arg_count,
