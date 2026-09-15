@@ -1,4 +1,10 @@
 #include "record.h"
+#include <stdlib.h>
+
+static int record_cmp(const void* r1, const void* r2)
+{
+    return ((record_item_t*)r1)->id - ((record_item_t*)r2)->id;
+}
 
 record_t record_init(const value_t* values, uint8_t size, const sv_allocator_t* a)
 {
@@ -9,6 +15,7 @@ record_t record_init(const value_t* values, uint8_t size, const sv_allocator_t* 
     for (uint16_t i = 0; i < 2 * (uint16_t) size; i += 2)
         items[i / 2] = (record_item_t){ .id = (uint32_t)values[i].number, .value = value_borrow(values[i + 1]) };
 
+    qsort(items, size, sizeof(record_item_t), record_cmp);
     return (record_t){ .items = items, .size = size };
 }
 
