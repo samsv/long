@@ -15,3 +15,8 @@ fun f(x, y)
     |> println()
 
 f(2, 1)
+
+for _ in [1, 2, 3, 4] do
+    randi(1, 5)
+    |> println()
+end

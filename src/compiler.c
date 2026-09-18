@@ -1649,11 +1649,13 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
     if (!record_field_id(&compiler, sv_str_init("value"), 0, ctx, &reserved))
         ERR_RETURN;
 
-#define FNS_SIZE 3
+#define FNS_SIZE 5
     native_fn_t native_fns[FNS_SIZE] = {
         { .arity = 1, .name = "print", .fn = ntv_print },
         { .arity = 1, .name = "println", .fn = ntv_println },
         { .arity = 1, .name = "print_vals", .fn = ntv_print_arr },
+        { .arity = 2, .name = "randi", .fn = ntv_randi },
+        { .arity = 2, .name = "randf", .fn = ntv_randf },
     };
     for (int64_t i = 0; i < FNS_SIZE; i++)
         if(!add_native_fn(&compiler, native_fns[i], ctx))
