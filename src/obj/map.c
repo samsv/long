@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <limits.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include "map.h"
 #include "../obj.h"
@@ -144,6 +145,7 @@ typedef struct {
     get_result_kind kind;
     const sparse_item_t* item;
     int64_t index;
+    bool found_tomb;
 } get_result_t;
 
 static uint32_t number_hash(double n)
@@ -276,7 +278,7 @@ static int64_t node_physical_count(map_node_t node)
     return node.set.len + (node.child.cell != NULL ? node_physical_count(node.child.cell->value) : 0);
 }
 
-static get_result_t node_get_hashed(map_node_t node, value_t key, uint32_t hash, hashmap_t child)
+static get_result_t node_get_hashed(map_node_t node, value_t key, uint32_t hash, uint8_t min_depth)
 {
     int64_t cap = set_capacity(node.set);
     int64_t i = (int64_t)hash % cap;
@@ -296,14 +298,14 @@ static get_result_t node_get_hashed(map_node_t node, value_t key, uint32_t hash,
     }
 
     get_result_t local = item == NULL
-        ? (get_result_t){ .kind = GET_EMPTY, .index = i }
-        : (get_result_t){ .kind = GET_FULL };
+        ? (get_result_t){ .kind = GET_EMPTY, .index = i, .found_tomb = found_tomb }
+        : (get_result_t){ .kind = GET_FULL, .found_tomb = found_tomb };
 
-    if (found_tomb || child.cell == NULL)
+    if (found_tomb || node.depth == min_depth)
         return local;
 
-    map_node_t c = child.cell->value;
-    return node_get_hashed(c, key, hash, c.child);
+    map_node_t c = node.child.cell->value;
+    return node_get_hashed(c, key, hash, min_depth);
 }
 
 static sv_opt_t(sparse_item_t) flat_iter_next(map_flat_iter_t* it)
@@ -340,7 +342,7 @@ static sv_opt_t(sparse_item_t) depth_iter_next(map_depth_iter_t* it)
 
         const sparse_item_t* item = &layer->set.store.cell->value.dense.arr[it->index];
         it->index++;
-        get_result_t r = node_get_hashed(it->parent, item->key, value_hash(item->key), it->parent.child);
+        get_result_t r = node_get_hashed(it->parent, item->key, value_hash(item->key), 0);
         if (r.kind != GET_ITEM || r.item != item)
             continue;
         return sv_opt_some_t(sparse_item_t, *item);
@@ -365,7 +367,7 @@ static sv_opt_t(sparse_item_t) iter_next_item(map_iter_t* it)
 
 static bool node_insert_mut(map_node_t* node, value_t key, sv_opt_t(value_t) value, const sv_allocator_t* a)
 {
-    get_result_t r = node_get_hashed(*node, key, value_hash(key), (hashmap_t){0});
+    get_result_t r = node_get_hashed(*node, key, value_hash(key), node->depth);
     switch (r.kind) {
         case GET_EMPTY:
             return set_insert_mut(
@@ -525,7 +527,7 @@ hashmap_t map_put(hashmap_t map, kv_t kv, const sv_allocator_t* a)
 {
     map_node_t node = map.cell->value;
     sv_opt_t(value_t) value = sv_opt_some_t(value_t, kv.value);
-    get_result_t r = node_get_hashed(node, kv.key, value_hash(kv.key), (hashmap_t){0});
+    get_result_t r = node_get_hashed(node, kv.key, value_hash(kv.key), node.depth);
 
     map_node_t new_node;
     switch (r.kind) {
@@ -551,17 +553,21 @@ static sparse_set_t set_borrow(sparse_set_t set)
 hashmap_t map_delete(hashmap_t map, value_t key, const sv_allocator_t* a)
 {
     map_node_t node = map.cell->value;
-    get_result_t r = node_get_hashed(node, key, value_hash(key), (hashmap_t){0});
+    uint32_t hash = value_hash(key);
 
-    // TODO check for tombstones
-    if (r.kind == GET_EMPTY) {
-        map_node_t new_node = node.child.cell != NULL ?
-            map_insert_node(map, key, sv_opt_none_t(value_t), r.index, a)
-            : node_init(set_borrow(node.set), node.child);
+    get_result_t r = node_get_hashed(node, key, hash, node.depth);
+    if (r.kind != GET_EMPTY) {
+        map_node_t new_node = map_update_node(map, key, sv_opt_none_t(value_t), r.index, a);
+        return node_wrap(new_node, a);
+    } else if (node.depth == 0 || r.found_tomb) {
+        map_node_t new_node = node_init(set_borrow(node.set), node.child);
         return node_wrap(new_node, a);
     }
 
-    map_node_t new_node = map_update_node(map, key, sv_opt_none_t(value_t), r.index, a);
+    get_result_t r_child = node_get_hashed(node.child.cell->value, key, hash, 0);
+    map_node_t new_node = r_child.kind == GET_EMPTY ?
+        node_init(set_borrow(node.set), node.child)
+        : map_insert_node(map, key, sv_opt_none_t(value_t), r.index, a);
     return node_wrap(new_node, a);
 }
 
@@ -619,7 +625,7 @@ void thm_deinit(transient_hashmap_t* t, const sv_allocator_t* a)
 
 sv_opt_t(value_t) thm_get(transient_hashmap_t t, value_t key)
 {
-    get_result_t r = node_get_hashed(t, key, value_hash(key), t.child);
+    get_result_t r = node_get_hashed(t, key, value_hash(key), 0);
     if (r.kind != GET_ITEM)
         return sv_opt_none_t(value_t);
     return sv_opt_some_t(value_t, r.item->value.value);
@@ -636,7 +642,7 @@ int64_t thm_count(transient_hashmap_t t)
 
 bool thm_put(transient_hashmap_t* t, kv_t kv, const sv_allocator_t* a)
 {
-    get_result_t r = node_get_hashed(*t, kv.key, value_hash(kv.key), (hashmap_t){0});
+    get_result_t r = node_get_hashed(*t, kv.key, value_hash(kv.key), t->depth);
     switch (r.kind) {
         case GET_ITEM: {
             set_store_t* s = &t->set.store.cell->value;
@@ -663,7 +669,7 @@ bool thm_put(transient_hashmap_t* t, kv_t kv, const sv_allocator_t* a)
 
 bool thm_delete(transient_hashmap_t* t, value_t key, const sv_allocator_t* a)
 {
-    get_result_t r = node_get_hashed(*t, key, value_hash(key), (hashmap_t){0});
+    get_result_t r = node_get_hashed(*t, key, value_hash(key), t->depth);
     if (r.kind != GET_ITEM)
         return false;
 
