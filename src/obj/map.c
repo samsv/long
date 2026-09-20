@@ -556,7 +556,7 @@ hashmap_t map_delete(hashmap_t map, value_t key, const sv_allocator_t* a)
     uint32_t hash = value_hash(key);
 
     get_result_t r = node_get_hashed(node, key, hash, node.depth);
-    if (r.kind != GET_EMPTY) {
+    if (r.kind == GET_ITEM) {
         map_node_t new_node = map_update_node(map, key, sv_opt_none_t(value_t), r.index, a);
         return node_wrap(new_node, a);
     } else if (node.depth == 0 || r.found_tomb) {
