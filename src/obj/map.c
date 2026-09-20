@@ -308,15 +308,15 @@ static get_result_t node_get_hashed(map_node_t node, value_t key, uint32_t hash,
     return node_get_hashed(c, key, hash, min_depth);
 }
 
-static sv_opt_t(sparse_item_t) flat_iter_next(map_flat_iter_t* it)
+static sparse_item_t* flat_iter_next(map_flat_iter_t* it)
 {
+    const set_store_t* s = &it->node.set.store.cell->value;
     while (it->index < it->node.set.len) {
-        sparse_item_t item = it->node.set.store.cell->value.dense.arr[it->index];
-        it->index++;
-        if (item.value.is_some)
-            return sv_opt_some_t(sparse_item_t, item);
+        sparse_item_t* item = &s->dense.arr[it->index++];
+        if (item->value.is_some)
+            return item;
     }
-    return sv_opt_none_t(sparse_item_t);
+    return NULL;
 }
 
 static const map_node_t* depth_iter_node(const map_depth_iter_t* it)
@@ -359,7 +359,13 @@ static map_iter_t iter_init_node(map_node_t node)
 static sv_opt_t(sparse_item_t) iter_next_item(map_iter_t* it)
 {
     switch (it->kind) {
-        case MAP_ITER_FLAT: return flat_iter_next(&it->flat);
+        case MAP_ITER_FLAT: {
+            sparse_item_t* item = flat_iter_next(&it->flat);
+            return item == NULL ?
+                sv_opt_none_t(sparse_item_t)
+                : sv_opt_some_t(sparse_item_t, *item);
+
+        }
         case MAP_ITER_DEPTH: return depth_iter_next(&it->depth);
     }
     return sv_opt_none_t(sparse_item_t);

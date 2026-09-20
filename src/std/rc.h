@@ -12,7 +12,7 @@
 
 #define sv_rc_cell_def(type) typedef struct sv_rc_cell_t(type) {                                              \
    type value;                                                                                                \
-   int64_t count;                                                                                             \
+   int32_t count;                                                                                             \
    void(*free_fn)(type*, const sv_allocator_t*);                                                              \
 } sv_rc_cell_t(type)
 
