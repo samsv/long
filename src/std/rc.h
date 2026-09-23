@@ -35,7 +35,7 @@ sv_rc_wrapper_def(type)
 #define sv_rc_borrow(rc) ((rc).cell != NULL ? (rc).cell->count++ : 0, (rc))
 #define sv_rc_get(rc) ((rc).cell != NULL ? &(rc).cell->value : NULL)
 
-#define sv_rc_deinit(rc, a) do {                                                                                 \
+#define sv_rc_deinit(rc, a) do {                                                                              \
    if ((rc)->cell == NULL) break;                                                                             \
    (rc)->cell->count--;                                                                                       \
    if ((rc)->cell->count == 0) {                                                                              \
