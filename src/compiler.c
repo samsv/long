@@ -890,8 +890,7 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     TRY(jump_emit(ctx, fnb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
     TRY(emit(c, ctx, OP_POP, line));
 
-    /* The pattern's names get their own scope: the exit path jumps here having
-     * pushed only the item, so the loop's own pop must keep counting just that. */
+    /* The pattern's names */
     if (destructure) {
         TRY(init_scope(c, ctx, line));
         TRY(emit_wide(c, ctx, OP_GET_LOCAL, id_slot.value, line));
@@ -911,6 +910,11 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
 
     TRY(deinit_scope(c, ctx));
     return deinit_scope(c, ctx);
+}
+
+static bool compile_map(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+{
+
 }
 
 static bool reject_pattern_only(ctx_t* ctx, int64_t line)
@@ -1540,6 +1544,7 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, bool is_
         switch (a.fn) {
             case FN_IF: return compile_if(c, cons + 1, n - 1, a.line, is_tail, ctx);
             case FN_FOR: return compile_for(c, cons + 1, n - 1, a.line, ctx);
+            case FN_MAP: return compile_map(c, cons + 1, n - 1, a.line, ctx);
             case FN_LIST: return compile_list(c, cons + 1, n - 1, a.line, ctx);
             case FN_HASHMAP: return compile_hashmap(c, cons + 1, n - 1, a.line, ctx);
             case FN_RECORD: return compile_record(c, cons + 1, n - 1, a.line, ctx);
@@ -1551,7 +1556,6 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, bool is_
             case FN_IMPORT: return compile_import(c, cons + 1, a.line, ctx);
             case FN_MATCH: return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR,
                                                  "Unlowered match expression");
-            case FN_MAP:
             case FN_MAPF:
             case FN_REDUCE:
             case FN_WHILE: {

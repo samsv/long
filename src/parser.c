@@ -531,7 +531,7 @@ static sexpr_t parse_block(scanner_t* s, ctx_t* ctx, const token_pattern* ends,
     }
 }
 
-static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
+static sexpr_t parse_loop(scanner_t* s, ctx_t* ctx, token_t loop_token)
 {
     sexpr_t binding = parse_pattern(s, ctx);
     if (is_error_sexpr(binding))
@@ -550,7 +550,7 @@ static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
     }
 
     sexpr_t cond_items[] = { binding, iter };
-    sexpr_t loop_cond = cons_of(ctx, cond_items, 2, for_token.line);
+    sexpr_t loop_cond = cons_of(ctx, cond_items, 2, loop_token.line);
     if (is_error_sexpr(loop_cond))
         return loop_cond;
 
@@ -562,14 +562,24 @@ static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
 
     token_pattern ends[] = { kw_pattern(KEYWORD_END) };
     token_t term;
-    sexpr_t body = parse_block(s, ctx, ends, 1, for_token.line, &term);
+    sexpr_t body = parse_block(s, ctx, ends, 1, loop_token.line, &term);
     if (is_error_sexpr(body)) {
         sexpr_free(&loop_cond, &ctx->alloc);
         return body;
     }
 
-    sexpr_t items[] = { atom_sexpr(for_token), loop_cond, body };
-    return cons_of(ctx, items, 3, for_token.line);
+    sexpr_t items[] = { atom_sexpr(loop_token), loop_cond, body };
+    return cons_of(ctx, items, 3, loop_token.line);
+}
+
+static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
+{
+    return parse_loop(s, ctx, for_token);
+}
+
+static sexpr_t parse_map(scanner_t* s, ctx_t* ctx, token_t map_token)
+{
+    return parse_loop(s, ctx, map_token);
 }
 
 static sexpr_t parse_clause_body(scanner_t* s, ctx_t* ctx, int64_t line, token_t* term)
@@ -1415,6 +1425,8 @@ static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
                 return parse_if(s, ctx, token);
             case FN_FOR:
                 return parse_for(s, ctx, token);
+            case FN_MAP:
+                return parse_map(s, ctx, token);
             case FN_FUN:
                 return parse_fun(s, ctx, token);
             case FN_LIST: {
@@ -1430,7 +1442,6 @@ static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
             case FN_LENGTH:
             case FN_RECORD_GET_OR_NIL:
             case FN_HASHMAP_GET_OR_NIL:
-            case FN_MAP:
             case FN_HASHMAP:
             case FN_RECORD:
             case FN_TUPLE:
