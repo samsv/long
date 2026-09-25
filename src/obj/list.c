@@ -37,6 +37,22 @@ list_t ll_init(const value_t* vs, int64_t len, const sv_allocator_t* a)
     return ll_init_from_vec_rev(vec, a);
 }
 
+list_t ll_init_filter(const value_t* vs, int64_t len, const sv_allocator_t* a)
+{
+    if (len == 0)
+        return ll_empty();
+
+    sv_vec_t(value_t) vec = sv_vec_init_capacity(value_t, len, a);
+    TRY_NOT_NULL(vec.arr);
+
+    int64_t current = 0;
+    for (int64_t i = 0; i < len; i++)
+        if (!IS_NIL(vs[len - i - 1]))
+            vec.arr[current++] = value_borrow(vs[len - i - 1]);
+    vec.size = current;
+
+    return ll_init_from_vec_rev(vec, a);
+}
 
 list_t ll_init_from_vec_rev(sv_vec_t(value_t) vec, const sv_allocator_t* a)
 {

@@ -29,6 +29,10 @@ sv_rc_cell_def(node_t);
  */
 list_t ll_init(const value_t*, int64_t, const sv_allocator_t*);
 /**
+ * Initializes a new list from the value array, filtering the non nil values. Clones the values into the new list.
+ */
+list_t ll_init_filter(const value_t*, int64_t, const sv_allocator_t*);
+/**
  * Initializes a new list from the value vector. Takes ownership from the vector.
  * Vec values are reversed before inserted.
  */

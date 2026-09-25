@@ -148,6 +148,18 @@ value_t value_init_list(const value_t* vs, int64_t len, const sv_allocator_t* a)
     return v;
 }
 
+value_t value_init_list_filter(const value_t* vs, int64_t len, const sv_allocator_t* a)
+{
+    list_t list = ll_init_filter(vs, len, a);
+    if (list.cell == NULL)
+        return ERR_VALUE;
+
+    value_t v = obj_wrap((obj_t){ .kind = OBJ_LIST, .list = list }, a);
+    if (v.obj.cell == NULL)
+        ll_deinit(&list, a);
+    return v;
+}
+
 value_t value_wrap_list(list_t list, const sv_allocator_t* a)
 {
     return obj_wrap((obj_t){ .kind = OBJ_LIST, .list = list }, a);

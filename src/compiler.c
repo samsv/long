@@ -855,7 +855,7 @@ static bool compile_if(compiler_t* c, const sexpr_t* args, int64_t n, int64_t li
 }
 
 #define LOOP_SETUP()                                                                                          \
-    const sexpr_t* binding = args[0].cons.arr; \
+    const sexpr_t* binding = args[0].cons.arr;                                                                \
     sv_str_t collection_name = sv_str_init(" $collection ");                                                  \
     sv_str_t iter_name = sv_str_init(" $iter ");                                                              \
                                                                                                               \
@@ -920,7 +920,8 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     return deinit_scope(c, ctx);
 }
 
-static bool compile_map(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
+static bool compile_map(compiler_t* c, const sexpr_t* args, int64_t n,
+                        vm_instructions op_code, int64_t line, ctx_t* ctx)
 {
     assert(n == 2);
 
@@ -929,7 +930,7 @@ static bool compile_map(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
 
     TRY(emit_wide(c, ctx, OP_GET_LOCAL, collection_slot, line));
     TRY(emit(c, ctx, OP_LENGTH, line));
-    TRY(emit(c, ctx, OP_LIST_STACK, line));
+    TRY(emit(c, ctx, op_code, line));
 
     TRY(deinit_scope(c, ctx));
     return deinit_scope(c, ctx);
@@ -1562,7 +1563,8 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, bool is_
         switch (a.fn) {
             case FN_IF: return compile_if(c, cons + 1, n - 1, a.line, is_tail, ctx);
             case FN_FOR: return compile_for(c, cons + 1, n - 1, a.line, ctx);
-            case FN_MAP: return compile_map(c, cons + 1, n - 1, a.line, ctx);
+            case FN_MAP: return compile_map(c, cons + 1, n - 1, OP_LIST_STACK, a.line, ctx);
+            case FN_MAPF: return compile_map(c, cons + 1, n - 1, OP_LIST_FILTER, a.line, ctx);
             case FN_LIST: return compile_list(c, cons + 1, n - 1, a.line, ctx);
             case FN_HASHMAP: return compile_hashmap(c, cons + 1, n - 1, a.line, ctx);
             case FN_RECORD: return compile_record(c, cons + 1, n - 1, a.line, ctx);
@@ -1574,7 +1576,6 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, bool is_
             case FN_IMPORT: return compile_import(c, cons + 1, a.line, ctx);
             case FN_MATCH: return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR,
                                                  "Unlowered match expression");
-            case FN_MAPF:
             case FN_REDUCE:
             case FN_WHILE: {
                 char msg[96];

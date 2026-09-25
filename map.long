@@ -1,0 +1,9 @@
+z = mapf x in [1, 2, 3] do
+    if x == 2 do
+        nil
+    else
+        2 * x
+    end
+end
+
+println(z)

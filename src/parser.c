@@ -572,16 +572,6 @@ static sexpr_t parse_loop(scanner_t* s, ctx_t* ctx, token_t loop_token)
     return cons_of(ctx, items, 3, loop_token.line);
 }
 
-static sexpr_t parse_for(scanner_t* s, ctx_t* ctx, token_t for_token)
-{
-    return parse_loop(s, ctx, for_token);
-}
-
-static sexpr_t parse_map(scanner_t* s, ctx_t* ctx, token_t map_token)
-{
-    return parse_loop(s, ctx, map_token);
-}
-
 static sexpr_t parse_clause_body(scanner_t* s, ctx_t* ctx, int64_t line, token_t* term)
 {
     token_t when;
@@ -1424,9 +1414,11 @@ static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
             case FN_IF:
                 return parse_if(s, ctx, token);
             case FN_FOR:
-                return parse_for(s, ctx, token);
+                return parse_loop(s, ctx, token);
             case FN_MAP:
-                return parse_map(s, ctx, token);
+                return parse_loop(s, ctx, token);
+            case FN_MAPF:
+                return parse_loop(s, ctx, token);
             case FN_FUN:
                 return parse_fun(s, ctx, token);
             case FN_LIST: {
@@ -1445,7 +1437,6 @@ static sexpr_t parse_expr(scanner_t* s, ctx_t* ctx, uint8_t min_prec)
             case FN_HASHMAP:
             case FN_RECORD:
             case FN_TUPLE:
-            case FN_MAPF:
             case FN_REDUCE:
             case FN_WHILE: {
                 char msg[128];

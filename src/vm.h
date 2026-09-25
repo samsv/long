@@ -112,6 +112,7 @@ typedef enum {
     OP_LIST,
     // takes list len from stack
     OP_LIST_STACK,
+    OP_LIST_FILTER,
     OP_HASHMAP,
     OP_RECORD,
     OP_TUPLE,
