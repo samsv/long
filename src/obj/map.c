@@ -198,7 +198,6 @@ static uint32_t value_hash(value_t v)
         case VALUE_UNDEFINED: return 0;
         case VALUE_NIL: return 1;
         case VALUE_BOOL: return AS_BOOL(v) ? 2 : 3;
-        case VALUE_USERDATA: return (uint32_t)((uintptr_t)AS_USERDATA(v) >> 4);
         case VALUE_OBJ:
             switch (v.obj.cell->value.kind) {
                 case OBJ_STR: return str_hash(v.obj.cell->value.str);
@@ -231,6 +230,7 @@ static uint32_t value_hash(value_t v)
                         h += value_hash(kv.value.key) * 31u ^ value_hash(kv.value.value);
                     return h;
                 }
+                case OBJ_USER_VALUE: return uv_hash(AS_USER_VALUE(v));
                 case OBJ_ERR:
                 case OBJ_ITER:
                 case OBJ_NATIVE_FN:

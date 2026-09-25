@@ -6,6 +6,7 @@
 #include "obj/map.h"
 #include "obj/iterator.h"
 #include "obj/closure.h"
+#include "obj/user_value.h"
 #include "vm.h"
 
 #define ERR_VALUE (value_t){ .kind = VALUE_OBJ }
@@ -35,7 +36,6 @@ value_t value_borrow(value_t v)
         case VALUE_NIL:
         case VALUE_BOOL:
         case VALUE_NUMBER:
-        case VALUE_USERDATA:
         case VALUE_UNDEFINED:
         default:
             return v;
@@ -80,7 +80,6 @@ bool value_eql(value_t x, value_t y)
         case VALUE_UNDEFINED: return false;
         case VALUE_NIL: return true;
         case VALUE_BOOL: return AS_BOOL(x) == AS_BOOL(y);
-        case VALUE_USERDATA: return AS_USERDATA(x) == AS_USERDATA(y);
         case VALUE_OBJ: {
             if (x.obj.cell == y.obj.cell)
                 return true;
@@ -94,6 +93,7 @@ bool value_eql(value_t x, value_t y)
                 case OBJ_MAP: return map_eql(ox->map, oy->map);
                 case OBJ_RECORD: return record_eql(ox->record, oy->record);
                 case OBJ_TUPLE: return tuple_eql(ox->tuple, oy->tuple);
+                case OBJ_USER_VALUE: return uv_eql(ox->uservalue, oy->uservalue);
                 case OBJ_NATIVE_FN:
                 case OBJ_ITER:
                 case OBJ_CLOSURE:
@@ -118,6 +118,7 @@ static void obj_free(obj_t* o, const sv_allocator_t* a)
         case OBJ_RECORD: record_deinit(&o->record, a); break;
         case OBJ_TUPLE: tuple_deinit(&o->tuple, a); break;
         case OBJ_CLOSURE_MEMBER: clsm_deinit(&o->closure_member, a); break;
+        case OBJ_USER_VALUE: uv_free(o->uservalue, a); break;
         case OBJ_ERR: {
             error_t err = o->err;
             if (err.payload != NULL)
@@ -289,7 +290,6 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
         case VALUE_BOOL: return "bool";
         case VALUE_NIL: return "nil";
         case VALUE_NUMBER: return "number";
-        case VALUE_USERDATA: return "userdata";
         case VALUE_OBJ: switch (o_kind) {
             case OBJ_ITER: return "iter";
             case OBJ_ERR: return "error";
@@ -298,6 +298,7 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
             case OBJ_MAP: return "hashmap";
             case OBJ_RECORD: return "record";
             case OBJ_TUPLE: return "tuple";
+            case OBJ_USER_VALUE: return "user_value";
             case OBJ_NATIVE_FN:
             case OBJ_CLOSURE:
             case OBJ_CLOSURE_MEMBER:
@@ -320,10 +321,6 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
             char buf[32];
             int n = snprintf(buf, sizeof(buf), "%g", v.number);
             return sv_strb_add(b, buf, n, a) >= 0;
-        }
-        case VALUE_USERDATA: {
-            const char* userdata = "userdata";
-            return sv_strb_add(b, userdata, strlen(userdata), a) >= 0;
         }
         case VALUE_OBJ: break;
     }
@@ -410,6 +407,13 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
             }
 
             return sv_strb_add(b, "}", 1, a) >= 0;
+        }
+        case OBJ_USER_VALUE: {
+            sv_str_t s = uv_string(v.obj.cell->value.uservalue, ctx);
+            CHECK(s.chars != NULL);
+            int n = sv_strb_add(b, s.chars, s.size, a);
+            sv_str_deinit(&s, ctx->alloc);
+            return n >= 0;
         }
         case OBJ_ERR: {
             error_t e = AS_ERR(v);

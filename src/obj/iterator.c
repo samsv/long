@@ -11,6 +11,7 @@ iter_t iter_init(value_t from)
         case OBJ_LIST: return (iter_t){ .kind = ITER_LIST, .list = ll_iter_init(AS_LIST(from)) };
         case OBJ_STR: return (iter_t){ .kind = ITER_STR, .str = str_iter_init(&AS_STR(from)) };
         case OBJ_MAP: return (iter_t){ .kind = ITER_MAP, .map = map_iter_init(AS_MAP(from)) };
+        case OBJ_USER_VALUE:
         case OBJ_ITER:
         case OBJ_RECORD:
         case OBJ_TUPLE:

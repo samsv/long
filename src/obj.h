@@ -1,6 +1,7 @@
 #ifndef LONG_OBJ_H
 #define LONG_OBJ_H
 
+#include "obj/user_value.h"
 #include "std/string.h"
 #include "common.h"
 #include "error.h"
@@ -20,6 +21,7 @@ typedef enum {
     OBJ_NATIVE_FN,
     OBJ_CLOSURE,
     OBJ_CLOSURE_MEMBER,
+    OBJ_USER_VALUE,
     OBJ_ERR,
 } obj_kind;
 
@@ -34,6 +36,7 @@ typedef struct obj_t {
         native_fn_t fn;
         closure_t closure;
         closure_member_t closure_member;
+        user_value_t uservalue;
         error_t err;
     };
     obj_kind kind;

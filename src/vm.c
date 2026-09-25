@@ -24,7 +24,6 @@ static bool value_is_truthy(value_t v)
         case VALUE_UNDEFINED:
         case VALUE_NIL: return false;
         case VALUE_BOOL: return v.boolean;
-        case VALUE_USERDATA:
         case VALUE_NUMBER:
         case VALUE_OBJ: return true;
     }
@@ -374,11 +373,11 @@ break; }
         case OP_TUPLE: VALUE_FROM_ARR(1, value_init_tuple, uint8_t, READ_NARROW);
 
 #define OP_MAP_X(fn) do {                                                                                     \
-    uint32_t n = sv_vec_pop(stack).number;                                                            \
-    value_t arr = fn(&stack.arr[stack.size - n], n, a);                                               \
-    TRY_NOT_NULL(arr.obj.cell, "OOM when creating collection");                                       \
-    arr_remove_n(&stack, n, a);                                                                       \
-    TRY_PUSH_OWNED(arr);                                                                              \
+    uint32_t n = sv_vec_pop(stack).number;                                                                    \
+    value_t arr = fn(&stack.arr[stack.size - n], n, a);                                                       \
+    TRY_NOT_NULL(arr.obj.cell, "OOM when creating collection");                                               \
+    arr_remove_n(&stack, n, a);                                                                               \
+    TRY_PUSH_OWNED(arr);                                                                                      \
 } while(0)
         case OP_LIST_STACK:
             OP_MAP_X(value_init_list);
@@ -536,27 +535,33 @@ break; }
             break;
         }
 #define RECORD_GET(...) do {                                                                                  \
-    value_t maybe_tuple = sv_vec_pop(stack);                                                                  \
+    value_t val = sv_vec_pop(stack);                                                                          \
     uint8_t id = READ_BYTE();                                                                                 \
-    if (!IS_RECORD(maybe_tuple))                                                                              \
-        UNSUPPORTED_1(maybe_tuple, "Type is not subscriptable");                                              \
-    record_t tuple = AS_RECORD(maybe_tuple);                                                                  \
-    sv_opt_t(value_t) v = record_get(tuple, id);                                                              \
+    if (!IS_RECORD(val) && !IS_USER_VALUE(val))                                                               \
+        UNSUPPORTED_1(val, "Type is not subscriptable");                                                      \
+    sv_opt_t(value_t) v;                                                                                      \
+    if (IS_RECORD(val)) {                                                                                     \
+        record_t tuple = AS_RECORD(val);                                                                      \
+        v = record_get(tuple, id);                                                                            \
+    } else {                                                                                                  \
+        user_value_t uv = AS_USER_VALUE(val);                                                                 \
+        v = uv_field(uv, id, &vm->ctx);                                                                       \
+    }                                                                                                         \
     if (!v.is_some) {                                                                                         \
         __VA_ARGS__;                                                                                          \
     }                                                                                                         \
     value_t out = value_borrow(v.value);                                                                      \
-    value_free(&maybe_tuple, a);                                                                              \
+    value_free(&val, a);                                                                                      \
     TRY_PUSH_OWNED(out);                                                                                      \
 } while (0)
         case OP_RECORD_GET:
             RECORD_GET({
                 value_t n = {.kind = VALUE_NUMBER, .number = (double)id};
-                OP_ERR_2(VM_ERR_FIELD_NOT_FOUND, maybe_tuple, n, "Field not found");
+                OP_ERR_2(VM_ERR_FIELD_NOT_FOUND, val, n, "Field not found");
             });
             break;
         case OP_RECORD_GET_OR_UNDEF:
-            RECORD_GET(v = sv_opt_some_t(value_t, value_undefined));
+            RECORD_GET(v.value = value_undefined);
             break;
 #undef RECORD_GET
         case OP_LENGTH: {
