@@ -53,6 +53,7 @@ static const char* op_name(vm_instructions op)
         case OP_JUMP_BACK: return "jump_back";
         case OP_JUMP_IF_FALSE: return "jump_if_false";
         case OP_LIST: return "list";
+        case OP_LIST_STACK: return "list_start";
         case OP_HASHMAP: return "hashmap";
         case OP_RECORD: return "record";
         case OP_TUPLE: return "tuple";
@@ -224,6 +225,7 @@ void print_chunk(chunk_t chunk)
             case OP_LIST_UNCONS:
             case OP_ASSERT_MATCH:
             case OP_NO_MATCH:
+            case OP_LIST_STACK:
             case OP_SWAP:
             case OP_RETURN:
             default:

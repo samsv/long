@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -853,60 +854,67 @@ static bool compile_if(compiler_t* c, const sexpr_t* args, int64_t n, int64_t li
     return deinit_scope(c, ctx);
 }
 
+#define LOOP_SETUP()                                                                                          \
+    const sexpr_t* binding = args[0].cons.arr; \
+    sv_str_t collection_name = sv_str_init(" $collection ");                                                  \
+    sv_str_t iter_name = sv_str_init(" $iter ");                                                              \
+                                                                                                              \
+    TRY(init_scope(c, ctx, line));                                                                            \
+                                                                                                              \
+    TRY(compile_sexpr(c, binding[1], false, ctx));                                                            \
+    TRY(emit(c, ctx, OP_SET_LOCAL, line));                                                                    \
+    TRY(locals_add(c->locals, collection_name, ctx, line));                                                   \
+                                                                                                              \
+    uint32_t collection_slot = locals_get(c->locals, collection_name, ctx).value;                             \
+    TRY(emit_wide(c, ctx, OP_GET_LOCAL, collection_slot, line));                                              \
+    TRY(emit(c, ctx, OP_ITER_CREATE, line));                                                                  \
+    TRY(emit(c, ctx, OP_SET_LOCAL, line));                                                                    \
+    TRY(locals_add(c->locals, iter_name, ctx, line));                                                         \
+                                                                                                              \
+    TRY(init_scope(c, ctx, line));                                                                            \
+    int64_t loop_start = c->builder.fn.chunk.bytecode.size;                                                   \
+                                                                                                              \
+    sv_opt_t(uint32_t) iter_idx = locals_get(c->locals, iter_name, ctx);                                      \
+    TRY(emit_wide(c, ctx, OP_GET_LOCAL, iter_idx.value, line));                                               \
+    TRY(emit(c, ctx, OP_ITER_NEXT, line));                                                                    \
+                                                                                                              \
+    sv_str_t id;                                                                                              \
+    bool destructure = binding[0].tag == S_CONS;                                                              \
+    if (destructure)                                                                                          \
+        id = sv_str_init(" $item ");                                                                          \
+    else                                                                                                      \
+        TRY(expect_id(binding[0], ctx, &id));                                                                 \
+    TRY(emit(c, ctx, OP_SET_LOCAL, line));                                                                    \
+    TRY(locals_add(c->locals, id, ctx, line));                                                                \
+    sv_opt_t(uint32_t) id_slot = locals_get(c->locals, id, ctx);                                              \
+    TRY(emit_wide(c, ctx, OP_GET_LOCAL, id_slot.value, line));                                                \
+                                                                                                              \
+    int64_t j1 = 0;                                                                                           \
+    TRY(jump_emit(ctx, fnb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line))
+
+#define LOOP_BODY()                                                                                           \
+    if (destructure) {                                                                                        \
+        TRY(init_scope(c, ctx, line));                                                                        \
+        TRY(emit_wide(c, ctx, OP_GET_LOCAL, id_slot.value, line));                                            \
+        TRY(compile_destructure(c, binding[0], line, ctx));                                                   \
+        TRY(emit(c, ctx, OP_POP, line));                                                                      \
+    }                                                                                                         \
+    TRY(compile_sexpr(c, args[1], false, ctx));                                                               \
+    if (destructure) TRY(deinit_scope(c, ctx));                                                               \
+    TRY(emit_pop_locals(c, ctx, names_count(c->locals->name_indexes), 0));                                    \
+    if (!fnb_add_jump_back(&c->builder, loop_start, line, &ctx->alloc))                                       \
+        return compiler_oom(ctx, line);                                                                       \
+    TRY(patch_jump(c, ctx, j1, line))
+
 static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
-    if (n != 2 || args[0].tag != S_CONS || args[0].cons.size != 2)
-        return compiler_malformed(ctx, "for", line);
-    const sexpr_t* binding = args[0].cons.arr;
-    sv_str_t iter_name = sv_str_init(" list_iter ");
+    assert(n == 2);
 
-    TRY(init_scope(c, ctx, line));
-    TRY(compile_sexpr(c, binding[1], false, ctx));
-    TRY(emit(c, ctx, OP_ITER_CREATE, line));
-    TRY(emit(c, ctx, OP_SET_LOCAL, line));
-    TRY(locals_add(c->locals, iter_name, ctx, line));
-    sv_opt_t(uint32_t) iter_slot = locals_get(c->locals, iter_name, ctx);
-    TRY(emit_wide(c, ctx, OP_GET_LOCAL, iter_slot.value, line));
+    TRY(add_const(c, ctx, value_nil, line));
 
-    TRY(init_scope(c, ctx, line));
-    int64_t loop_start = c->builder.fn.chunk.bytecode.size;
-
-    sv_opt_t(uint32_t) iter_idx = locals_get(c->locals, iter_name, ctx);
-    TRY(emit_wide(c, ctx, OP_GET_LOCAL, iter_idx.value, line));
-    TRY(emit(c, ctx, OP_ITER_NEXT, line));
-
-    sv_str_t id;
-    bool destructure = binding[0].tag == S_CONS;
-    if (destructure)
-        id = sv_str_init(" for_item ");
-    else
-        TRY(expect_id(binding[0], ctx, &id));
-    TRY(emit(c, ctx, OP_SET_LOCAL, line));
-    TRY(locals_add(c->locals, id, ctx, line));
-    sv_opt_t(uint32_t) id_slot = locals_get(c->locals, id, ctx);
-    TRY(emit_wide(c, ctx, OP_GET_LOCAL, id_slot.value, line));
-
-    int64_t j1 = 0;
-    TRY(jump_emit(ctx, fnb_add_jump_if_false(&c->builder, line, &ctx->alloc), &j1, line));
+    LOOP_SETUP();
     TRY(emit(c, ctx, OP_POP, line));
-
-    /* The pattern's names */
-    if (destructure) {
-        TRY(init_scope(c, ctx, line));
-        TRY(emit_wide(c, ctx, OP_GET_LOCAL, id_slot.value, line));
-        TRY(compile_destructure(c, binding[0], line, ctx));
-        TRY(emit(c, ctx, OP_POP, line));
-    }
-
-    TRY(compile_sexpr(c, args[1], false, ctx));
-
-    if (destructure)
-        TRY(deinit_scope(c, ctx));
-
-    TRY(emit_pop_locals(c, ctx, names_count(c->locals->name_indexes), 0));
-    if (!fnb_add_jump_back(&c->builder, loop_start, line, &ctx->alloc))
-        return compiler_oom(ctx, line);
-    TRY(patch_jump(c, ctx, j1, line));
+    LOOP_BODY();
 
     TRY(deinit_scope(c, ctx));
     return deinit_scope(c, ctx);
@@ -914,7 +922,17 @@ static bool compile_for(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
 
 static bool compile_map(compiler_t* c, const sexpr_t* args, int64_t n, int64_t line, ctx_t* ctx)
 {
+    assert(n == 2);
 
+    LOOP_SETUP();
+    LOOP_BODY();
+
+    TRY(emit_wide(c, ctx, OP_GET_LOCAL, collection_slot, line));
+    TRY(emit(c, ctx, OP_LENGTH, line));
+    TRY(emit(c, ctx, OP_LIST_STACK, line));
+
+    TRY(deinit_scope(c, ctx));
+    return deinit_scope(c, ctx);
 }
 
 static bool reject_pattern_only(ctx_t* ctx, int64_t line)
@@ -1441,10 +1459,10 @@ static bool compile_atom(compiler_t* c, token_t token, ctx_t* ctx)
 
 static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx_t* ctx)
 {
-#define CLEANUP() do {\
-    sv_free(&ctx->alloc, source_code); \
-    value_free(&path_value, &ctx->alloc); \
-    value_free(&module_name, &ctx->alloc); \
+#define CLEANUP() do {                                                                                        \
+    sv_free(&ctx->alloc, source_code);                                                                        \
+    value_free(&path_value, &ctx->alloc);                                                                     \
+    value_free(&module_name, &ctx->alloc);                                                                    \
 } while (0)
 
     char* source_code = NULL;

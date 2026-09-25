@@ -372,6 +372,15 @@ break; }
         case OP_HASHMAP: VALUE_FROM_ARR(2, value_init_map, uint32_t, READ_ARG);
         case OP_RECORD: VALUE_FROM_ARR(2, value_init_record, uint8_t, READ_NARROW);
         case OP_TUPLE: VALUE_FROM_ARR(1, value_init_tuple, uint8_t, READ_NARROW);
+        case OP_LIST_STACK: {
+            uint32_t n = sv_vec_pop(stack).number;
+            value_t arr = value_init_list(&stack.arr[stack.size - n], n, a);
+            TRY_NOT_NULL(arr.obj.cell, "OOM when creating collection");
+            arr_remove_n(&stack, n, a);
+            TRY_PUSH_OWNED(arr);
+            break;
+        }
+
         case OP_RECORD_UPDATE: {
             uint8_t n = READ_BYTE();
             value_t base = sv_vec_pop(stack);
@@ -551,7 +560,7 @@ break; }
             else if (IS_STR(val))
                 ret.number = AS_STR(val).size;
             else if (IS_LIST(val))
-                ret.number = AS_LIST(val).cell->count;
+                ret.number = ll_count(AS_LIST(val));
             else if (IS_MAP(val))
                 ret.number =  map_count(AS_MAP(val));
             else
