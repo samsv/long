@@ -1,5 +1,5 @@
 /**
- * Lóng lang standard library native functions.
+ * Lóng lang standard library native functions. The VM already checks for arity before calling the function.
  */
 
 #ifndef LONG_STD_NATIVE_H
@@ -10,7 +10,6 @@
 #include "value.h"
 #include "obj.h"
 
-value_t bad_arity_error(uint8_t got, uint8_t expected, const vm_ctx_t*);
 value_t bad_arg_type_error(value_t, value_kind expected_k, obj_kind expected_o, const vm_ctx_t*);
 
 /**

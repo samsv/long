@@ -16,22 +16,6 @@
     static int initialized = true;
 #endif
 
-value_t bad_arity_error(uint8_t got, uint8_t expected, const vm_ctx_t* ctx)
-{
-    vm_arity_err* paylod = sv_malloc(ctx->alloc, sizeof(vm_wrong_type_err));
-    *paylod = (vm_arity_err){
-        .got = got,
-        .expected = expected,
-    };
-
-    error_t e = {
-        .error_code = VM_ERR_BAD_ARITY,
-        .msg = sv_str_init("Wrong arity"),
-        .payload = paylod,
-    };
-    return value_init_err(e, ctx->alloc);
-}
-
 value_t bad_arg_type_error(value_t v, value_kind expected_k, obj_kind expected_o, const vm_ctx_t* ctx)
 {
     vm_wrong_type_err* paylod = sv_malloc(ctx->alloc, sizeof(vm_wrong_type_err));
@@ -51,8 +35,7 @@ value_t bad_arg_type_error(value_t v, value_kind expected_k, obj_kind expected_o
 
 value_t ntv_print(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
 {
-    if (n != 1)
-        return bad_arity_error(n, 1, ctx);
+    assert(n == 1);
 
     value_t v = values[0];
     sv_str_t str = !IS_STR(v) ? value_to_str(v, ctx) : AS_STR(v);
@@ -66,6 +49,8 @@ value_t ntv_print(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
 
 value_t ntv_println(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
 {
+    assert(n == 1);
+
     value_t ret = ntv_print(values, n, ctx);
     printf("\n");
     return ret;
@@ -73,8 +58,7 @@ value_t ntv_println(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
 
 value_t ntv_print_arr(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
 {
-    if (n != 1)
-        return bad_arity_error(n, 1, ctx);
+    assert(n == 1);
 
     value_t maybe_list = values[0];
     if (!IS_LIST(maybe_list))
@@ -93,8 +77,7 @@ value_t ntv_print_arr(const value_t* values, uint8_t n, const vm_ctx_t* ctx)
         srand(time(NULL));                                                     \
         initialized = true;                                                    \
     }                                                                          \
-    if (n != 2)                                                                \
-        return bad_arity_error(n, 1, ctx);                                     \
+    assert(n == 2);                                                            \
     value_t min = args[0];                                                     \
     value_t max = args[1];                                                     \
     if (!IS_NUMBER(min))                                                       \
