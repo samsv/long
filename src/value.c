@@ -36,6 +36,7 @@ value_t value_borrow(value_t v)
         case VALUE_NIL:
         case VALUE_BOOL:
         case VALUE_NUMBER:
+        case VALUE_C:
         case VALUE_UNDEFINED:
         default:
             return v;
@@ -79,6 +80,7 @@ bool value_eql(value_t x, value_t y)
         case VALUE_NUMBER: return AS_NUMBER(x) == AS_NUMBER(y);
         case VALUE_UNDEFINED: return false;
         case VALUE_NIL: return true;
+        case VALUE_C: return AS_C(x) == AS_C(y);
         case VALUE_BOOL: return AS_BOOL(x) == AS_BOOL(y);
         case VALUE_OBJ: {
             if (x.obj.cell == y.obj.cell)
@@ -289,6 +291,7 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
         case VALUE_UNDEFINED: return "undefined";
         case VALUE_BOOL: return "bool";
         case VALUE_NIL: return "nil";
+        case VALUE_C: return "c_value";
         case VALUE_NUMBER: return "number";
         case VALUE_OBJ: switch (o_kind) {
             case OBJ_ITER: return "iter";
@@ -315,6 +318,7 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
     switch (v.kind) {
         case VALUE_NIL: return sv_strb_add(b, "nil", 3, a) >= 0;
         case VALUE_UNDEFINED: return sv_strb_add(b, "undefined", 3, a) >= 0;
+        case VALUE_C: return sv_strb_add(b, "c val", 5, a) >= 0;
         case VALUE_BOOL:
             return v.boolean ? sv_strb_add(b, "true", 4, a) >= 0 : sv_strb_add(b, "false", 5, a) >= 0;
         case VALUE_NUMBER: {
