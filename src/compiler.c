@@ -1058,6 +1058,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
     fc.members = members;
     fc.globals = c->globals;
     fc.record_fields = c->record_fields;
+    fc.var_to_modules = c->var_to_modules;
 
 #define FN_TRY(call) do {                                                                                     \
     if (!(call)) {                                                                                            \
