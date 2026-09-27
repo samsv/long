@@ -146,16 +146,18 @@ value_t vm_call(vm_t* vm, uint32_t index, value_t* args, uint8_t arg_count)
         return value_init_err(ERROR("OOM when creating call frame", VM_ERR_OOM), a);
 
     if (arg_count > 0) {
-        sv_vec_push_many(&vm->locals, args, arg_count, &success, a);
+        for (uint8_t i = 0; i < arg_count; i++)
+            sv_vec_push(&vm->locals, value_borrow(args[i]), &success, a);
         if (!success)
             return value_init_err(ERROR("OOM when passing arguments", VM_ERR_OOM), a);
     }
-    sv_vec_push(&vm->locals, value, &success, a);
+    sv_vec_push(&vm->locals, value_borrow(value), &success, a);
     if (!success)
         return value_init_err(ERROR("OOM when passing arguments", VM_ERR_OOM), a);
 
     sv_opt_t(error_t) ret = vm_run_frame(vm);
-    vm->locals.size = 0;
+    arr_remove_n(&vm->locals, vm->locals.size, a);
+
     if (ret.is_some)
         return value_init_err(ret.value, a);
 
