@@ -12,6 +12,7 @@
 #include "obj/closure.h"
 #include "obj/list.h"
 #include "error.h"
+#include "obj/user_value.h"
 
 typedef enum {
     VALUE_NUMBER,
@@ -148,5 +149,10 @@ value_t value_init_record(const value_t*, uint8_t, const sv_allocator_t*);
  * failure.
  */
 value_t value_init_tuple(const value_t*, uint8_t, const sv_allocator_t*);
+/**
+ * Creates a new user value.
+ */
+value_t value_init_user_value(void*, const user_value_vtable_t*,
+                              uint32_t tag, const char* name, const sv_allocator_t*);
 
 #endif

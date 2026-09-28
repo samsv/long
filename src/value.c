@@ -455,3 +455,18 @@ sv_str_t value_to_str(value_t v, const vm_ctx_t* ctx)
     return sv_strb_to_str(&b);
 }
 
+value_t value_init_user_value(void* ptr, const user_value_vtable_t* vtable,
+                              uint32_t tag, const char* name, const sv_allocator_t* a)
+{
+    user_value_t uv = {
+        .value = ptr,
+        .vtable = vtable,
+        .name = name,
+        .tag = tag,
+    };
+
+    value_t v = obj_wrap((obj_t){ .kind = OBJ_USER_VALUE, .uservalue = uv }, a);
+    if (v.obj.cell == NULL)
+        return ERR_VALUE;
+    return v;
+}
