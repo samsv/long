@@ -40,7 +40,7 @@ int64_t names_count(transient_hashmap_t names)
     return names.set.store.cell != NULL ? thm_count(names) : 0;
 }
 
-bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed, uint32_t* index)
+bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed, uint32_t* out_index)
 {
     if (names->set.store.cell == NULL) {
         *names = thm_init(4, &ctx->alloc);
@@ -51,8 +51,8 @@ bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existe
     sv_opt_t(uint32_t) found = names_get(*names, id, ctx);
     *existed = found.is_some;
     if (*existed) {
-        if (index != NULL)
-            *index = found.value;
+        if (out_index != NULL)
+            *out_index = found.value;
         return true;
     }
 
@@ -64,8 +64,8 @@ bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existe
     kv_t kv = { .key = key, .value = { .kind = VALUE_NUMBER, .number = (double)next } };
     bool ok = thm_put(names, kv, &ctx->alloc);
     value_free(&key, &ctx->alloc);
-    if (ok && index != NULL)
-        *index = next;
+    if (ok && out_index != NULL)
+        *out_index = next;
     return ok;
 }
 
