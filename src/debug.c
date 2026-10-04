@@ -67,6 +67,7 @@ static const char* op_name(vm_instructions op)
         case OP_DUP: return "dup";
         case OP_IS_STR: return "is_str";
         case OP_IS_NUMBER: return "is_number";
+        case OP_IS_ATOM: return "is_atom";
         case OP_IS_BOOL: return "is_bool";
         case OP_IS_NIL: return "is_nil";
         case OP_IS_LIST: return "is_list";
@@ -213,6 +214,7 @@ void print_chunk(chunk_t chunk)
             case OP_DUP:
             case OP_IS_STR:
             case OP_IS_NUMBER:
+            case OP_IS_ATOM:
             case OP_IS_BOOL:
             case OP_IS_NIL:
             case OP_IS_LIST:

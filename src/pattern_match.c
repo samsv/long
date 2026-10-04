@@ -93,6 +93,7 @@ typedef enum {
     // Literals
     PAT_STR,
     PAT_NUMBER,
+    PAT_ATOM,
     PAT_NIL,
     PAT_BOOL,
 
@@ -124,6 +125,7 @@ static pattern_class pattern_class_of(sexpr_t pattern)
     switch (pattern.atom.literal.kind) {
         case LITERAL_STRING: return PAT_STR;
         case LITERAL_NUMBER: return PAT_NUMBER;
+        case LITERAL_ATOM: return PAT_ATOM;
         case LITERAL_NIL: return PAT_NIL;
         case LITERAL_TRUE:
         case LITERAL_FALSE: return PAT_BOOL;
@@ -137,6 +139,7 @@ static const char* class_predicate(pattern_class class)
     switch (class) {
         case PAT_STR: return "is-str?";
         case PAT_NUMBER: return "is-number?";
+        case PAT_ATOM: return "is-atom?";
         case PAT_NIL: return "is-nil?";
         case PAT_BOOL: return "is-bool?";
         case PAT_LIST: return "is-list?";
@@ -161,6 +164,7 @@ static bool literal_eql(literal_t a, literal_t b)
         case LITERAL_NUMBER:
             return a.number == b.number;
         case LITERAL_STRING:
+        case LITERAL_ATOM:
             return sv_str_comp(a.str, b.str);
         case LITERAL_IDENTIFIER:
             return true;
@@ -190,7 +194,8 @@ static int group_cmp(const void* a, const void* b) {
             return 0;
         case LITERAL_NUMBER:
             return AS_LITERAL(sa).number - AS_LITERAL(sb).number;
-        case LITERAL_STRING: {
+        case LITERAL_STRING:
+        case LITERAL_ATOM: {
             sv_str_t str_a = AS_LITERAL(sa).str;
             sv_str_t str_b = AS_LITERAL(sb).str;
             if (str_a.size != str_b.size)
@@ -227,6 +232,7 @@ static bool constructor_eql(sexpr_t a, sexpr_t b)
         case LITERAL_NUMBER:
             return AS_LITERAL(a).number == AS_LITERAL(b).number;
         case LITERAL_STRING:
+        case LITERAL_ATOM:
             return sv_str_comp(AS_LITERAL(a).str, AS_LITERAL(b).str);
         case LITERAL_IDENTIFIER:
             return true;
@@ -747,6 +753,16 @@ static sv_opt_t(value_t) literal_to_value(literal_t l, ctx_t* ctx)
         }
         case LITERAL_STRING: {
             value_t value = value_init_str_own(l.str, &ctx->alloc);
+            if (value.obj.cell == NULL) return sv_opt_none_t(value_t);
+            return sv_opt_some_t(value_t, value);
+        }
+        case LITERAL_ATOM: {
+            // Only key identity matters here, and a tuple can never be a key literal, so
+            // wrapping the name keeps the atom apart from the string with the same text.
+            value_t name = value_init_str_own(l.str, &ctx->alloc);
+            if (name.obj.cell == NULL) return sv_opt_none_t(value_t);
+            value_t value = value_init_tuple(&name, 1, &ctx->alloc);
+            value_free(&name, &ctx->alloc);
             if (value.obj.cell == NULL) return sv_opt_none_t(value_t);
             return sv_opt_some_t(value_t, value);
         }

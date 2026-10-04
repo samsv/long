@@ -121,6 +121,10 @@ static bool literal_format_builder(literal_t lit, sv_str_builder* b, const sv_al
             return sv_strb_add_char(b, '"', a) != -1;
         case LITERAL_NUMBER:
             return number_format_builder(lit.number, b, a);
+        case LITERAL_ATOM:
+            if (sv_strb_add_char(b, ':', a) == -1)
+                return false;
+            return sv_strb_add(b, lit.str.chars, lit.str.size, a) != -1;
         case LITERAL_NIL: return add_text(b, "nil", a);
         case LITERAL_TRUE: return add_text(b, "true", a);
         case LITERAL_FALSE: return add_text(b, "false", a);

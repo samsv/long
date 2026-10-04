@@ -26,6 +26,7 @@ typedef struct {
 static const type_test_t TYPE_TESTS[] = {
     { "is-str?", OP_IS_STR },
     { "is-number?", OP_IS_NUMBER },
+    { "is-atom?", OP_IS_ATOM },
     { "is-bool?", OP_IS_BOOL },
     { "is-nil?", OP_IS_NIL },
     { "is-list?", OP_IS_LIST },
@@ -68,6 +69,7 @@ compiler_t compiler_init(const char* base_path, ctx_t* ctx, bool* success)
         .locals = NULL,
         .members = { .depth = 0 },
         .record_fields = NULL,
+        .atoms = NULL,
         .fail_targets = NULL,
         .builder = fnb_init(sv_str_init("")),
         .global_values = sv_vec_init(value_t),
@@ -227,7 +229,7 @@ static bool locals_add(locals_t* l, sv_str_t id, ctx_t* ctx, int64_t line)
 {
     TRY(check_limit(ctx, names_count(l->name_indexes) + l->offset, UINT32_MAX, "locals", line));
     bool existed = false;
-    if (!names_add(&l->name_indexes, id, ctx, &existed))
+    if (!names_add(&l->name_indexes, id, ctx, &existed, NULL))
         return compiler_oom(ctx, line);
     if (existed)
         return compiler_error_name(ctx, C_ERR_REDEFINED, line, "Local redefined", id);
@@ -648,16 +650,13 @@ static bool compile_pipe(compiler_t* c, const sexpr_t* args, int64_t n, int64_t 
 static bool record_field_id(compiler_t* c, sv_str_t name, int64_t line, ctx_t* ctx, uint32_t* out)
 {
     bool existed = false;
-    if (!names_add(c->record_fields, name, ctx, &existed))
+    if (!names_add(c->record_fields, name, ctx, &existed, out))
         return compiler_oom(ctx, line);
-
-    sv_opt_t(uint32_t) id = names_get(*c->record_fields, name, ctx);
-    if (id.value > UINT8_MAX) {
+    if (*out > UINT8_MAX) {
         char msg[96];
         snprintf(msg, sizeof(msg), "More than %d record fields at line %" PRId64, UINT8_MAX + 1, line);
         return compiler_error(ctx, C_ERR_LIMIT_EXCEEDED, msg);
     }
-    *out = id.value;
     return true;
 }
 
@@ -1058,6 +1057,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
     fc.members = members;
     fc.globals = c->globals;
     fc.record_fields = c->record_fields;
+    fc.atoms = c->atoms;
     fc.var_to_modules = c->var_to_modules;
 
 #define FN_TRY(call) do {                                                                                     \
@@ -1185,7 +1185,7 @@ static bool compile_fun_group(compiler_t* c, const sexpr_t* members, int64_t n, 
         sv_str_t name;
         G_TRY(expect_id(members[i].cons.arr[0], ctx, &name));
         bool existed = false;
-        if (!names_add(&member_names, name, ctx, &existed))
+        if (!names_add(&member_names, name, ctx, &existed, NULL))
             G_TRY(compiler_oom(ctx, line));
         if (existed)
             G_TRY(compiler_error_name(ctx, C_ERR_REDEFINED, line, "Group member", name));
@@ -1435,6 +1435,13 @@ static bool compile_literal(compiler_t* c, literal_t lit, int64_t line, ctx_t* c
 {
     switch (lit.kind) {
         case LITERAL_NUMBER: return add_const(c, ctx, (value_t){ .kind = VALUE_NUMBER, .number = lit.number }, line);
+        case LITERAL_ATOM: {
+            bool existed = false;
+            uint32_t id = 0;
+            if (!names_add(c->atoms, lit.str, ctx, &existed, &id))
+                return compiler_oom(ctx, line);
+            return add_const(c, ctx, (value_t){ .kind = VALUE_ATOM, .number = (double)id }, line);
+        }
         case LITERAL_TRUE: return add_const(c, ctx, (value_t){ .kind = VALUE_BOOL, .boolean = true }, line);
         case LITERAL_FALSE: return add_const(c, ctx, (value_t){ .kind = VALUE_BOOL, .boolean = false }, line);
         case LITERAL_NIL: return add_const(c, ctx, (value_t){ .kind = VALUE_NIL }, line);
@@ -1656,6 +1663,7 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
         thm_deinit(&compiler.globals.name_indexes, &ctx->alloc);                                              \
         fn_deinit(&compiler.builder.fn, &ctx->alloc);                                                         \
         thm_deinit(&record_fields, &ctx->alloc);                                                              \
+        thm_deinit(&atoms, &ctx->alloc);                                                                      \
         return (vm_t){0}; } while (0)
 
     bool success;
@@ -1665,6 +1673,8 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
 
     transient_hashmap_t record_fields = { .depth = 0 };
     compiler.record_fields = &record_fields;
+    transient_hashmap_t atoms = { .depth = 0 };
+    compiler.atoms = &atoms;
 
     /* Reserved for the ids map iteration builds its records with. */
     uint32_t reserved = 0;
@@ -1721,41 +1731,24 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
     vm.ctx.alloc = &ctx->alloc;
 
     int64_t n_fields = names_count(record_fields);
+    int64_t n_atoms = names_count(atoms);
     if (n_fields > 0) {
-        vm.ctx.record_fields = transient_to_map(&record_fields, &ctx->alloc);
-        thm_deinit(&record_fields, &ctx->alloc);
-
-        const char** names = sv_malloc(&ctx->alloc, sizeof(char*) * (size_t)n_fields);
-        if (vm.ctx.record_fields.cell == NULL ||names == NULL) {
-            compiler_oom(ctx, 0);
-            thm_deinit(&record_fields, &ctx->alloc);
-            vm_deinit(&vm);
-            return (vm_t){0};
-        }
-
-        for (int64_t i = 0; i < n_fields; i++)
-            names[i] = NULL;
-
-        map_iter_t it = map_iter_init_no_borrow(vm.ctx.record_fields);
-        for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it)) {
-            sv_str_t name = AS_STR(kv.value.key);
-            char* copy = sv_malloc(&ctx->alloc, (size_t)name.size + 1);
-            if (copy == NULL) {
-                compiler_oom(ctx, 0);
-                for (int64_t i = 0; i < n_fields; i++)
-                    if (names[i] != NULL)
-                        sv_free(&ctx->alloc, (void*)names[i]);
-                sv_free(&ctx->alloc, names);
-                vm_deinit(&vm);
-                thm_deinit(&record_fields, &ctx->alloc);
-                return (vm_t){0};
-            }
-            memcpy(copy, name.chars, (size_t)name.size);
-            copy[name.size] = '\0';
-            names[(int64_t)kv.value.value.number] = copy;
-        }
-        vm.ctx.record_key_names = names;
+        vm.ctx.record_key_names = names_arr_init(record_fields, &ctx->alloc);
         vm.ctx.record_names_sizes = (uint32_t)n_fields;
+        vm.ctx.record_fields = transient_to_map(&record_fields, &ctx->alloc);
+    }
+    if (n_atoms > 0) {
+        vm.ctx.atom_names = names_arr_init(atoms, &ctx->alloc);
+        vm.ctx.atom_names_size = (uint32_t)n_atoms;
+    }
+    thm_deinit(&record_fields, &ctx->alloc);
+    thm_deinit(&atoms, &ctx->alloc);
+
+    if ((n_fields > 0 && (vm.ctx.record_key_names == NULL || vm.ctx.record_fields.cell == NULL))
+        || (n_atoms > 0 && vm.ctx.atom_names == NULL)) {
+        compiler_oom(ctx, 0);
+        vm_deinit(&vm);
+        return (vm_t){0};
     }
 
     return vm;

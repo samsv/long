@@ -217,7 +217,10 @@ static token_t scan_number(scanner_t* s, ctx_t* ctx, int64_t initial_i)
     };
 }
 
-static token_t scan_literal(scanner_t* s, int64_t initial_i)
+/**
+ * Scans the rest of a name whose first character is already consumed.
+ */
+static sv_str_t scan_word(scanner_t* s, int64_t initial_i)
 {
     int64_t last_i = s->i;
     for (;;) {
@@ -230,7 +233,12 @@ static token_t scan_literal(scanner_t* s, int64_t initial_i)
     }
 
     s->i = last_i;
-    sv_str_t str = sv_str_slice(s->source, initial_i, last_i);
+    return sv_str_slice(s->source, initial_i, last_i);
+}
+
+static token_t scan_literal(scanner_t* s, int64_t initial_i)
+{
+    sv_str_t str = scan_word(s, initial_i);
 
     for (int k = KEYWORD_AND; k <= KEYWORD_WHEN; k++) {
         if (sv_str_comp(str, sv_str_init(keyword_text((keyword_kind)k))))
@@ -253,6 +261,15 @@ static token_t scan_literal(scanner_t* s, int64_t initial_i)
         lit = (literal_t){ .kind = LITERAL_IDENTIFIER, .literal = str };
 
     return (token_t){ .kind = TOKEN_LITERAL, .line = s->line, .literal = lit };
+}
+
+static token_t scan_atom(scanner_t* s, int64_t initial_i)
+{
+    return (token_t){
+        .kind = TOKEN_LITERAL,
+        .line = s->line,
+        .literal = { .kind = LITERAL_ATOM, .str = scan_word(s, initial_i) },
+    };
 }
 
 scanner_t scanner_init(sv_str_t source)
@@ -325,10 +342,16 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
             return operator_of(s, OPERATOR_DOT);
         case ',': return token_of(s, TOKEN_COMMA);
         case ';': return token_of(s, TOKEN_SEMICOLON);
-        case ':':
+        case ':': {
             if (next_char_if_eq(s, ':'))
                 return operator_of(s, OPERATOR_DOUBLE_COLON);
+            int64_t name_i = s->i;
+            uint32_t next = next_codepoint(s);
+            if (unicode_alphabetic(next) || next == '_')
+                return scan_atom(s, name_i);
+            s->i = name_i;
             return token_of(s, TOKEN_COLON);
+        }
         case '%':
             if (next_char_if_eq(s, '{'))
                 return token_of(s, TOKEN_PERCENT_BRACE);

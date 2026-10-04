@@ -84,9 +84,10 @@ typedef enum {
     LITERAL_STRING,
     LITERAL_IDENTIFIER,
     LITERAL_NUMBER,
+    LITERAL_ATOM,
     LITERAL_NIL,
     LITERAL_TRUE,
-    LITERAL_FALSE,
+    LITERAL_FALSE, // must be last
 } literal_kind;
 
 typedef struct {

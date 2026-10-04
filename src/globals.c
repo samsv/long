@@ -1,4 +1,5 @@
 #include "globals.h"
+#include "obj.h"
 #include <inttypes.h>
 
 sv_opt_t(uint32_t) names_get(transient_hashmap_t names, sv_str_t id, ctx_t* ctx)
@@ -39,7 +40,7 @@ int64_t names_count(transient_hashmap_t names)
     return names.set.store.cell != NULL ? thm_count(names) : 0;
 }
 
-bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed)
+bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed, uint32_t* index)
 {
     if (names->set.store.cell == NULL) {
         *names = thm_init(4, &ctx->alloc);
@@ -47,18 +48,56 @@ bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existe
             return false;
     }
 
-    *existed = names_get(*names, id, ctx).is_some;
-    if (*existed)
+    sv_opt_t(uint32_t) found = names_get(*names, id, ctx);
+    *existed = found.is_some;
+    if (*existed) {
+        if (index != NULL)
+            *index = found.value;
         return true;
+    }
 
     value_t key = value_init_str(id, &ctx->alloc);
     if (key.obj.cell == NULL)
         return false;
 
-    kv_t kv = { .key = key, .value = { .kind = VALUE_NUMBER, .number = (double)thm_count(*names) } };
+    uint32_t next = (uint32_t)thm_count(*names);
+    kv_t kv = { .key = key, .value = { .kind = VALUE_NUMBER, .number = (double)next } };
     bool ok = thm_put(names, kv, &ctx->alloc);
     value_free(&key, &ctx->alloc);
+    if (ok && index != NULL)
+        *index = next;
     return ok;
+}
+
+const char** names_arr_init(transient_hashmap_t names, const sv_allocator_t* a)
+{
+    int64_t n = names_count(names);
+    const char** arr = sv_malloc(a, sizeof(char*) * (size_t)n);
+    if (arr == NULL)
+        return NULL;
+    for (int64_t i = 0; i < n; i++)
+        arr[i] = NULL;
+
+    map_iter_t it = thm_iter_init(names);
+    for (sv_opt_t(kv_t) kv = map_iter_next(&it); kv.is_some; kv = map_iter_next(&it)) {
+        char* copy = sv_str_to_c_str(AS_STR(kv.value.key), a);
+        if (copy == NULL) {
+            names_arr_deinit(arr, (uint32_t)n, a);
+            return NULL;
+        }
+        arr[(int64_t)kv.value.value.number] = copy;
+    }
+    return arr;
+}
+
+void names_arr_deinit(const char** names, uint32_t n, const sv_allocator_t* a)
+{
+    if (names == NULL)
+        return;
+    for (uint32_t i = 0; i < n; i++)
+        if (names[i] != NULL)
+            sv_free(a, (void*)names[i]);
+    sv_free(a, (void*)names);
 }
 
 sv_str_t append_prefix(sv_str_t id, sv_str_t prefix, ctx_t* ctx)
@@ -90,7 +129,7 @@ sv_opt_t(global_error_t) globals_add(globals_t* g, sv_str_t id, sv_str_t prefix,
         return sv_opt_some_t(global_error_t, GLOBAL_ERROR_OOM);
 
     bool existed = false;
-    if (!names_add(&g->name_indexes, name, ctx, &existed)) {
+    if (!names_add(&g->name_indexes, name, ctx, &existed, NULL)) {
         sv_str_deinit(&name, &ctx->alloc);
         return sv_opt_some_t(global_error_t, GLOBAL_ERROR_OOM);
     }

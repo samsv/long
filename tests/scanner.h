@@ -106,10 +106,40 @@ static inline void sv_test_scanner_newlines(sv_testing_t* t)
    sv_test_run(t, scanner_next(&s, &ctx).line == 3);
 }
 
+static inline void sv_test_scanner_atoms(sv_testing_t* t)
+{
+   ctx_t ctx = sv_test_scan_ctx();
+   scanner_t s = scanner_init(sv_str_init(":ok :_x1 :end :nil :é"));
+   const char* names[] = { "ok", "_x1", "end", "nil", "é" };
+   for (int k = 0; k < 5; k++) {
+      token_t tok = scanner_next(&s, &ctx);
+      sv_test_run_msg(t, tok.kind == TOKEN_LITERAL && tok.literal.kind == LITERAL_ATOM, "atom %d", k);
+      sv_test_run_msg(t, sv_str_comp(tok.literal.str, sv_str_init(names[k])), "atom name %d", k);
+   }
+   sv_test_run(t, scanner_next(&s, &ctx).kind == TOKEN_EOF);
+
+   /* The name ends where identifier characters end. */
+   const token_kind pair[] = { TOKEN_LITERAL, TOKEN_COLON, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, ":a: :b", pair, 3);
+   const token_kind op[] = { TOKEN_LITERAL, TOKEN_OPERATOR, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, ":a==:b", op, 3);
+
+   /* A colon not followed by a name is still a colon, and `::` is still the module operator. */
+   const token_kind field[] = { TOKEN_LEFT_BRACE, TOKEN_LITERAL, TOKEN_COLON, TOKEN_LITERAL, TOKEN_RIGHT_BRACE };
+   sv_test_scan_kinds(t, "{x: 1}", field, 5);
+   sv_test_scan_kinds(t, "{x:1}", field, 5);
+   sv_test_scan_kinds(t, "m::x", op, 3);
+   const token_kind lone[] = { TOKEN_COLON, TOKEN_LITERAL };
+   sv_test_scan_kinds(t, ": x", lone, 2);
+   const token_kind colon[] = { TOKEN_COLON };
+   sv_test_scan_kinds(t, ":", colon, 1);
+}
+
 static inline void sv_test_scanner(sv_testing_t* t)
 {
    sv_test_scanner_comments(t);
    sv_test_scanner_newlines(t);
+   sv_test_scanner_atoms(t);
 }
 
 #endif

@@ -11,6 +11,7 @@
 ✅ Embedding API
     - ✅ Global Names on VM;
     - ✅ Call Closure from C;
+✅ Atoms
 STDLib
 String escapes
 Non linear patterns

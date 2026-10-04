@@ -16,6 +16,7 @@
 
 typedef enum {
     VALUE_NUMBER,
+    VALUE_ATOM,
     VALUE_NIL,
     VALUE_BOOL,
     VALUE_C,
@@ -34,6 +35,7 @@ typedef struct value_t {
 } value_t;
 
 #define IS_NUMBER(v) ((v).kind == VALUE_NUMBER)
+#define IS_ATOM(v) ((v).kind == VALUE_ATOM)
 #define IS_NIL(v) ((v).kind == VALUE_NIL)
 #define IS_BOOL(v) ((v).kind == VALUE_BOOL)
 #define IS_C(v) ((v).kind == VALUE_C)
@@ -51,6 +53,7 @@ typedef struct value_t {
 #define IS_USER_VALUE(v) ((v).kind == VALUE_OBJ && (v).obj.cell->value.kind == OBJ_USER_VALUE)
 
 #define AS_NUMBER(v) ((v).number)
+#define AS_ATOM(v) ((v).number)
 #define AS_BOOL(v) ((v).boolean)
 #define AS_C(v) ((v).c)
 #define AS_STR(v) ((v).obj.cell->value.str)

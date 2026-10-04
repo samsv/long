@@ -25,6 +25,15 @@ sv_opt_t(uint32_t) names_get(transient_hashmap_t names, sv_str_t id, ctx_t* ctx)
 bool check_limit(ctx_t* ctx, int64_t n, uint32_t max, const char* what, int64_t line);
 sv_str_t append_prefix(sv_str_t id, sv_str_t prefix, ctx_t* ctx);
 int64_t names_count(transient_hashmap_t names);
-bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed);
+/**
+ * Interns the name, reporting whether it already existed and, when index is given, its id.
+ */
+bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed, uint32_t* index);
+/**
+ * Copies the names of an id table into an array indexed by id. NULL on allocation
+ * failure.
+ */
+const char** names_arr_init(transient_hashmap_t names, const sv_allocator_t* a);
+void names_arr_deinit(const char** names, uint32_t n, const sv_allocator_t* a);
 
 #endif

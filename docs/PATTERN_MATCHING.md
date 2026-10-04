@@ -257,7 +257,7 @@ A constructor with no patterns in the group gets the match default as its case a
 is the default expression.
 
 ### Constant Patterns
-Literal patterns (numbers, strings, `true`, `false`, `nil`) follow the same scheme as constructors: the book treats each literal as a constructor of
+Literal patterns (numbers, atoms, strings, `true`, `false`, `nil`) follow the same scheme as constructors: the book treats each literal as a constructor of
 a type with infinitely many constructors, so a `case` over them becomes an equality test per literal present in the group, with every other value
 going to the default. The `xor` example above matches `true`/`false` this way.
 

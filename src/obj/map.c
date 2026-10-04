@@ -194,7 +194,8 @@ static uint32_t str_hash(sv_str_t s)
 static uint32_t value_hash(value_t v)
 {
     switch (v.kind) {
-        case VALUE_NUMBER: return number_hash(AS_NUMBER(v));
+        case VALUE_NUMBER:
+        case VALUE_ATOM: return number_hash(AS_NUMBER(v));
         case VALUE_UNDEFINED: return 0;
         case VALUE_NIL: return 1;
         case VALUE_BOOL: return AS_BOOL(v) ? 2 : 3;

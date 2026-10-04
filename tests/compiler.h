@@ -72,6 +72,28 @@ static inline bool sv_test_compiler_num(const char* src, double expected)
    return res;
 }
 
+static inline bool sv_test_compiler_str(const char* src, const char* expected)
+{
+   ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   vm_t vm = sv_test_compiler_compile(src, SV_TEST_MAX_FRAMES, &ctx);
+   if (vm.fn.chunk.bytecode.arr == NULL) {
+      sv_str_deinit(&ctx.err.msg, &sv_gpa);
+      return false;
+   }
+
+   sv_opt_t(error_t) err = vm_run(&vm);
+   bool res = !err.is_some && vm.stack.size == 1;
+   if (res) {
+      sv_str_t text = value_to_str(sv_vec_last(vm.stack), &vm.ctx);
+      res = sv_str_comp(text, sv_str_init(expected));
+      sv_str_deinit(&text, &sv_gpa);
+   }
+   if (err.is_some)
+      vm_err_deinit(&err.value, &sv_gpa);
+   vm_deinit(&vm);
+   return res;
+}
+
 static inline bool sv_test_compiler_kind(const char* src, value_kind expected)
 {
    bool ok = false;
@@ -94,6 +116,11 @@ static inline bool sv_test_compiler_cmp(const char* src, value_t expected, bool 
 static inline value_t sv_test_compiler_val(double n)
 {
    return (value_t){ .kind = VALUE_NUMBER, .number = n };
+}
+
+static inline value_t sv_test_compiler_atom(double id)
+{
+   return (value_t){ .kind = VALUE_ATOM, .number = id };
 }
 
 static inline int sv_test_compiler_runtime_err_frames(const char* src, int64_t max_frames)
@@ -266,15 +293,7 @@ static inline void sv_test_compiler_tuples(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("{x: 1}.y") == VM_ERR_FIELD_NOT_FOUND);
    sv_test_run(t, sv_test_compiler_runtime_err("t = 5\nt.x") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
-   ctx_t pctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t pvm = sv_test_compiler_compile("t = {x: 10, y: 20}\nt", SV_TEST_MAX_FRAMES, &pctx);
-   sv_test_run(t, pvm.fn.chunk.bytecode.arr != NULL);
-   sv_opt_t(error_t) perr = vm_run(&pvm);
-   sv_test_run(t, !perr.is_some);
-   sv_str_t ptext = value_to_str(pvm.stack.arr[pvm.stack.size - 1], &pvm.ctx);
-   sv_test_run(t, sv_str_comp(ptext, sv_str_init("{x: 10, y: 20}")));
-   sv_str_deinit(&ptext, &sv_gpa);
-   vm_deinit(&pvm);
+   sv_test_run(t, sv_test_compiler_str("t = {x: 10, y: 20}\nt", "{x: 10, y: 20}"));
 }
 
 static inline void sv_test_compiler_tuple_type(sv_testing_t* t)
@@ -292,25 +311,8 @@ static inline void sv_test_compiler_tuple_type(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("(1, 2)[0 - 1]") == VM_ERR_KEY_NOT_FOUND);
    sv_test_run(t, sv_test_compiler_runtime_err("(1, 2)[0.5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
 
-   ctx_t tctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t tvm = sv_test_compiler_compile("t = (1, (2, \"s\"))\nt", SV_TEST_MAX_FRAMES, &tctx);
-   sv_test_run(t, tvm.fn.chunk.bytecode.arr != NULL);
-   sv_opt_t(error_t) terr = vm_run(&tvm);
-   sv_test_run(t, !terr.is_some);
-   sv_str_t ttext = value_to_str(tvm.stack.arr[tvm.stack.size - 1], &tvm.ctx);
-   sv_test_run(t, sv_str_comp(ttext, sv_str_init("(1, (2, s))")));
-   sv_str_deinit(&ttext, &sv_gpa);
-   vm_deinit(&tvm);
-
-   ctx_t octx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t ovm = sv_test_compiler_compile("(1,)", SV_TEST_MAX_FRAMES, &octx);
-   sv_test_run(t, ovm.fn.chunk.bytecode.arr != NULL);
-   sv_opt_t(error_t) oerr = vm_run(&ovm);
-   sv_test_run(t, !oerr.is_some);
-   sv_str_t otext = value_to_str(ovm.stack.arr[ovm.stack.size - 1], &ovm.ctx);
-   sv_test_run(t, sv_str_comp(otext, sv_str_init("(1,)")));
-   sv_str_deinit(&otext, &sv_gpa);
-   vm_deinit(&ovm);
+   sv_test_run(t, sv_test_compiler_str("t = (1, (2, \"s\"))\nt", "(1, (2, s))"));
+   sv_test_run(t, sv_test_compiler_str("(1,)", "(1,)"));
 }
 
 static inline void sv_test_compiler_logic(sv_testing_t* t)
@@ -844,6 +846,46 @@ static inline void sv_test_compiler_match(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("match 5 | (a = b) = c do a + b + c end", 15));
 }
 
+static inline void sv_test_compiler_atoms(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_kind(":ok", VALUE_ATOM));
+   /* Ids count up from 0 in the order the compiler meets the names, once per program. */
+   sv_test_run(t, sv_test_compiler_cmp(":a", sv_test_compiler_atom(0), value_eql));
+   sv_test_run(t, sv_test_compiler_cmp(":a\n:b", sv_test_compiler_atom(1), value_eql));
+   sv_test_run(t, sv_test_compiler_cmp(":a\n:b\n:a", sv_test_compiler_atom(0), value_eql));
+   sv_test_run(t, sv_test_compiler_cmp("fun f() do :a end\n:b\nf()", sv_test_compiler_atom(0), value_eql));
+
+   /* An atom is its own kind: equal to itself, never to a number or another atom. */
+   sv_test_run(t, sv_test_compiler_num("if :ok == :ok do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_num("if :ok == :err do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if :a == 0 do 1 else 0 end", 0));
+   sv_test_run(t, sv_test_compiler_num("if :end == :end do 1 else 0 end", 1));
+   sv_test_run(t, sv_test_compiler_runtime_err(":a + 1") == VM_ERR_OP_UNSUPPORTED_ARGS);
+
+   /* Hashmap keys. */
+   sv_test_run(t, sv_test_compiler_num("m = %{:a: 1, :b: 2}\nm[:b]", 2));
+   sv_test_run(t, sv_test_compiler_num("if %{:a: 1} == %{\"a\": 1} do 1 else 0 end", 0));
+
+   /* Patterns. */
+   sv_test_run(t, sv_test_compiler_num("match :b | :a do 1 | :b do 2 end", 2));
+   sv_test_run(t, sv_test_compiler_runtime_err("match :c | :a do 1 | :b do 2 end") == VM_ERR_NO_CLAUSE);
+   sv_test_run(t, sv_test_compiler_num("match 0 | :a do 1 | 0 do 2 end", 2));
+   sv_test_run(t, sv_test_compiler_num("match :a | 0 do 2 | :a do 1 end", 1));
+   sv_test_run(t, sv_test_compiler_num("match (:ok, 5) | (:error, _) do 0 | (:ok, v) do v end", 5));
+   sv_test_run(t, sv_test_compiler_num("fun f(x) | :a do 1 | _ do 2 end f(:a)", 1));
+   sv_test_run(t, sv_test_compiler_num("fun f(x) | :a do 1 | _ do 2 end f(0)", 2));
+   sv_test_run(t, sv_test_compiler_num("match {s: :ok, v: 3} | {s: :err, v: v} do 0 | {s: :ok, v: v} do v end", 3));
+   sv_test_run(t, sv_test_compiler_num("match %{:k: 4} | %{:k: v} do v end", 4));
+   /* An atom key and the string with the same text are different keys. */
+   sv_test_run(t, sv_test_compiler_num("match %{\"k\": 1} | %{:k: v} do 0 | %{\"k\": v} do v end", 1));
+   sv_test_run(t, sv_test_compiler_num("match %{:k: 1} | %{\"k\": v} do 0 | %{:k: v} do v end", 1));
+   sv_test_run(t, sv_test_compiler_num("(:ok, x) = (:ok, 3)\nx", 3));
+   sv_test_run(t, sv_test_compiler_runtime_err("(:ok, x) = (:err, 3)") == VM_ERR_MATCH_FAILED);
+
+   /* Printing goes through the name table the compiler hands the VM. */
+   sv_test_run(t, sv_test_compiler_str("(:ok, :error, %{:k: :v})", "(:ok, :error, %{:k: :v})"));
+}
+
 static inline void sv_test_compiler_fun_clauses(sv_testing_t* t)
 {
    sv_test_run(t, sv_test_compiler_num("fun f(x) | 0 do 10 | _ do 20 end f(0)", 10));
@@ -1187,6 +1229,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_call_stack(t);
    sv_test_compiler_groups(t);
    sv_test_compiler_match(t);
+   sv_test_compiler_atoms(t);
    sv_test_compiler_fun_clauses(t);
    sv_test_compiler_destructure(t);
    sv_test_compiler_spread(t);

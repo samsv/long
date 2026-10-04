@@ -26,6 +26,7 @@ static bool value_is_truthy(value_t v)
         case VALUE_BOOL: return v.boolean;
         case VALUE_C:
         case VALUE_NUMBER:
+        case VALUE_ATOM:
         case VALUE_OBJ: return true;
     }
     return true;
@@ -46,18 +47,16 @@ vm_t vm_init(fn_t fn, int64_t max_call_frames, globals_t globals_names_to_index,
         .globals = sv_vec_init(value_t),
         .locals = sv_vec_init(value_t),
         .stack = sv_vec_init(value_t),
-        .ctx = { .alloc = a, .logger = sv_std_logger, .record_key_names = NULL, .record_names_sizes = 0 },
+        .ctx = { .alloc = a, .logger = sv_std_logger, .record_key_names = NULL, .record_names_sizes = 0,
+                 .atom_names = NULL, .atom_names_size = 0 },
     };
 }
 
 void vm_deinit(vm_t* vm)
 {
     const sv_allocator_t* a = vm->ctx.alloc;
-    if (vm->ctx.record_key_names != NULL) {
-        for (uint32_t i = 0; i < vm->ctx.record_names_sizes; i++)
-            sv_free(a, (void*)vm->ctx.record_key_names[i]);
-        sv_free(a, (void*)vm->ctx.record_key_names);
-    }
+    names_arr_deinit(vm->ctx.record_key_names, vm->ctx.record_names_sizes, a);
+    names_arr_deinit(vm->ctx.atom_names, vm->ctx.atom_names_size, a);
     value_arr_deinit(&vm->globals, a);
     value_arr_deinit(&vm->stack, a);
     value_arr_deinit(&vm->locals, a);
@@ -791,6 +790,7 @@ break; }
         }
         case OP_IS_STR: IS_KIND(IS_STR(v))
         case OP_IS_NUMBER: IS_KIND(IS_NUMBER(v))
+        case OP_IS_ATOM: IS_KIND(IS_ATOM(v))
         case OP_IS_BOOL: IS_KIND(IS_BOOL(v))
         case OP_IS_NIL: IS_KIND(IS_NIL(v))
         case OP_IS_LIST: IS_KIND(IS_LIST(v))

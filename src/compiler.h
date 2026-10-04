@@ -30,6 +30,7 @@ typedef struct {
     locals_t* locals;
     transient_hashmap_t members;
     transient_hashmap_t* record_fields;
+    transient_hashmap_t* atoms;
     fail_target_t* fail_targets;
 
     const char* current_path;

@@ -25,6 +25,8 @@ typedef struct vm_ctx_t {
     hashmap_t record_fields;
     const char** record_key_names;
     uint32_t record_names_sizes;
+    const char** atom_names;
+    uint32_t atom_names_size;
 } vm_ctx_t;
 
 typedef struct {
@@ -125,6 +127,7 @@ typedef enum {
     OP_DUP,
     OP_IS_STR,
     OP_IS_NUMBER,
+    OP_IS_ATOM,
     OP_IS_BOOL,
     OP_IS_NIL,
     OP_IS_LIST,

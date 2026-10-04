@@ -105,6 +105,16 @@ static inline void sv_test_parser_match(sv_testing_t* t)
    sv_test_parse_error(t, "match x | [..t, 1] do 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | %{k: 1} do 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "match x | 1 + 1 do 2 end", PARSER_ERROR_UNEXPECTED_TOKEN);
+
+   /* Atoms are literals in every position, patterns included. */
+   sv_test_parse_ok(t, ":ok");
+   sv_test_parse_ok(t, "{s: :ok}");
+   sv_test_parse_ok(t, "%{:k: 1, \"s\": :v}");
+   sv_test_parse_ok(t, "m[:k]");
+   sv_test_parse_ok(t, "match x | :ok do 1 | (:error, e) do e end");
+   sv_test_parse_ok(t, "match x | %{:k: v} do v | {s: :ok} do 1 end");
+   sv_test_parse_ok(t, "fun f(x) | :a do 1 | _ do 2 end");
+   sv_test_parse_error(t, "match x | -:a do 1 end", PARSER_ERROR_UNEXPECTED_TOKEN);
 }
 
 static inline void sv_test_parser_alias(sv_testing_t* t)

@@ -36,6 +36,7 @@ value_t value_borrow(value_t v)
         case VALUE_NIL:
         case VALUE_BOOL:
         case VALUE_NUMBER:
+        case VALUE_ATOM:
         case VALUE_C:
         case VALUE_UNDEFINED:
         default:
@@ -77,7 +78,8 @@ bool value_eql(value_t x, value_t y)
     if (x.kind != y.kind)
         return false;
     switch (x.kind) {
-        case VALUE_NUMBER: return AS_NUMBER(x) == AS_NUMBER(y);
+        case VALUE_NUMBER:
+        case VALUE_ATOM: return AS_NUMBER(x) == AS_NUMBER(y);
         case VALUE_UNDEFINED: return false;
         case VALUE_NIL: return true;
         case VALUE_C: return AS_C(x) == AS_C(y);
@@ -293,6 +295,7 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
         case VALUE_NIL: return "nil";
         case VALUE_C: return "c_value";
         case VALUE_NUMBER: return "number";
+        case VALUE_ATOM: return "atom";
         case VALUE_OBJ: switch (o_kind) {
             case OBJ_ITER: return "iter";
             case OBJ_ERR: return "error";
@@ -325,6 +328,11 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
             char buf[32];
             int n = snprintf(buf, sizeof(buf), "%g", v.number);
             return sv_strb_add(b, buf, n, a) >= 0;
+        }
+        case VALUE_ATOM: {
+            const char* name = ctx->atom_names[(uint32_t)AS_ATOM(v)];
+            CHECK(sv_strb_add_char(b, ':', a) >= 0);
+            return sv_strb_add(b, name, (int64_t)strlen(name), a) >= 0;
         }
         case VALUE_OBJ: break;
     }
