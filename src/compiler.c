@@ -1745,7 +1745,8 @@ vm_t compile_files(const char** files, int64_t count, compile_opts_t opts, ctx_t
     thm_deinit(&atoms, &ctx->alloc);
 
     if ((n_fields > 0 && (vm.ctx.record_key_names == NULL || vm.ctx.record_fields.cell == NULL))
-        || (n_atoms > 0 && vm.ctx.atom_names == NULL)) {
+        || (n_atoms > 0 && vm.ctx.atom_names == NULL)
+    ) {
         compiler_oom(ctx, 0);
         vm_deinit(&vm);
         return (vm_t){0};

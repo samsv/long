@@ -879,6 +879,10 @@ static inline void sv_test_compiler_atoms(sv_testing_t* t)
    /* An atom key and the string with the same text are different keys. */
    sv_test_run(t, sv_test_compiler_num("match %{\"k\": 1} | %{:k: v} do 0 | %{\"k\": v} do v end", 1));
    sv_test_run(t, sv_test_compiler_num("match %{:k: 1} | %{\"k\": v} do 0 | %{:k: v} do v end", 1));
+   sv_test_run(t, sv_test_compiler_num(
+      "match %{:a: 1, :b: 2} | %{:a: x, :c: _} do 0 | %{:b: v, :a: _} do v end", 2));
+   sv_test_run(t, sv_test_compiler_num(
+      "x = match %{:a: 1} | %{:a: v} do v end\nmatch %{:b: 2} | %{:b: v} do v + x end", 3));
    sv_test_run(t, sv_test_compiler_num("(:ok, x) = (:ok, 3)\nx", 3));
    sv_test_run(t, sv_test_compiler_runtime_err("(:ok, x) = (:err, 3)") == VM_ERR_MATCH_FAILED);
 

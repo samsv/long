@@ -18,6 +18,9 @@ typedef sv_vec_t(sexpr_t) cons_t;
 
 static char temp_names[TEMPS_MAX][TEMP_SIZE];
 static int temps_used;
+// Every distinct key gets a temporary, so atom keys never outnumber the temporaries.
+static sv_str_t atom_keys[TEMPS_MAX];
+static int atom_keys_used;
 
 #define APPEND_CAP(vec, val) (vec)->arr[(vec)->size++] = (val)
 #define LITERAL(name) { .kind = LITERAL_IDENTIFIER, .literal = sv_str_init((name)) }
@@ -736,7 +739,32 @@ static sexpr_t compile_list(cons_t match, int* start_i, sexpr_t u, ctx_t* ctx)
 sv_vec_def(transient_hashmap_t);
 #define CHECK(cond) if (!(cond)) return error_oom(match.arr[0].atom, ctx)
 
-static sv_opt_t(value_t) literal_to_value(literal_t l, ctx_t* ctx)
+/**
+ * The key an atom gets inside one match. Only key identity matters to the lowering, so
+ * names are numbered as they appear, like temporaries.
+ */
+static sv_opt_t(value_t) atom_key(sv_str_t name, int64_t line, ctx_t* ctx)
+{
+    int i = 0;
+    for (; i < atom_keys_used; i++)
+        if (sv_str_comp(atom_keys[i], name))
+            break;
+
+    if (i == atom_keys_used) {
+        if (!check_limit(ctx, atom_keys_used + 1, TEMPS_MAX, "atom keys in a match", line))
+            return sv_opt_none_t(value_t);
+        atom_keys[atom_keys_used++] = name;
+    }
+
+    value_t value = { .kind = VALUE_ATOM, .number = (double)i };
+    return sv_opt_some_t(value_t, value);
+}
+
+/**
+ * The compile-time key for a pattern key literal. Sets the error and returns none on
+ * failure.
+ */
+static sv_opt_t(value_t) literal_to_value(literal_t l, int64_t line, ctx_t* ctx)
 {
     switch (l.kind) {
         case LITERAL_NUMBER: {
@@ -748,24 +776,21 @@ static sv_opt_t(value_t) literal_to_value(literal_t l, ctx_t* ctx)
         case LITERAL_TRUE: return sv_opt_some_t(value_t, value_true);
         case LITERAL_IDENTIFIER: {
             value_t value = value_init_str_own(l.literal, &ctx->alloc);
-            if (value.obj.cell == NULL) return sv_opt_none_t(value_t);
+            if (value.obj.cell == NULL) {
+                error_set_oom(&ctx->err, C_ERR_OOM, line, &ctx->alloc);
+                return sv_opt_none_t(value_t);
+            }
             return sv_opt_some_t(value_t, value);
         }
         case LITERAL_STRING: {
             value_t value = value_init_str_own(l.str, &ctx->alloc);
-            if (value.obj.cell == NULL) return sv_opt_none_t(value_t);
+            if (value.obj.cell == NULL) {
+                error_set_oom(&ctx->err, C_ERR_OOM, line, &ctx->alloc);
+                return sv_opt_none_t(value_t);
+            }
             return sv_opt_some_t(value_t, value);
         }
-        case LITERAL_ATOM: {
-            // Only key identity matters here, and a tuple can never be a key literal, so
-            // wrapping the name keeps the atom apart from the string with the same text.
-            value_t name = value_init_str_own(l.str, &ctx->alloc);
-            if (name.obj.cell == NULL) return sv_opt_none_t(value_t);
-            value_t value = value_init_tuple(&name, 1, &ctx->alloc);
-            value_free(&name, &ctx->alloc);
-            if (value.obj.cell == NULL) return sv_opt_none_t(value_t);
-            return sv_opt_some_t(value_t, value);
-        }
+        case LITERAL_ATOM: return atom_key(l.str, line, ctx);
     }
 
     return sv_opt_none_t(value_t);
@@ -814,8 +839,10 @@ static sexpr_t compile_kv_container(cons_t match, int* start_i, sexpr_t u, patte
         CHECK(map.set.store.cell != NULL);
 
         for (int j = 1; j < record_cond.size - 1; j += 2) {
-            sv_opt_t(value_t) maybe_key = literal_to_value(record_cond.arr[j].atom.literal, ctx);
-            CHECK(maybe_key.is_some);
+            sv_opt_t(value_t) maybe_key = literal_to_value(record_cond.arr[j].atom.literal,
+                                                           match.arr[0].atom.line, ctx);
+            if (!maybe_key.is_some)
+                return ATOM_TOKEN_NO_CASE(TOKEN_ERROR);
             value_t key = maybe_key.value;
 
             value_t index = { .kind = VALUE_NUMBER, .number = j + 1 };
@@ -1140,6 +1167,8 @@ end:
 
 sexpr_t match_compile(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
 {
+    temps_used = 0;
+    atom_keys_used = 0;
     sexpr_t ret;
     int start_i = CONDS_START;
     sv_allocator_t default_alloc = ctx->alloc;
