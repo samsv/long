@@ -3,6 +3,11 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+static error_t error_oom = {
+    .error_code = -1,
+    .msg = { .chars = "Out of memory", .size = 13 },
+};
+
 error_t error_init(void)
 {
     return (error_t){
@@ -33,24 +38,27 @@ bool error_set_oom(error_t* e, int code, int64_t line, const sv_allocator_t* a)
 
 error_t error_fmt(int code, int64_t line, const sv_allocator_t* a, const char* fmt, ...)
 {
-    char buf[256];
-    int at = snprintf(buf, sizeof(buf), ERROR_LINE_FMT, line);
+    int bufsize = sizeof(char) * 256;
+    char* buf = sv_malloc(a, bufsize);
+    if (buf == NULL)
+        return error_oom;
+    int at = snprintf(buf, bufsize, ERROR_LINE_FMT, line);
 
     va_list args;
     va_start(args, fmt);
-    int n = vsnprintf(buf + at, sizeof(buf) - at, fmt, args);
+    int n = vsnprintf(buf + at, bufsize - at, fmt, args);
     va_end(args);
     if (n < 0)
         return (error_t){ .error_code = code, .msg = sv_str_init("") };
-    if (n >= (int)sizeof(buf) - at)
-        n = sizeof(buf) - at - 1;
 
-    sv_str_t msg = sv_str_copy((sv_str_t){ .chars = buf, .size = at + n }, a);
-    return (error_t){ .error_code = code, .msg = msg.chars != NULL ? msg : sv_str_init("") };
+    sv_str_t msg = sv_str_init(buf);
+    return (error_t){ .error_code = code, .msg = msg };
 }
 
 void error_free(error_t* e, const sv_allocator_t* a)
 {
+    if (e->error_code < 0)
+        return;
     sv_str_deinit(&e->msg, a);
     e->msg = sv_str_init("");
 }

@@ -3,7 +3,6 @@
 #include "obj/map.h"
 #include "std/logger.h"
 #include "value.h"
-#include <stdio.h>
 #include "ctx.h"
 
 static void arr_remove(value_arr* arr, const sv_allocator_t* a)
@@ -96,28 +95,6 @@ const char* vm_field_name(const vm_ctx_t* ctx, uint32_t id)
     if (ctx->record_key_names == NULL || id >= ctx->record_names_sizes)
         return "?";
     return ctx->record_key_names[id];
-}
-
-/**
- * `Line N: prefix<value>`, with the value written straight into the message, so it is
- * neither copied nor cut. The message is empty when it cannot be allocated.
- */
-static error_t error_with_value(const vm_t* vm, int code, int64_t line,
-                                const char* prefix, int64_t prefix_n, value_t v)
-{
-    const sv_allocator_t* a = vm->ctx.alloc;
-    char head[32];
-    int n = snprintf(head, sizeof(head), ERROR_LINE_FMT, line);
-
-    sv_str_builder b = sv_strb_init();
-    bool written = sv_strb_add(&b, head, n, a) >= 0
-        && sv_strb_add(&b, prefix, prefix_n, a) >= 0
-        && value_write(v, &b, &vm->ctx);
-    if (!written) {
-        sv_strb_deinit(&b, a);
-        return (error_t){ .error_code = code, .msg = sv_str_init("") };
-    }
-    return (error_t){ .error_code = code, .msg = sv_strb_to_str(&b) };
 }
 
 static sv_opt_t(error_t) vm_run_frame(vm_t* vm);
@@ -260,8 +237,10 @@ static sv_opt_t(error_t) vm_run_frame(vm_t* vm)
 
 // the value itself ends the message, e.g. a missing key or a pattern subject
 #define RAISE_VALUE(code, v, prefix) do {                                                                     \
-    err = error_with_value(vm, code, LINE(), prefix, sizeof(prefix) - 1, v);                                  \
+    sv_str_t sv = value_to_str(v, &vm->ctx);                                                                  \
+    err = error_fmt(code, LINE(), a, "%.*s", (int)sv.size, sv.chars);                                         \
     value_free(&v, a);                                                                                        \
+    sv_str_deinit(&sv, a);                                                                                    \
     goto error; } while (0)
 
 #define READ_BYTE() (*ip++)
@@ -309,7 +288,7 @@ static sv_opt_t(error_t) vm_run_frame(vm_t* vm)
     value_t v1 = sv_vec_pop(stack);                                                                           \
     if (!IS_NUMBER(v1) || !IS_NUMBER(v2))                                                                     \
         RAISE_2(VM_ERR_OP_UNSUPPORTED_ARGS, v1, v2, "Invalid operands for '%s': %s and %s",                   \
-                #op, TYPE_NAME(v1), TYPE_NAME(v2));                                                                     \
+                #op, TYPE_NAME(v1), TYPE_NAME(v2));                                                           \
     value_t res = {.kind = res_kind, .res_field = v1.number op v2.number};                                    \
     TRY_PUSH_STACK(res);                                                                                      \
     break; }
@@ -564,7 +543,7 @@ break; }
     value_t val = sv_vec_pop(stack);                                                                          \
     uint8_t id = READ_BYTE();                                                                                 \
     if (!IS_RECORD(val) && !IS_USER_VALUE(val))                                                               \
-        RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, val, "Type has no fields: %s", TYPE_NAME(val));                       \
+        RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, val, "Type has no fields: %s", TYPE_NAME(val));                   \
     sv_opt_t(value_t) v;                                                                                      \
     if (IS_RECORD(val)) {                                                                                     \
         record_t tuple = AS_RECORD(val);                                                                      \
@@ -687,14 +666,14 @@ break; }
             break;
         }
 #define ERR_WRONG_ARITY(name, arity)                                                                          \
-    RAISE_1(VM_ERR_BAD_ARITY, value, "Wrong number of arguments for '%.*s': expected %u, got %u",            \
+    RAISE_1(VM_ERR_BAD_ARITY, value, "Wrong number of arguments for '%.*s': expected %u, got %u",             \
             (int)(name).size, (name).chars, (unsigned)(arity), (unsigned)arg_count)
 
 #define LOAD_FN()                                                                                             \
     value_t value = sv_vec_pop(stack);                                                                        \
     uint8_t arg_count = READ_BYTE();                                                                          \
     if (!IS_CLOSURE(value) && !IS_NATIVE(value) && !IS_CLOSURE_MEMBER(value))                                 \
-        RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, value, "Type is not callable: %s", TYPE_NAME(value));                 \
+        RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, value, "Type is not callable: %s", TYPE_NAME(value));             \
     const value_t* args = &stack.arr[stack.size - arg_count];                                                 \
     if (IS_NATIVE(value)) {                                                                                   \
         CALL_NATIVE(value);                                                                                   \
@@ -744,11 +723,11 @@ break; }
     do {                                                                                                      \
     if (arg_count > 0) {                                                                                      \
         sv_vec_push_many(&vm->locals, args, arg_count, &success, a);                                          \
-        TRY_OR(success, value_free(&value, a), "when passing arguments");                                 \
+        TRY_OR(success, value_free(&value, a), "when passing arguments");                                     \
         stack.size -= arg_count;                                                                              \
     }                                                                                                         \
     sv_vec_push(&vm->locals, value, &success, a);                                                             \
-    TRY_OR(success, value_free(&value, a), "when passing arguments");                                     \
+    TRY_OR(success, value_free(&value, a), "when passing arguments");                                         \
 } while (0)
         case OP_CALL: {
             LOAD_FN();
