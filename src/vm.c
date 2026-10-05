@@ -219,28 +219,10 @@ static sv_opt_t(error_t) vm_run_frame(vm_t* vm)
 
 #define TYPE_NAME(v) value_type_name(v)
 
-#define RAISE(code, ...) do {                                                                                 \
+// cleanup runs after the message is built, since the message may read what it frees
+#define RAISE(code, cleanup, ...) do {                                                                        \
     err = error_fmt(code, LINE(), a, __VA_ARGS__);                                                            \
-    goto error; } while (0)
-
-// the operands are freed after the message names their types
-#define RAISE_1(code, v, ...) do {                                                                            \
-    err = error_fmt(code, LINE(), a, __VA_ARGS__);                                                            \
-    value_free(&v, a);                                                                                        \
-    goto error; } while (0)
-
-#define RAISE_2(code, v1, v2, ...) do {                                                                       \
-    err = error_fmt(code, LINE(), a, __VA_ARGS__);                                                            \
-    value_free(&v1, a);                                                                                       \
-    value_free(&v2, a);                                                                                       \
-    goto error; } while (0)
-
-// the value itself ends the message, e.g. a missing key or a pattern subject
-#define RAISE_VALUE(code, v, prefix) do {                                                                     \
-    sv_str_t sv = value_to_str(v, &vm->ctx);                                                                  \
-    err = error_fmt(code, LINE(), a, "%.*s", (int)sv.size, sv.chars);                                         \
-    value_free(&v, a);                                                                                        \
-    sv_str_deinit(&sv, a);                                                                                    \
+    cleanup;                                                                                                  \
     goto error; } while (0)
 
 #define READ_BYTE() (*ip++)
@@ -287,8 +269,8 @@ static sv_opt_t(error_t) vm_run_frame(vm_t* vm)
     value_t v2 = sv_vec_pop(stack);                                                                           \
     value_t v1 = sv_vec_pop(stack);                                                                           \
     if (!IS_NUMBER(v1) || !IS_NUMBER(v2))                                                                     \
-        RAISE_2(VM_ERR_OP_UNSUPPORTED_ARGS, v1, v2, "Invalid operands for '%s': %s and %s",                   \
-                #op, TYPE_NAME(v1), TYPE_NAME(v2));                                                           \
+        RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&v1, a); value_free(&v2, a),                             \
+              "Invalid operands for '%s': %s and %s", #op, TYPE_NAME(v1), TYPE_NAME(v2));                     \
     value_t res = {.kind = res_kind, .res_field = v1.number op v2.number};                                    \
     TRY_PUSH_STACK(res);                                                                                      \
     break; }
@@ -351,7 +333,8 @@ break; }
         case OP_NEGATE: {
             value_t v = sv_vec_pop(stack);
             if (!IS_NUMBER(v))
-                RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, v, "Invalid operand for '-': %s", TYPE_NAME(v));
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&v, a),
+                      "Invalid operand for '-': %s", TYPE_NAME(v));
             value_t res = {.kind = VALUE_NUMBER, .number = -v.number};
             TRY_PUSH_STACK(res);
             break;
@@ -390,14 +373,15 @@ break; }
             uint8_t n = READ_BYTE();
             value_t base = sv_vec_pop(stack);
             if (!IS_RECORD(base))
-                RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, base, "Record update needs a record, got %s", TYPE_NAME(base));
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&base, a),
+                      "Record update needs a record, got %s", TYPE_NAME(base));
 
             int64_t missing = -1;
             record_t updated = record_update(AS_RECORD(base), &stack.arr[stack.size - 2 * n],
                                              n, &missing, a);
             if (missing >= 0)
-                RAISE_1(VM_ERR_FIELD_NOT_FOUND, base, "Record has no field '%s' to update",
-                        vm_field_name(&vm->ctx, (uint32_t)missing));
+                RAISE(VM_ERR_FIELD_NOT_FOUND, value_free(&base, a),
+                      "Record has no field '%s' to update", vm_field_name(&vm->ctx, (uint32_t)missing));
             TRY_OR(updated.items != NULL, value_free(&base, a), "when updating a record");
             value_t out = value_wrap_record(updated, a);
             TRY_OR(out.obj.cell != NULL, record_deinit(&updated, a); value_free(&base, a),
@@ -413,7 +397,8 @@ break; }
             READ_ARG(n);
             value_t base = sv_vec_pop(stack);
             if (!IS_MAP(base))
-                RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, base, "Hashmap update needs a hashmap, got %s", TYPE_NAME(base));
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&base, a),
+                      "Hashmap update needs a hashmap, got %s", TYPE_NAME(base));
 
             // map_put borrows the map and the pair, the stack keeps owning them
             hashmap_t cur = sv_rc_borrow(AS_MAP(base));
@@ -437,7 +422,8 @@ break; }
             READ_ARG(n);
             value_t tail = sv_vec_pop(stack);
             if (!IS_LIST(tail))
-                RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, tail, "Spread into a list needs a list, got %s", TYPE_NAME(tail));
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&tail, a),
+                      "Spread into a list needs a list, got %s", TYPE_NAME(tail));
 
             list_t list = ll_prepend_arr(AS_LIST(tail), &stack.arr[stack.size - n], n, a);
             TRY_OR(list.cell != NULL, value_free(&tail, a), "when building a list");
@@ -470,8 +456,8 @@ break; }
                 TRY_PUSH_OWNED(res);
                 break;
             }
-            RAISE_2(VM_ERR_OP_UNSUPPORTED_ARGS, v1, v2, "Invalid operands for '+': %s and %s",
-                    TYPE_NAME(v1), TYPE_NAME(v2));
+            RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&v1, a); value_free(&v2, a),
+                  "Invalid operands for '+': %s and %s", TYPE_NAME(v1), TYPE_NAME(v2));
         }
         case OP_NOT: {
             value_t v = sv_vec_pop(stack);
@@ -496,8 +482,8 @@ break; }
             value_t key = sv_vec_pop(stack);
             value_t container = sv_vec_pop(stack);
             if (!IS_MAP(container) && !IS_LIST(container) && !IS_TUPLE(container))
-                RAISE_2(VM_ERR_OP_UNSUPPORTED_ARGS, container, key, "Type is not indexable: %s",
-                        TYPE_NAME(container));
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&container, a); value_free(&key, a),
+                      "Type is not indexable: %s", TYPE_NAME(container));
 
             sv_opt_t(value_t) res;
             if (IS_MAP(container)) {
@@ -505,7 +491,9 @@ break; }
             } else {
                 if (!IS_NUMBER(key) || key.number != (double)(int64_t)key.number) {
                     value_free(&container, a);
-                    RAISE_VALUE(VM_ERR_OP_UNSUPPORTED_ARGS, key, "Index is not an integer: ");
+                    sv_str_t text = value_to_str(key, &vm->ctx);
+                    RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&key, a); sv_str_deinit(&text, a),
+                          "Index is not an integer: %.*s", (int)text.size, text.chars);
                 }
                 res = IS_LIST(container)
                     ? ll_get(AS_LIST(container), (int64_t)key.number)
@@ -513,7 +501,9 @@ break; }
             }
             if (!res.is_some) {
                 value_free(&container, a);
-                RAISE_VALUE(VM_ERR_KEY_NOT_FOUND, key, "Key not found: ");
+                sv_str_t text = value_to_str(key, &vm->ctx);
+                RAISE(VM_ERR_KEY_NOT_FOUND, value_free(&key, a); sv_str_deinit(&text, a),
+                      "Key not found: %.*s", (int)text.size, text.chars);
             }
 
             value_t out = value_borrow(res.value);
@@ -526,8 +516,8 @@ break; }
             value_t key = sv_vec_pop(stack);
             value_t container = sv_vec_pop(stack);
             if (!IS_MAP(container))
-                RAISE_2(VM_ERR_OP_UNSUPPORTED_ARGS, container, key, "Type is not indexable: %s",
-                        TYPE_NAME(container));
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&container, a); value_free(&key, a),
+                      "Type is not indexable: %s", TYPE_NAME(container));
 
             sv_opt_t(value_t) res;
             if (IS_MAP(container))
@@ -543,7 +533,7 @@ break; }
     value_t val = sv_vec_pop(stack);                                                                          \
     uint8_t id = READ_BYTE();                                                                                 \
     if (!IS_RECORD(val) && !IS_USER_VALUE(val))                                                               \
-        RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, val, "Type has no fields: %s", TYPE_NAME(val));                   \
+        RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&val, a), "Type has no fields: %s", TYPE_NAME(val));     \
     sv_opt_t(value_t) v;                                                                                      \
     if (IS_RECORD(val)) {                                                                                     \
         record_t tuple = AS_RECORD(val);                                                                      \
@@ -560,7 +550,8 @@ break; }
     TRY_PUSH_OWNED(out);                                                                                      \
 } while (0)
         case OP_RECORD_GET:
-            RECORD_GET(RAISE_1(VM_ERR_FIELD_NOT_FOUND, val, "Record has no field '%s'", vm_field_name(&vm->ctx, id)));
+            RECORD_GET(RAISE(VM_ERR_FIELD_NOT_FOUND, value_free(&val, a),
+                             "Record has no field '%s'", vm_field_name(&vm->ctx, id)));
             break;
         case OP_RECORD_GET_OR_UNDEF:
             RECORD_GET(v.value = value_undefined);
@@ -578,7 +569,8 @@ break; }
             else if (IS_MAP(val))
                 ret.number =  map_count(AS_MAP(val));
             else
-                RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, val, "Type has no length: %s", TYPE_NAME(val));
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&val, a),
+                      "Type has no length: %s", TYPE_NAME(val));
             value_free(&val, a);
             TRY_PUSH_STACK(ret);
             break;
@@ -586,7 +578,8 @@ break; }
         case OP_ITER_CREATE: {
             value_t v = sv_vec_pop(stack);
             if (!IS_LIST(v) && !IS_STR(v) && !IS_MAP(v))
-                RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, v, "Type is not iterable: %s", TYPE_NAME(v));
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&v, a),
+                      "Type is not iterable: %s", TYPE_NAME(v));
             value_t iter = value_init_iter(v, a);
             value_free(&v, a);
             TRY_NOT_NULL(iter.obj.cell, "when creating iterator");
@@ -596,7 +589,8 @@ break; }
         case OP_ITER_NEXT: {
             value_t v = sv_vec_pop(stack);
             if (!IS_ITER(v))
-                RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, v, "Type is not an iterator: %s", TYPE_NAME(v));
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&v, a),
+                      "Type is not an iterator: %s", TYPE_NAME(v));
             value_t res = iter_next(&AS_ITER(v), a);
             value_free(&v, a);
             TRY_OR(!(res.kind == VALUE_OBJ && res.obj.cell == NULL), (void)0,
@@ -659,21 +653,23 @@ break; }
         case OP_GET_MEMBER: {
             uint8_t i = READ_BYTE();
             if (frame->group.cell == NULL)
-                RAISE(VM_ERR_NO_GROUP, "No closure group in scope");
+                RAISE(VM_ERR_NO_GROUP, (void)0, "No closure group in scope");
             value_t member = value_init_closure_member(sv_rc_borrow(frame->group), i, a);
             TRY_NOT_NULL(member.obj.cell, "when creating closure member");
             TRY_PUSH_OWNED(member);
             break;
         }
 #define ERR_WRONG_ARITY(name, arity)                                                                          \
-    RAISE_1(VM_ERR_BAD_ARITY, value, "Wrong number of arguments for '%.*s': expected %u, got %u",             \
-            (int)(name).size, (name).chars, (unsigned)(arity), (unsigned)arg_count)
+    RAISE(VM_ERR_BAD_ARITY, value_free(&value, a),                                                            \
+          "Wrong number of arguments for '%.*s': expected %u, got %u",                                        \
+          (int)(name).size, (name).chars, (unsigned)(arity), (unsigned)arg_count)
 
 #define LOAD_FN()                                                                                             \
     value_t value = sv_vec_pop(stack);                                                                        \
     uint8_t arg_count = READ_BYTE();                                                                          \
     if (!IS_CLOSURE(value) && !IS_NATIVE(value) && !IS_CLOSURE_MEMBER(value))                                 \
-        RAISE_1(VM_ERR_OP_UNSUPPORTED_ARGS, value, "Type is not callable: %s", TYPE_NAME(value));             \
+        RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&value, a),                                              \
+              "Type is not callable: %s", TYPE_NAME(value));                                                  \
     const value_t* args = &stack.arr[stack.size - arg_count];                                                 \
     if (IS_NATIVE(value)) {                                                                                   \
         CALL_NATIVE(value);                                                                                   \
@@ -734,7 +730,7 @@ break; }
             INIT_FN_VM(fn, upvalues, group);
 
             if (vm->call_frames.size >= vm->max_call_frames)
-                RAISE_1(VM_ERR_STACK_OVERFLOW, value, "Call stack overflow");
+                RAISE(VM_ERR_STACK_OVERFLOW, value_free(&value, a), "Call stack overflow");
 
             // The arguments move into the callee's locals and the callee takes the
             // self slot, which keeps its upvalues and group alive for the frame.
@@ -817,7 +813,7 @@ break; }
             // v is a view of the stack top, so nothing here frees it
             value_t v = sv_vec_last(stack);
             if (!IS_CONS(v))
-                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, "Cannot take the head of an empty list");
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, (void)0, "Cannot take the head of an empty list");
 
             list_t rest = ll_tail(AS_LIST(v), a);
             TRY_OR(rest.cell != NULL, (void)0, "when taking a list tail")
@@ -837,11 +833,15 @@ break; }
                 break;
 
             value_t subject = value_borrow(sv_vec_last(stack));
-            RAISE_VALUE(VM_ERR_MATCH_FAILED, subject, "Value does not match the pattern: ");
+            sv_str_t text = value_to_str(subject, &vm->ctx);
+            RAISE(VM_ERR_MATCH_FAILED, value_free(&subject, a); sv_str_deinit(&text, a),
+                  "Value does not match the pattern: %.*s", (int)text.size, text.chars);
         }
         case OP_NO_MATCH: {
             value_t subject = value_borrow(sv_vec_last(stack));
-            RAISE_VALUE(VM_ERR_NO_CLAUSE, subject, "No clause matched: ");
+            sv_str_t text = value_to_str(subject, &vm->ctx);
+            RAISE(VM_ERR_NO_CLAUSE, value_free(&subject, a); sv_str_deinit(&text, a),
+                  "No clause matched: %.*s", (int)text.size, text.chars);
         }
         case OP_EXTENDED_ARG:
             arg_bytes = READ_BYTE();
@@ -862,7 +862,7 @@ break; }
             break;
         }
         default:
-            RAISE(VM_ERR_NOT_IMPLEMENTED, "Instruction %u not implemented", (unsigned)ip[-1]);
+            RAISE(VM_ERR_NOT_IMPLEMENTED, (void)0, "Instruction %u not implemented", (unsigned)ip[-1]);
     }
 
     return sv_opt_none_t(error_t);
@@ -880,9 +880,6 @@ error:
 #undef IS_SIZED
 #undef NUM_BIN_OP
 #undef RAISE
-#undef RAISE_1
-#undef RAISE_2
-#undef RAISE_VALUE
 #undef TYPE_NAME
 #undef EQUALS
 #undef TRY_OR
