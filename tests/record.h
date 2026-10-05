@@ -108,7 +108,9 @@ static inline void sv_test_record_vm_ops(sv_testing_t* t)
    sv_opt_t(error_t) merr = vm_run(&miss);
    sv_test_run(t, merr.is_some);
    sv_test_run(t, merr.value.error_code == VM_ERR_FIELD_NOT_FOUND);
-   vm_err_deinit(&merr.value, &sv_gpa);
+   /* No name table and bytes emitted on line 0, so the message names neither. */
+   sv_test_run(t, sv_str_comp(merr.value.msg, sv_str_init("Line 0: Record has no field '?'")));
+   error_free(&merr.value, &sv_gpa);
    vm_deinit(&miss);
 }
 

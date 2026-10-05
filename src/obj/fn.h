@@ -20,6 +20,7 @@ typedef struct {
 typedef struct fn_t {
     sv_str_t name;
     uint8_t arity;
+    int64_t line; // where the function was defined; 0 for the top level
     chunk_t chunk;
 } fn_t;
 

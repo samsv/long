@@ -399,9 +399,14 @@ static sexpr_t next_u(void)
     return sexpr_literal(buf);
 }
 
-static sexpr_t match_fail(cons_t* cons, sexpr_t u)
+/**
+ * The default arm, `(match-fail u)`, carrying the line of the match it ends.
+ */
+static sexpr_t match_fail(cons_t* cons, sexpr_t u, int64_t line)
 {
-    APPEND_CAP(cons, id_atom("match-fail"));
+    sexpr_t fail = id_atom("match-fail");
+    fail.atom.line = line;
+    APPEND_CAP(cons, fail);
     APPEND_CAP(cons, u);
     return cons_sexpr(*cons);
 }
@@ -1225,7 +1230,7 @@ sexpr_t match_compile(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
     INIT_CAPACITY_L(match_fail_expr, 2)
 
     if (pattern_is_name(subject)) {
-        ret = compile_pattern(match, &start_i, u, match_fail(&match_fail_expr, u), ctx);
+        ret = compile_pattern(match, &start_i, u, match_fail(&match_fail_expr, u, match.arr[0].atom.line), ctx);
         goto ret;
     }
 
@@ -1236,7 +1241,7 @@ sexpr_t match_compile(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
     INIT_CAPACITY_L(eql_expr, 3);
     APPEND_CAP(&do_expr, bind_var(&eql_expr, u, subject));
 
-    sexpr_t expr = compile_pattern(match, &start_i, u, match_fail(&match_fail_expr, u), ctx);
+    sexpr_t expr = compile_pattern(match, &start_i, u, match_fail(&match_fail_expr, u, match.arr[0].atom.line), ctx);
     if (expr.tag == S_ATOM && expr.atom.kind == TOKEN_ERROR) {
         ret = expr;
         goto ret;

@@ -18,19 +18,10 @@
 
 value_t bad_arg_type_error(value_t v, value_kind expected_k, obj_kind expected_o, const vm_ctx_t* ctx)
 {
-    vm_wrong_type_err* paylod = sv_malloc(ctx->alloc, sizeof(vm_wrong_type_err));
-    *paylod = (vm_wrong_type_err){
-        .expected_o = expected_o,
-            .expected_v = expected_k,
-            .got = v,
-    };
-
-    error_t e = {
-        .error_code = VM_ERR_WRONG_TYPE,
-        .msg = sv_str_init("Wrong type of argument"),
-        .payload = paylod,
-    };
-    return value_init_err(e, ctx->alloc);
+    return value_init_err(error_fmt(VM_ERR_WRONG_TYPE, ctx->line, ctx->alloc,
+                                    "Wrong type of argument: expected %s, got %s",
+                                    value_kind_str(expected_k, expected_o), value_type_name(v)),
+                          ctx->alloc);
 }
 
 value_t ntv_print(const value_t* values, uint8_t n, const vm_ctx_t* ctx)

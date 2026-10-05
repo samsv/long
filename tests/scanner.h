@@ -36,7 +36,7 @@ static inline void sv_test_scan_error(sv_testing_t* t, const char* src, scanner_
    sv_test_run_msg(t, tok.kind == TOKEN_ERROR, "expected error for \"%s\"", src);
    sv_test_run_msg(t, ctx.err.error_code == (int)expected, "error code for \"%s\"", src);
    sv_test_run_msg(t, ctx.err.msg.size > 0, "error msg for \"%s\"", src);
-   sv_str_deinit(&ctx.err.msg, &ctx.alloc);
+   error_free(&ctx.err, &ctx.alloc);
 }
 
 static inline void sv_test_scanner_comments(sv_testing_t* t)

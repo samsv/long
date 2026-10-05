@@ -123,12 +123,7 @@ static void obj_free(obj_t* o, const sv_allocator_t* a)
         case OBJ_TUPLE: tuple_deinit(&o->tuple, a); break;
         case OBJ_CLOSURE_MEMBER: clsm_deinit(&o->closure_member, a); break;
         case OBJ_USER_VALUE: uv_free(o->uservalue, a); break;
-        case OBJ_ERR: {
-            error_t err = o->err;
-            if (err.payload != NULL)
-                sv_free(a, err.payload);
-            break;
-        }
+        case OBJ_ERR: error_free(&o->err, a); break;
         case OBJ_NATIVE_FN: break;
     }
 }
@@ -314,7 +309,12 @@ const char* value_kind_str(value_kind v_kind, obj_kind o_kind)
     return "";
 }
 
-static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
+const char* value_type_name(value_t v)
+{
+    return value_kind_str(v.kind, v.kind == VALUE_OBJ ? v.obj.cell->value.kind : 0);
+}
+
+bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
 {
     const sv_allocator_t* a = ctx->alloc;
 #define CHECK(expr) if (!(expr)) return false
@@ -412,7 +412,7 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
                 if (i > 0)
                     CHECK(sv_strb_add(b, ", ", 2, a) >= 0);
 
-                const char* name = ctx->record_key_names[item.id];
+                const char* name = vm_field_name(ctx, item.id);
                 CHECK(sv_strb_add(b, name, (int64_t)strlen(name), a) >= 0);
                 CHECK(sv_strb_add(b, ": ", 2, a) >= 0);
                 CHECK(value_write(item.value, b, ctx));
@@ -429,24 +429,7 @@ static bool value_write(value_t v, sv_str_builder* b, const vm_ctx_t* ctx)
         }
         case OBJ_ERR: {
             error_t e = AS_ERR(v);
-            CHECK(sv_strb_add(b, e.msg.chars, e.msg.size, a) >= 0);
-
-            vm_err_t* vm_err = e.payload;
-            char buffer[64];
-            int writen = sprintf(buffer, " at line %ld", vm_err->line);
-            CHECK(sv_strb_add(b, buffer, writen, a) >= 0);
-
-            switch (e.error_code) {
-                case VM_ERR_WRONG_TYPE: {
-                    // TODO: Make this a vtable method
-                    vm_wrong_type_err* payload = e.payload;
-                    CHECK(sv_strb_add(b, "got ", strlen("got "), a) >= 0);
-                    CHECK(value_write(payload->got, b, ctx));
-                    const char* rcv = value_kind_str(payload->expected_v, payload->expected_o);
-                    return sv_strb_add(b, rcv, strlen(rcv), a) >= 0;
-                }
-            }
-            return true;
+            return sv_strb_add(b, e.msg.chars, e.msg.size, a) >= 0;
 #undef CHECK
         }
     }
