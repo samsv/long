@@ -4,6 +4,7 @@
 #include "obj/user_value.h"
 #include "std/string.h"
 #include "common.h"
+#include "value.h"
 #include "error.h"
 #include "obj/iterator.h"
 #include "obj/closure.h"
@@ -24,6 +25,8 @@ typedef enum {
     OBJ_USER_VALUE,
     OBJ_ERR,
 } obj_kind;
+
+const char* value_kind_str(value_kind, obj_kind);
 
 typedef struct obj_t {
     union {

@@ -21,6 +21,7 @@ typedef sv_vec_t(value_t) value_arr;
 typedef struct vm_ctx_t {
     const sv_allocator_t* alloc;
     sv_logger_t logger;
+    int64_t line; // the line of the instruction being executed, for the errors natives build
 
     hashmap_t record_fields;
     const char** record_key_names;
@@ -67,6 +68,11 @@ void vm_deinit(vm_t*);
  * Returns the compiled index of the given record name.
  */
 sv_opt_t(uint32_t) vm_get_record_idx(vm_t, sv_str_t);
+/**
+ * The source name of a record field, for messages and printing. A vm built by hand has no
+ * table, and shows the field as `?`.
+ */
+const char* vm_field_name(const vm_ctx_t*, uint32_t id);
 
 /**
  * Interprets the VM bytecode.
@@ -165,41 +171,5 @@ typedef enum {
     VM_ERR_NO_CLAUSE,
     VM_ERR_STACK_OVERFLOW,
 } vm_error_kinds;
-
-/**
- * All VM error types must have this as their first argument.
- */
-typedef struct {
-    int64_t line;
-} vm_err_t;
-
-typedef struct {
-    vm_err_t vm_err;
-    value_t ops[2]; // for infix size is two, prefix size is 1
-    int8_t ops_len;
-} vm_op_err;
-
-typedef struct {
-    vm_err_t vm_err;
-    uint8_t instruction;
-} vm_instruction_err;
-
-typedef struct {
-    vm_err_t vm_err;
-    uint8_t expected;
-    uint8_t got;
-} vm_arity_err;
-
-typedef struct {
-    vm_err_t vm_err;
-    value_t got;
-    value_kind expected_v;
-    obj_kind expected_o;
-} vm_wrong_type_err;
-
-/**
- * Frees the payload of an error returned by vm_run.
- */
-void vm_err_deinit(error_t*, const sv_allocator_t*);
 
 #endif

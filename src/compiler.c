@@ -1109,6 +1109,7 @@ static bool compile_fn_vm(compiler_t* c, const sexpr_t* cls, const sexpr_t* para
     *out = fnb_build(&fc.builder);
     out->name = sv_str_copy(name, &ctx->alloc);
     out->arity = (uint8_t)params->cons.size;
+    out->line = line;
     fc.members = (transient_hashmap_t){0};
     fc.globals.name_indexes = (transient_hashmap_t){0};
     compiler_free(&fc, &ctx->alloc);

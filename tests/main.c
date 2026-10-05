@@ -3,6 +3,7 @@
 #include "../src/std/test.h"
 #include "vector.h"
 #include "string.h"
+#include "error.h"
 #include "unicode.h"
 #include "scanner.h"
 #include "rc.h"
@@ -21,6 +22,7 @@ int main(void)
 
     sv_test_vector(&t);
     sv_test_string(&t);
+    sv_test_error(&t);
     sv_test_unicode(&t);
     sv_test_scanner(&t);
     sv_test_rc(&t);

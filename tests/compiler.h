@@ -30,21 +30,37 @@ static inline vm_t sv_test_compiler_compile(const char* src, int64_t max_frames,
    return compile(SV_TEST_PATH, (compile_opts_t){ .max_frames = max_frames }, ctx);
 }
 
+/*
+ * Compiles and runs src. False on a compile error, with nothing left to free; otherwise
+ * the caller owns vm and, when it is some, err. The vm allocates through ctx, so ctx has
+ * to outlive it.
+ */
+static inline bool sv_test_compiler_run(const char* src, int64_t max_frames, ctx_t* ctx, vm_t* vm,
+                                        sv_opt_t(error_t)* err)
+{
+   *ctx = (ctx_t){ .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   *vm = sv_test_compiler_compile(src, max_frames, ctx);
+   if (vm->fn.chunk.bytecode.arr == NULL) {
+      error_free(&ctx->err, &sv_gpa);
+      return false;
+   }
+   *err = vm_run(vm);
+   return true;
+}
+
 static inline value_t sv_test_compiler_eval_frames(const char* src, int64_t max_frames, bool* ok)
 {
-   ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = sv_test_compiler_compile(src, max_frames, &ctx);
-   if (vm.fn.chunk.bytecode.arr == NULL) {
-      sv_str_deinit(&ctx.err.msg, &sv_gpa);
+   ctx_t ctx;
+   vm_t vm;
+   sv_opt_t(error_t) err;
+   if (!sv_test_compiler_run(src, max_frames, &ctx, &vm, &err)) {
       *ok = false;
       return (value_t){ .kind = VALUE_NIL };
    }
-
-   sv_opt_t(error_t) err = vm_run(&vm);
    *ok = !err.is_some && vm.stack.size == 1;
    value_t res = *ok ? value_borrow(sv_vec_last(vm.stack)) : (value_t){ .kind = VALUE_NIL };
    if (err.is_some)
-      vm_err_deinit(&err.value, &sv_gpa);
+      error_free(&err.value, &sv_gpa);
    vm_deinit(&vm);
    return res;
 }
@@ -74,14 +90,11 @@ static inline bool sv_test_compiler_num(const char* src, double expected)
 
 static inline bool sv_test_compiler_str(const char* src, const char* expected)
 {
-   ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = sv_test_compiler_compile(src, SV_TEST_MAX_FRAMES, &ctx);
-   if (vm.fn.chunk.bytecode.arr == NULL) {
-      sv_str_deinit(&ctx.err.msg, &sv_gpa);
+   ctx_t ctx;
+   vm_t vm;
+   sv_opt_t(error_t) err;
+   if (!sv_test_compiler_run(src, SV_TEST_MAX_FRAMES, &ctx, &vm, &err))
       return false;
-   }
-
-   sv_opt_t(error_t) err = vm_run(&vm);
    bool res = !err.is_some && vm.stack.size == 1;
    if (res) {
       sv_str_t text = value_to_str(sv_vec_last(vm.stack), &vm.ctx);
@@ -89,7 +102,7 @@ static inline bool sv_test_compiler_str(const char* src, const char* expected)
       sv_str_deinit(&text, &sv_gpa);
    }
    if (err.is_some)
-      vm_err_deinit(&err.value, &sv_gpa);
+      error_free(&err.value, &sv_gpa);
    vm_deinit(&vm);
    return res;
 }
@@ -125,18 +138,37 @@ static inline value_t sv_test_compiler_atom(double id)
 
 static inline int sv_test_compiler_runtime_err_frames(const char* src, int64_t max_frames)
 {
-   ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t vm = sv_test_compiler_compile(src, max_frames, &ctx);
-   if (vm.fn.chunk.bytecode.arr == NULL) {
-      sv_str_deinit(&ctx.err.msg, &sv_gpa);
+   ctx_t ctx;
+   vm_t vm;
+   sv_opt_t(error_t) err;
+   if (!sv_test_compiler_run(src, max_frames, &ctx, &vm, &err))
       return -1;
-   }
-   sv_opt_t(error_t) err = vm_run(&vm);
    int code = err.is_some ? err.value.error_code : -2;
    if (err.is_some)
-      vm_err_deinit(&err.value, &sv_gpa);
+      error_free(&err.value, &sv_gpa);
    vm_deinit(&vm);
    return code;
+}
+
+/* Runs the program and compares the text of the error it raises. */
+static inline bool sv_test_compiler_runtime_msg_frames(const char* src, const char* expected,
+                                                       int64_t max_frames)
+{
+   ctx_t ctx;
+   vm_t vm;
+   sv_opt_t(error_t) err;
+   if (!sv_test_compiler_run(src, max_frames, &ctx, &vm, &err))
+      return false;
+   bool res = err.is_some && sv_str_comp(err.value.msg, sv_str_init(expected));
+   if (err.is_some)
+      error_free(&err.value, &sv_gpa);
+   vm_deinit(&vm);
+   return res;
+}
+
+static inline bool sv_test_compiler_runtime_msg(const char* src, const char* expected)
+{
+   return sv_test_compiler_runtime_msg_frames(src, expected, SV_TEST_MAX_FRAMES);
 }
 
 static inline int sv_test_compiler_runtime_err(const char* src)
@@ -153,7 +185,7 @@ static inline int sv_test_compiler_err(const char* src)
       return -1;
    }
    int code = ctx.err.error_code;
-   sv_str_deinit(&ctx.err.msg, &sv_gpa);
+   error_free(&ctx.err, &sv_gpa);
    return code;
 }
 
@@ -247,8 +279,8 @@ static inline void sv_test_compiler_indexing(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("[1][0 - 1]") == VM_ERR_KEY_NOT_FOUND);
    sv_test_run(t, sv_test_compiler_runtime_err("%{1: 2}[3]") == VM_ERR_KEY_NOT_FOUND);
    sv_test_run(t, sv_test_compiler_runtime_err("[1][\"a\"]") == VM_ERR_OP_UNSUPPORTED_ARGS);
-   sv_test_run(t, sv_test_compiler_runtime_err("[1][0.5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
-   sv_test_run(t, sv_test_compiler_runtime_err("5[0]") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_msg("[1][0.5]", "Line 1: Index is not an integer: 0.5"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("5[0]", "Line 1: Type is not indexable: number"));
 }
 
 static inline void sv_test_compiler_tuples(sv_testing_t* t)
@@ -290,8 +322,8 @@ static inline void sv_test_compiler_tuples(sv_testing_t* t)
    value_free(&inner, &sv_gpa);
 
    sv_test_run(t, sv_test_compiler_err("{x: 1, x: 2}") == C_ERR_REDEFINED);
-   sv_test_run(t, sv_test_compiler_runtime_err("{x: 1}.y") == VM_ERR_FIELD_NOT_FOUND);
-   sv_test_run(t, sv_test_compiler_runtime_err("t = 5\nt.x") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_msg("{x: 1}.y", "Line 1: Record has no field 'y'"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("t = 5\nt.x", "Line 2: Type has no fields: number"));
 
    sv_test_run(t, sv_test_compiler_str("t = {x: 10, y: 20}\nt", "{x: 10, y: 20}"));
 }
@@ -335,7 +367,8 @@ static inline void sv_test_compiler_logic(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("if \"a\" + \"b\" == \"ab\" do 1 else 0 end", 1));
    sv_test_run(t, sv_test_compiler_num("s = \"ab\"\nif s + s == \"abab\" do 1 else 0 end", 1));
    sv_test_run(t, sv_test_compiler_runtime_err("\"a\" + 1") == VM_ERR_OP_UNSUPPORTED_ARGS);
-   sv_test_run(t, sv_test_compiler_runtime_err("1 + \"a\"") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_msg("1 + \"a\"",
+      "Line 1: Invalid operands for '+': number and string"));
 
    sv_test_run(t, sv_test_compiler_num("1; 2", 2));
    sv_test_run(t, sv_test_compiler_num("2;", 2));
@@ -351,27 +384,49 @@ static inline void sv_test_compiler_logic(sv_testing_t* t)
 
 static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
 {
-   sv_test_run(t, sv_test_compiler_runtime_err("for x in 5 do x end") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_msg("for x in 5 do x end", "Line 1: Type is not iterable: number"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("fun f(x) do x end f(1, 2)",
+      "Line 1: Wrong number of arguments for 'f': expected 1, got 2"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("[1] < 2", "Line 1: Invalid operands for '<': list and number"));
+}
 
-   ctx_t actx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t avm = sv_test_compiler_compile("fun f(x) do x end f(1, 2)", SV_TEST_MAX_FRAMES, &actx);
-   sv_test_run(t, avm.fn.chunk.bytecode.arr != NULL);
-   sv_opt_t(error_t) aerr = vm_run(&avm);
-   sv_test_run(t, aerr.is_some);
-   sv_test_run(t, aerr.value.error_code == VM_ERR_BAD_ARITY);
-   sv_test_run(t, ((vm_arity_err*)aerr.value.payload)->expected == 1);
-   sv_test_run(t, ((vm_arity_err*)aerr.value.payload)->got == 2);
-   vm_err_deinit(&aerr.value, &sv_gpa);
-   vm_deinit(&avm);
+static inline void sv_test_compiler_error_messages(sv_testing_t* t)
+{
+   /* A runtime error names its line, the operation and the types or values involved; the
+    * cases that share a program with an older code check live next to that check. */
+   sv_test_run(t, sv_test_compiler_runtime_msg("x = 1\n[1] < x",
+      "Line 2: Invalid operands for '<': list and number"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("-\"a\"", "Line 1: Invalid operand for '-': string"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("println(1, 2)",
+      "Line 1: Wrong number of arguments for 'println': expected 1, got 2"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("x = 5\nx(1)", "Line 2: Type is not callable: number"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("%{\"a\": 1}[\"b\"]", "Line 1: Key not found: b"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("[1, 2][5]", "Line 1: Key not found: 5"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("print_vals(5)",
+      "Line 1: Wrong type of argument: expected list, got number"));
+   sv_test_run(t, sv_test_compiler_runtime_msg_frames("fun f(n) f(n + 1) + 1\nf(0)",
+      "Line 1: Call stack overflow", 100));
+   sv_test_run(t, sv_test_compiler_runtime_msg("o = {x: 0}\n{z: 1, ..o}",
+      "Line 2: Record has no field 'z' to update"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("x = [1, 2, 3, 4, 5, 6, 7, 8]\nmatch x | [] do 0 end",
+      "Line 2: No clause matched: [1, 2, 3, 4, 5, 6, 7, 8]"));
 
-   ctx_t cctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
-   vm_t cvm = sv_test_compiler_compile("[1] < 2", SV_TEST_MAX_FRAMES, &cctx);
-   sv_test_run(t, cvm.fn.chunk.bytecode.arr != NULL);
-   sv_opt_t(error_t) cerr = vm_run(&cvm);
-   sv_test_run(t, cerr.is_some);
-   sv_test_run(t, cerr.value.error_code == VM_ERR_OP_UNSUPPORTED_ARGS);
-   vm_err_deinit(&cerr.value, &sv_gpa);
-   vm_deinit(&cvm);
+   /* An error raised through the embedding api reports the callee's definition line, or
+    * line 0 when there is no callee to point at. */
+   ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   vm_t vm = sv_test_compiler_compile("x = 1\nfun f(y) y\nf(1)", SV_TEST_MAX_FRAMES, &ctx);
+   sv_test_run(t, vm.fn.chunk.bytecode.arr != NULL);
+   sv_test_run(t, !vm_run(&vm).is_some);
+   value_t args[] = { sv_test_compiler_val(1), sv_test_compiler_val(2) };
+   value_t bad_arity = vm_call_name(&vm, args, 2, sv_str_init("f"), sv_str_init(SV_TEST_PATH));
+   sv_test_run(t, IS_ERR(bad_arity) && sv_str_comp(AS_ERR(bad_arity).msg,
+      sv_str_init("Line 2: Wrong number of arguments")));
+   value_free(&bad_arity, &sv_gpa);
+   value_t undefined = vm_call_name(&vm, args, 1, sv_str_init("nope"), sv_str_init(SV_TEST_PATH));
+   sv_test_run(t, IS_ERR(undefined) && sv_str_comp(AS_ERR(undefined).msg,
+      sv_str_init("Line 0: Undefined global")));
+   value_free(&undefined, &sv_gpa);
+   vm_deinit(&vm);
 }
 
 static inline void sv_test_compiler_for(sv_testing_t* t)
@@ -1131,7 +1186,7 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
 
    /* Every mismatch raises rather than yielding nil. */
    sv_test_run(t, sv_test_compiler_runtime_err("(a, b) = (1, 2, 3)\na") == VM_ERR_MATCH_FAILED);
-   sv_test_run(t, sv_test_compiler_runtime_err("(a, b) = 5\na") == VM_ERR_MATCH_FAILED);
+   sv_test_run(t, sv_test_compiler_runtime_msg("(a, b) = 5\na", "Line 1: Value does not match the pattern: 5"));
    sv_test_run(t, sv_test_compiler_runtime_err("[a, b] = [1, 2, 3]\na") == VM_ERR_MATCH_FAILED);
    sv_test_run(t, sv_test_compiler_runtime_err("[a, b] = [1]\na") == VM_ERR_MATCH_FAILED);
    sv_test_run(t, sv_test_compiler_runtime_err("{x: a} = {x: 5, y: 6}\na") == VM_ERR_MATCH_FAILED);
@@ -1150,7 +1205,7 @@ static inline void sv_test_compiler_destructure(sv_testing_t* t)
 
    /* A match with no matching clause raises rather than yielding nil; a match
     * with no clauses at all is rejected at compile time. */
-   sv_test_run(t, sv_test_compiler_runtime_err("match 5 | 1 do 2 end") == VM_ERR_NO_CLAUSE);
+   sv_test_run(t, sv_test_compiler_runtime_msg("match 5 | 1 do 2 end", "Line 1: No clause matched: 5"));
    sv_test_run(t, sv_test_compiler_err("match 5 end") == C_ERR_UNEXPECTED_SEXPR);
 
    /* An alias binds the whole value and goes on matching the other side, in either order. */
@@ -1188,7 +1243,7 @@ static inline void sv_test_compiler_spread(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_err("{a: 1, ..{x: 0}}") == VM_ERR_FIELD_NOT_FOUND);
    sv_test_run(t, sv_test_compiler_runtime_err("o = {a: 0, b: 0}\nq = {a: 0, c: 0}\n{b: 1, ..q}")
                == VM_ERR_FIELD_NOT_FOUND);
-   sv_test_run(t, sv_test_compiler_runtime_err("{x: 1, ..5}") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_msg("{x: 1, ..5}", "Line 1: Record update needs a record, got number"));
    sv_test_run(t, sv_test_compiler_runtime_err("{x: 1, ..[1]}") == VM_ERR_OP_UNSUPPORTED_ARGS);
    sv_test_run(t, sv_test_compiler_err("o = {x: 0}\n{x: 1, x: 2, ..o}") == C_ERR_REDEFINED);
    /* A pattern cannot bind a record or hashmap rest, and a list tail pattern is a name or a list. */
@@ -1213,7 +1268,7 @@ static inline void sv_test_compiler_spread(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("fun f() [9]\nl = [1, ..f()]\nl[1]", 9));
    sv_test_run(t, sv_test_compiler_num("xs = [3]\nys = [1, 2, ..xs]\nys[2]", 3));
    sv_test_run(t, sv_test_compiler_num("xs = [3]\nys = [1, ..xs]\nxs[0]", 3));
-   sv_test_run(t, sv_test_compiler_runtime_err("[1, ..5]") == VM_ERR_OP_UNSUPPORTED_ARGS);
+   sv_test_run(t, sv_test_compiler_runtime_msg("[1, ..5]", "Line 1: Spread into a list needs a list, got number"));
 }
 
 static inline void sv_test_compiler(sv_testing_t* t)
@@ -1241,6 +1296,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_newlines(t);
    sv_test_compiler_errors(t);
    sv_test_compiler_runtime_errors(t);
+   sv_test_compiler_error_messages(t);
 }
 
 #endif

@@ -87,6 +87,14 @@ bool value_eql(value_t, value_t);
  * Converts the value a string representation.
  */
 sv_str_t value_to_str(value_t, const vm_ctx_t*);
+/**
+ * Appends the value's text to the builder. False when it cannot be allocated.
+ */
+bool value_write(value_t, sv_str_builder*, const vm_ctx_t*);
+/**
+ * The type of a value as an error message names it: number, string, list, ...
+ */
+const char* value_type_name(value_t);
 
 /**
  * Creates a list value cloning the values (see ll_init). obj.cell is NULL on

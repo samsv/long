@@ -9,14 +9,14 @@ static int run(vm_t* vm, ctx_t ctx)
     if (ctx.err.error_code != 0) {
         if (ctx.err.msg.size > 0)
             sv_log_error(&ctx.logger, "%.*s", (int)ctx.err.msg.size, ctx.err.msg.chars);
-        sv_str_deinit(&ctx.err.msg, &ctx.alloc);
+        error_free(&ctx.err, &ctx.alloc);
         return 1;
     }
 
     sv_opt_t(error_t) err = vm_run(vm);
     if (err.is_some) {
         sv_log_error(&ctx.logger, "%.*s", (int)err.value.msg.size, err.value.msg.chars);
-        vm_err_deinit(&err.value, &ctx.alloc);
+        error_free(&err.value, &ctx.alloc);
         vm_deinit(vm);
         return 1;
     }
