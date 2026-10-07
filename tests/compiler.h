@@ -189,6 +189,19 @@ static inline int sv_test_compiler_err(const char* src)
    return code;
 }
 
+static inline bool sv_test_compiler_err_msg(const char* src, const char* expected)
+{
+   ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   vm_t vm = sv_test_compiler_compile(src, SV_TEST_MAX_FRAMES, &ctx);
+   if (vm.fn.chunk.bytecode.arr != NULL) {
+      vm_deinit(&vm);
+      return false;
+   }
+   bool res = sv_str_comp(ctx.err.msg, sv_str_init(expected));
+   error_free(&ctx.err, &sv_gpa);
+   return res;
+}
+
 /**
  * Builds `head`, then `fmt` printed with each integer in [from, to], then `tail`.
  * The caller frees the result with free().
@@ -380,6 +393,8 @@ static inline void sv_test_compiler_logic(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_num("fun add2(x, y) do x + y end\n1 |> add2(2)", 3));
    sv_test_run(t, sv_test_compiler_num("fun inc(x) do x + 1 end\n5 |> inc() |> inc()", 7));
    sv_test_run(t, sv_test_compiler_err("fun inc(x) do x + 1 end\n5 |> inc") == C_ERR_UNEXPECTED_SEXPR);
+   sv_test_run(t, sv_test_compiler_err_msg("x = 1\n\n1 |> x.f(2)", "Expected an identifier at line 3"));
+   sv_test_run(t, sv_test_compiler_err_msg("x = 1\n\nfun f[zzz](y) do y end", "Undefined variable 'zzz' at line 3"));
 }
 
 static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
@@ -387,6 +402,10 @@ static inline void sv_test_compiler_runtime_errors(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_msg("for x in 5 do x end", "Line 1: Type is not iterable: number"));
    sv_test_run(t, sv_test_compiler_runtime_msg("fun f(x) do x end f(1, 2)",
       "Line 1: Wrong number of arguments for 'f': expected 1, got 2"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("fun f(x) do x end\nr = { f: f }\n\nr.f(1, 2)",
+      "Line 4: Wrong number of arguments for 'f': expected 1, got 2"));
+   sv_test_run(t, sv_test_compiler_runtime_msg("fun f(x) do x end\nfun g() do f end\n\n(g())(1, 2)",
+      "Line 4: Wrong number of arguments for 'f': expected 1, got 2"));
    sv_test_run(t, sv_test_compiler_runtime_msg("[1] < 2", "Line 1: Invalid operands for '<': list and number"));
 }
 

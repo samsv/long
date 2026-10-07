@@ -246,10 +246,21 @@ static sv_opt_t(uint32_t) locals_get(const locals_t* l, sv_str_t id, ctx_t* ctx)
     return sv_opt_none_t(uint32_t);
 }
 
+/* The line of the first atom in a tree, or 0 when it has none. */
+static int64_t sexpr_line(sexpr_t e)
+{
+    while (e.tag == S_CONS) {
+        if (e.cons.size == 0)
+            return 0;
+        e = e.cons.arr[0];
+    }
+    return e.atom.line;
+}
+
 static bool expect_id(sexpr_t e, ctx_t* ctx, sv_str_t* out)
 {
     if (e.tag != S_ATOM || e.atom.kind != TOKEN_LITERAL || e.atom.literal.kind != LITERAL_IDENTIFIER) {
-        int64_t line = e.tag == S_ATOM ? e.atom.line : 0;
+        int64_t line = sexpr_line(e);
         char msg[96];
         snprintf(msg, sizeof(msg), "Expected an identifier at line %" PRId64, line);
         return compiler_error(ctx, C_ERR_UNEXPECTED_SEXPR, msg);
@@ -1150,7 +1161,7 @@ static bool compile_fun(compiler_t* c, const sexpr_t* args, int64_t n, int64_t l
     fn_t fn_vm;
     TRY(compile_fn_vm(c, cls, params, body, name, 0, (transient_hashmap_t){0}, line, ctx, &fn_vm));
 
-    if (!compile_upvalue_loads(c, cls, 0, ctx)) {
+    if (!compile_upvalue_loads(c, cls, line, ctx)) {
         fn_deinit(&fn_vm, &ctx->alloc);
         return false;
     }
@@ -1562,7 +1573,7 @@ static bool compile_cons(compiler_t* c, const sexpr_t* cons, int64_t n, bool is_
             TRY(compile_sexpr(c, cons[i], false, ctx));
         TRY(compile_cons(c, head.cons.arr, head.cons.size, false, ctx));
         uint8_t op = is_tail ? OP_TAIL_CALL : OP_CALL;
-        return emit_narrow(c, ctx, op, n - 1, "arguments", 0);
+        return emit_narrow(c, ctx, op, n - 1, "arguments", sexpr_line(head));
     }
 
     token_t a = head.atom;
