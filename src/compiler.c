@@ -1633,10 +1633,9 @@ bool compile_sexpr(compiler_t* c, sexpr_t sexpr, bool is_tail, ctx_t* ctx)
     if (sexpr.cons.size > 1 && sexpr.cons.arr[0].tag == S_ATOM) {
         token_t head = sexpr.cons.arr[0].atom;
         if (head.kind == TOKEN_SP_FUNCTION && head.fn == FN_MATCH) {
-            sv_arena_t arena = sv_arena_init(1 << 16);
+            sv_arena_t arena = sv_arena_init(1 << 16, &ctx->alloc, NULL);
             sexpr_t lower_match = match_compile(sexpr, ctx, &arena);
             if (is_error_sexpr(lower_match)) {
-                ctx->err.msg = sv_str_copy(ctx->err.msg, &ctx->alloc);
                 sv_arena_deinit(&arena);
                 return false;
             }

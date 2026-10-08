@@ -57,7 +57,6 @@ void sv_arena_allocator_deinit(sv_allocator_t*);
  */
 void arena_print(sv_arena_t* a);
 
-#endif
 
 #ifdef SV_ARENA_IMPLEMENTATION
 #include <stdio.h>
@@ -250,4 +249,4 @@ void sv_arena_allocator_deinit(sv_allocator_t* a)
     sv_arena_deinit(arena);
 }
 #endif
-
+#endif
