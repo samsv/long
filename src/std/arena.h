@@ -15,7 +15,7 @@ struct sv_arena_t {
     size_t count;
 
     sv_arena_t* next;
-    sv_arena_t* tail;  // the block allocations bump; NULL while that is the head
+    sv_arena_t* tail; // checkpoint
 
     const sv_allocator_t* backing_alloc;
     jmp_buf* error_buffer;
@@ -52,12 +52,12 @@ void* sv_arena_malloc(sv_arena_t*, const size_t amount);
 void* sv_arena_calloc(sv_arena_t*, const size_t size);
 
 /**
- * The current fill, to hand back to sv_arena_reset.
+ * Arena allocator checkpoint mark.
  */
 sv_arena_mark_t sv_arena_mark(sv_arena_t*);
 
 /**
- * Releases everything allocated since the mark. The blocks are kept for reuse.
+ * Resets the arena to the last mark checkpoint.
  */
 void sv_arena_reset(sv_arena_t*, sv_arena_mark_t);
 
