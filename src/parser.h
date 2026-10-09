@@ -13,7 +13,7 @@ typedef enum {
 } parser_error_kind;
 
 /**
- * Parses one expression into a tree allocated with the allocator; atoms view the source.
+ * Parses one expression into a tree allocated with the allocator.
  */
 sexpr_t parser_expr(scanner_t* s, ctx_t* ctx, const sv_allocator_t* a);
 

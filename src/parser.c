@@ -106,9 +106,7 @@ static void push_sexpr(sv_vec_t(sexpr_t)* list, sexpr_t e, const sv_allocator_t*
 static sexpr_t cons_of(sexpr_t* items, int64_t n, const sv_allocator_t* a)
 {
     sv_vec_t(sexpr_t) list = sv_vec_init(sexpr_t);
-    int success;
-    sv_vec_push_many(&list, items, n, &success, a);
-    (void)success;
+    sv_vec_push_many(&list, items, n, NULL, a);
     return cons_sexpr(list);
 }
 

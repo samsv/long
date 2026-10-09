@@ -183,7 +183,7 @@ static bool compile_top(compiler_t* c, sexpr_t sexpr, bool has_value, int64_t li
 {
     bool import = is_import(sexpr);
     if (import && !compile_import(c, sexpr.cons.arr + 1, line, ctx))
-        return false;  // a module already compiled emits nothing, so the previous value stays
+        return false;
     if (has_value)
         emit(c, ctx, OP_POP, line);
     if (import)
@@ -222,7 +222,7 @@ static bool compile_source(compiler_t* c, const char* source_code, ctx_t* ctx)
             sv_arena_reset(c->arena, mark);
     }
     if (token.kind == TOKEN_ERROR)
-        longjmp(*ctx->on_error, 2);  // the scanner has stored its error
+        longjmp(*ctx->on_error, 2);
 
     c->module_scope = scope->outer;
     thm_deinit(&scope->var_to_modules, &ctx->alloc);

@@ -1022,9 +1022,9 @@ static sexpr_t compile_var(cons_t match, int* start_i, sexpr_t u, sexpr_t deflt_
     return close_pipe(bar_expr);
 }
 
-#define IS_NEXT_EQL()                                                                                                  \
-    (next_expr != NULL                                                                                                 \
-    && pat_type == pattern_class_of(*next_expr)                                                                        \
+#define IS_NEXT_EQL()                                                                                         \
+    (next_expr != NULL                                                                                        \
+    && pat_type == pattern_class_of(*next_expr)                                                               \
     && literal_eql(AS_LITERAL(GET_COND(match, i)), AS_LITERAL(*next_expr)))
 
 static sexpr_t compile_repeated_literals(cons_t match, cons_t* end, int* start_i, pattern_class pat_type,
