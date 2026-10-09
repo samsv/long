@@ -13,17 +13,14 @@ typedef enum {
 } parser_error_kind;
 
 /**
- * Parses one expression. The returned tree is allocated with `ctx->a` and
- * freed with sexpr_free; atoms are views into the scanner's source. On error
- * returns an S_ATOM holding a TOKEN_ERROR token and sets `ctx->err`.
+ * Parses one expression into a tree allocated with the allocator; atoms view the source.
  */
-sexpr_t parser_expr(scanner_t* s, ctx_t* ctx);
+sexpr_t parser_expr(scanner_t* s, ctx_t* ctx, const sv_allocator_t* a);
 
 /**
  * Parses expressions until the end of the input into a `(do ...)` cons.
- * Errors behave like parser_expr.
  */
-sexpr_t parser_program(scanner_t* s, ctx_t* ctx);
+sexpr_t parser_program(scanner_t* s, ctx_t* ctx, const sv_allocator_t* a);
 
 /**
  * Skips statement separators: semicolons and newlines.

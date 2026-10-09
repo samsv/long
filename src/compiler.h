@@ -6,6 +6,7 @@
 #include "obj/map.h"
 #include "obj/native_fns.h"
 #include "globals.h"
+#include "std/arena.h"
 
 typedef struct locals_t {
     transient_hashmap_t name_indexes;
@@ -24,7 +25,15 @@ typedef struct {
     transient_hashmap_t to_be_compiled_modules;
 } module_map_t;
 
-typedef struct {
+/**
+ * The module aliases of one source file, pushed by each import for the file it compiles.
+ */
+typedef struct module_scope_t {
+    transient_hashmap_t var_to_modules;
+    struct module_scope_t* outer;
+} module_scope_t;
+
+typedef struct compiler_t {
     globals_t globals;
     locals_t upvalues;
     locals_t* locals;
@@ -35,13 +44,14 @@ typedef struct {
 
     const char* current_path;
     module_map_t modules;
-    // maps module names from `import name("module.long")` to its compiled_modules key. e.g. name -> $FULL_PATH/module.long
-    // whenever a new module enters the compile queue a new transient hashmap must be created and replace the old one
-    // in the compiler. After compilation is completed, the old var_to_modules map may be restored.
-    transient_hashmap_t var_to_modules;
+    module_scope_t* module_scope;
 
     fn_builder_t builder;
     sv_vec_t(value_t) global_values;
+
+    sv_arena_t* arena;              // reset after each top-level expression
+    const sv_allocator_t* scratch;  // the arena as an allocator
+    struct compiler_t* child;       // the function body being compiled
 } compiler_t;
 
 typedef struct {

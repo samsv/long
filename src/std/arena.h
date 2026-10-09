@@ -15,10 +15,19 @@ struct sv_arena_t {
     size_t count;
 
     sv_arena_t* next;
+    sv_arena_t* tail;  // the block allocations bump; NULL while that is the head
 
     const sv_allocator_t* backing_alloc;
     jmp_buf* error_buffer;
 };
+
+/**
+ * A fill level of the arena, taken by sv_arena_mark and given back to sv_arena_reset.
+ */
+typedef struct {
+    sv_arena_t* block;  // NULL for the head
+    size_t count;
+} sv_arena_mark_t;
 
 /**
  * Initializes the arena. Returns a zeroed arena on failure.
@@ -41,6 +50,16 @@ void* sv_arena_malloc(sv_arena_t*, const size_t amount);
  * As sv_arena_malloc, zeroed.
  */
 void* sv_arena_calloc(sv_arena_t*, const size_t size);
+
+/**
+ * The current fill, to hand back to sv_arena_reset.
+ */
+sv_arena_mark_t sv_arena_mark(sv_arena_t*);
+
+/**
+ * Releases everything allocated since the mark. The blocks are kept for reuse.
+ */
+void sv_arena_reset(sv_arena_t*, sv_arena_mark_t);
 
 /**
  * Wraps the arena in an allocator, borrowing it.
@@ -100,6 +119,7 @@ void sv_arena_deinit(sv_arena_t* a)
 
     sv_free(a->backing_alloc, a->data);
     a->next = NULL;
+    a->tail = NULL;
     a->data = NULL;
     a->count = 0;
     a->capacity = 0;
@@ -127,34 +147,60 @@ sv_arena_t sv_arena_init(size_t capacity, const sv_allocator_t* backing, jmp_buf
     return a;
 }
 
-static void* sv_arena_malloc_aligned(sv_arena_t* a, const size_t size) {
-    size_t default_capacity = a->capacity;
-    while (a->capacity - a->count < size) {
-        if (a->next) {
-            a = a->next;
-            continue;
+static void* sv_arena_malloc_aligned(sv_arena_t* a, const size_t size)
+{
+    sv_arena_t* block = a->tail != NULL ? a->tail : a;
+    if (block->capacity - block->count < size) {
+        // a block kept by a reset is reused when it fits, otherwise a new one is spliced in after the tail
+        sv_arena_t* next = block->next;
+        if (next == NULL || next->capacity < size) {
+            next = sv_malloc(a->backing_alloc, sizeof(sv_arena_t));
+            if (next == NULL)
+                return NULL;
+            *next = sv_arena_init(a->capacity > size ? a->capacity : size, a->backing_alloc, a->error_buffer);
+            if (next->data == NULL) {
+                sv_free(a->backing_alloc, next);
+                return NULL;
+            }
+            next->next = block->next;
+            block->next = next;
         }
-
-        sv_arena_t* next_ptr = sv_malloc(a->backing_alloc, sizeof(sv_arena_t));
-        if (next_ptr == NULL)
-            return NULL;
-        *next_ptr = sv_arena_init(
-            default_capacity > size ? default_capacity : size,
-            a->backing_alloc,
-            a->error_buffer
-        );
-        if (next_ptr->data == NULL) {
-            sv_free(a->backing_alloc, next_ptr);
-            return NULL;
-        }
-
-        a->next = next_ptr;
-        a = next_ptr;
+        a->tail = next;
+        block = next;
     }
 
-    size_t start = a->count;
-    a->count += size;
-    return &a->data[start];
+    size_t start = block->count;
+    block->count += size;
+    return &block->data[start];
+}
+
+sv_arena_mark_t sv_arena_mark(sv_arena_t* a)
+{
+    sv_arena_t* block = a->tail != NULL ? a->tail : a;
+    return (sv_arena_mark_t){ .block = a->tail, .count = block->count };
+}
+
+static void sv_arena_poison(char* data, size_t from, size_t to)
+{
+#ifdef SV_ARENA_POISON
+    memset(data + from, 0xA5, to - from);
+#else
+    (void)data;
+    (void)from;
+    (void)to;
+#endif
+}
+
+void sv_arena_reset(sv_arena_t* a, sv_arena_mark_t m)
+{
+    sv_arena_t* block = m.block != NULL ? m.block : a;
+    sv_arena_poison(block->data, m.count, block->count);
+    block->count = m.count;
+    for (sv_arena_t* b = block->next; b != NULL; b = b->next) {
+        sv_arena_poison(b->data, 0, b->count);
+        b->count = 0;
+    }
+    a->tail = m.block;
 }
 
 static void check_malloc(sv_arena_t* a, void* ptr)

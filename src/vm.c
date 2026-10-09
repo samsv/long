@@ -166,8 +166,7 @@ value_t vm_call(vm_t* vm, uint32_t index, value_t* args, uint8_t arg_count)
 value_t vm_call_name(vm_t* vm, value_t* args, uint8_t arg_count,
                      sv_str_t function_name, sv_str_t file_name)
 {
-    ctx_t ctx = { .logger = vm->ctx.logger, .alloc = *vm->ctx.alloc };
-    sv_opt_t(uint32_t) index = globals_get(vm->globals_names_to_index, function_name, file_name, &ctx);
+    sv_opt_t(uint32_t) index = globals_get(vm->globals_names_to_index, function_name, file_name, vm->ctx.alloc);
     if (!index.is_some)
         return value_init_err(error_fmt(VM_ERR_UNDEFINED_VARIABLE, 0, vm->ctx.alloc, "Undefined global"),
                               vm->ctx.alloc);

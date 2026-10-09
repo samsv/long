@@ -55,9 +55,6 @@ static sexpr_t match_atom(int64_t line)
     return match_token;
 }
 
-/* The arena jumps here with 1 when it cannot allocate; compile errors jump with 2. */
-static jmp_buf* fail_target;
-
 static cons_t cons_init(int64_t cap, const sv_allocator_t* a)
 {
     cons_t c = sv_vec_init_capacity(sexpr_t, cap, a);
@@ -362,16 +359,6 @@ static int group_tuple(cons_t match, int start)
 
     stable_sort(&match.arr[start], current - start, sizeof(sexpr_t), tuple_cmp);
     return current;
-}
-
-/**
- * Discards an sexpr as an invalid match
- */
-static sexpr_t error_invalid_pattern(sexpr_t* s, ctx_t* ctx)
-{
-    int64_t line = s->tag == S_CONS ? s->cons.arr[0].atom.line : s->atom.line;
-    error_set(&ctx->err, C_ERR_UNEXPECTED_SEXPR, "Invalid match expression. A match must have clauses.", &ctx->alloc);
-    return atom_sexpr((token_t){ .kind = TOKEN_ERROR, .line = line });
 }
 
 static sexpr_t sexpr_literal(const char* name)
@@ -758,8 +745,7 @@ static value_t atom_key(sv_str_t name, int64_t line, ctx_t* ctx)
             break;
 
     if (i == atom_keys_used) {
-        if (!check_limit(ctx, atom_keys_used + 1, TEMPS_MAX, "atom keys in a match", line))
-            longjmp(*fail_target, 2);
+        check_limit(ctx, atom_keys_used + 1, TEMPS_MAX, "atom keys in a match", line);
         atom_keys[atom_keys_used++] = name;
     }
 
@@ -1142,35 +1128,21 @@ end:
     return close_pipe(bar_expr);
 }
 
-sexpr_t match_compile(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
+sexpr_t match_compile(sexpr_t s, ctx_t* ctx, const sv_allocator_t* a)
 {
     temps_used = 0;
     atom_keys_used = 0;
-    sv_allocator_t arena = sv_arena_allocator_init(a);
-    jmp_buf on_fail;
 
     if (s.cons.size <= CONDS_START)
-        return error_invalid_pattern(&s, ctx);
+        ctx_fail(ctx, C_ERR_UNEXPECTED_SEXPR, "Invalid match expression. A match must have clauses.");
 
-    a->error_buffer = &on_fail;
-    fail_target = &on_fail;
-    switch (setjmp(on_fail)) {
-        case 1:
-            a->error_buffer = NULL;
-            error_set_oom(&ctx->err, C_ERR_OOM, s.cons.arr[0].atom.line, &ctx->alloc);
-        /* fallthrough */
-        case 2:
-            a->error_buffer = NULL;
-            return ATOM_TOKEN_NO_CASE(TOKEN_ERROR);
-    }
-
-    // the lowering rewrites rows in place, so it works on arena copies of the clause list and its rows
-    cons_t match = cons_init(s.cons.size, &arena);
+    // the lowering rewrites rows in place, so it works on copies of the clause list and its rows
+    cons_t match = cons_init(s.cons.size, a);
     APPEND_CAP(&match, s.cons.arr[0]);
     APPEND_CAP(&match, s.cons.arr[1]);
     for (int64_t i = CONDS_START; i < s.cons.size; i++) {
         cons_t src = s.cons.arr[i].cons;
-        cons_t row = cons_init(src.size, &arena);
+        cons_t row = cons_init(src.size, a);
         for (int64_t j = 0; j < src.size; j++)
             APPEND_CAP(&row, src.arr[j]);
         APPEND_CAP(&match, cons_sexpr(row));
@@ -1183,32 +1155,31 @@ sexpr_t match_compile(sexpr_t s, ctx_t* ctx, sv_arena_t* a)
         sexpr_t body = GET_BODY(match, i);
         if (body.tag == S_CONS && is_when(body.cons.arr[0])) {
             // (when c b) to (if c b $fail)
-            cons_t guard = init_if(&arena);
+            cons_t guard = init_if(a);
             APPEND_CAP(&guard, body.cons.arr[1]);
             APPEND_CAP(&guard, body.cons.arr[2]);
             APPEND_CAP(&guard, id_atom(FAIL_NAME));
             GET_BODY(match, i) = cons_sexpr(guard);
         }
         // (tuple (= name p) body) to (tuple p (do (= name u) body))
-        GET_BODY(match, i) = strip_alias(&GET_COND(match, i), GET_BODY(match, i), u, &arena);
+        GET_BODY(match, i) = strip_alias(&GET_COND(match, i), GET_BODY(match, i), u, a);
     }
     group(&match);
 
-    cons_t match_fail_expr = cons_init(2, &arena);
+    cons_t match_fail_expr = cons_init(2, a);
     sexpr_t fail_expr = match_fail(&match_fail_expr, u, match.arr[0].atom.line);
     int start_i = CONDS_START;
     sexpr_t ret;
     if (pattern_is_name(subject)) {
-        ret = compile_pattern(match, &start_i, u, fail_expr, ctx, &arena);
+        ret = compile_pattern(match, &start_i, u, fail_expr, ctx, a);
     } else {
         // (do (= u_i x) (| ...))
-        cons_t do_expr = init_do(2, &arena);
-        cons_t eql_expr = cons_init(3, &arena);
+        cons_t do_expr = init_do(2, a);
+        cons_t eql_expr = cons_init(3, a);
         APPEND_CAP(&do_expr, bind_var(&eql_expr, u, subject));
-        APPEND_CAP(&do_expr, compile_pattern(match, &start_i, u, fail_expr, ctx, &arena));
+        APPEND_CAP(&do_expr, compile_pattern(match, &start_i, u, fail_expr, ctx, a));
         ret = cons_sexpr(do_expr);
     }
 
-    a->error_buffer = NULL;
     return ret;
 }

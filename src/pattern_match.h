@@ -3,12 +3,11 @@
 
 #include "ctx.h"
 #include "sexpr.h"
-#include "std/arena.h"
 
 /**
  * Lowers a `(match val (tuple pattern body)...)` expr into a chain of
- * `if` `else` comparisons. The sexpr is allocated into the passed arena.
+ * `if` `else` comparisons, allocated with the passed allocator.
  */
-sexpr_t match_compile(sexpr_t, ctx_t*, sv_arena_t*);
+sexpr_t match_compile(sexpr_t, ctx_t*, const sv_allocator_t*);
 
 #endif
