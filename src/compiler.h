@@ -25,9 +25,6 @@ typedef struct {
     transient_hashmap_t to_be_compiled_modules;
 } module_map_t;
 
-/**
- * The module aliases of one source file, pushed by each import for the file it compiles.
- */
 typedef struct module_scope_t {
     transient_hashmap_t var_to_modules;
     struct module_scope_t* outer;
@@ -49,9 +46,9 @@ typedef struct compiler_t {
     fn_builder_t builder;
     sv_vec_t(value_t) global_values;
 
-    sv_arena_t* arena;              // reset after each top-level expression
+    sv_arena_t* arena;
     const sv_allocator_t* scratch;  // the arena as an allocator
-    struct compiler_t* child;       // the function body being compiled
+    struct compiler_t* child;
 } compiler_t;
 
 typedef struct {
