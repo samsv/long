@@ -2,37 +2,36 @@
 #include "obj.h"
 #include <inttypes.h>
 
-sv_opt_t(uint32_t) names_get(transient_hashmap_t names, sv_str_t id, ctx_t* ctx)
+sv_opt_t(uint32_t) names_get(transient_hashmap_t names, sv_str_t id, const sv_allocator_t* a)
 {
     if (names.set.store.cell == NULL)
         return sv_opt_none_t(uint32_t);
 
-    value_t key = value_init_str(id, &ctx->alloc);
+    value_t key = value_init_str(id, a);
     if (key.obj.cell == NULL)
         return sv_opt_none_t(uint32_t);
 
     sv_opt_t(value_t) v = thm_get(names, key);
-    value_free(&key, &ctx->alloc);
+    value_free(&key, a);
     if (!v.is_some)
         return sv_opt_none_t(uint32_t);
     return sv_opt_some_t(uint32_t, (uint32_t)v.value.number);
 }
 
-bool check_limit(ctx_t* ctx, int64_t n, uint32_t max, const char* what, int64_t line)
+void check_limit(ctx_t* ctx, int64_t n, uint32_t max, const char* what, int64_t line)
 {
     if (n <= (int64_t)max)
-        return true;
+        return;
     char msg[128];
     snprintf(msg, sizeof(msg), "More than %" PRIu32 " %s at line %" PRId64, max, what, line);
-    return error_set(&ctx->err, (int)GLOBAL_ERROR_TOO_MANY, msg, &ctx->alloc);
+    ctx_fail(ctx, (int)GLOBAL_ERROR_TOO_MANY, msg);
 }
 
-static global_error_t error_redefined(ctx_t* ctx, const char* what, sv_str_t id)
+_Noreturn static void error_redefined(ctx_t* ctx, const char* what, sv_str_t id)
 {
     char msg[192];
     snprintf(msg, sizeof(msg), "%s '%.*s'", what, (int)id.size, id.chars);
-    error_set(&ctx->err, (int)GLOBAL_ERROR_REDEFINED, msg, &ctx->alloc);
-    return GLOBAL_ERROR_REDEFINED;
+    ctx_fail(ctx, (int)GLOBAL_ERROR_REDEFINED, msg);
 }
 
 int64_t names_count(transient_hashmap_t names)
@@ -40,33 +39,30 @@ int64_t names_count(transient_hashmap_t names)
     return names.set.store.cell != NULL ? thm_count(names) : 0;
 }
 
-bool names_add(transient_hashmap_t* names, sv_str_t id, ctx_t* ctx, bool* existed, uint32_t* out_index)
+uint32_t names_add(transient_hashmap_t* names, sv_str_t id, bool* existed, ctx_t* ctx, const sv_allocator_t* a)
 {
     if (names->set.store.cell == NULL) {
-        *names = thm_init(4, &ctx->alloc);
+        *names = thm_init(4, a);
         if (names->set.store.cell == NULL)
-            return false;
+            longjmp(*ctx->on_error, 1);
     }
 
-    sv_opt_t(uint32_t) found = names_get(*names, id, ctx);
+    sv_opt_t(uint32_t) found = names_get(*names, id, a);
     *existed = found.is_some;
-    if (*existed) {
-        if (out_index != NULL)
-            *out_index = found.value;
-        return true;
-    }
+    if (*existed)
+        return found.value;
 
-    value_t key = value_init_str(id, &ctx->alloc);
+    value_t key = value_init_str(id, a);
     if (key.obj.cell == NULL)
-        return false;
+        longjmp(*ctx->on_error, 1);
 
     uint32_t next = (uint32_t)thm_count(*names);
     kv_t kv = { .key = key, .value = { .kind = VALUE_NUMBER, .number = (double)next } };
-    bool ok = thm_put(names, kv, &ctx->alloc);
-    value_free(&key, &ctx->alloc);
-    if (ok && out_index != NULL)
-        *out_index = next;
-    return ok;
+    bool ok = thm_put(names, kv, a);
+    value_free(&key, a);
+    if (!ok)
+        longjmp(*ctx->on_error, 1);
+    return next;
 }
 
 const char** names_arr_init(transient_hashmap_t names, const sv_allocator_t* a)
@@ -100,58 +96,49 @@ void names_arr_deinit(const char** names, uint32_t n, const sv_allocator_t* a)
     sv_free(a, (void*)names);
 }
 
-sv_str_t append_prefix(sv_str_t id, sv_str_t prefix, ctx_t* ctx)
+sv_str_t append_prefix(sv_str_t id, sv_str_t prefix, const sv_allocator_t* a)
 {
-#define CHECK_OOM(cond) do { if (!(cond)) { \
-    sv_strb_deinit(&b, &ctx->alloc); \
-    return (sv_str_t){0}; \
-} } while (0)
-
     if (prefix.size == 0)
-        return sv_str_copy(id, &ctx->alloc);
+        return sv_str_copy(id, a);
 
     sv_str_builder b = sv_strb_init();
-    CHECK_OOM(sv_strb_add(&b, prefix.chars, prefix.size, &ctx->alloc) > -1);
-    CHECK_OOM(sv_strb_add_char(&b, '$', &ctx->alloc) > -1);
-    CHECK_OOM(sv_strb_add(&b, id.chars, id.size, &ctx->alloc) > -1);
-    sv_str_t name = sv_strb_to_str(&b);
-    return name;
-#undef CHECK_OOM
+    if (sv_strb_add(&b, prefix.chars, prefix.size, a) < 0
+        || sv_strb_add_char(&b, '$', a) < 0
+        || sv_strb_add(&b, id.chars, id.size, a) < 0
+    ) {
+        sv_strb_deinit(&b, a);
+        return (sv_str_t){0};
+    }
+    return sv_strb_to_str(&b);
 }
 
-sv_opt_t(global_error_t) globals_add(globals_t* g, sv_str_t id, sv_str_t prefix, int64_t line, ctx_t* ctx)
+uint32_t globals_add(globals_t* g, sv_str_t id, sv_str_t prefix, int64_t line, ctx_t* ctx,
+                     const sv_allocator_t* scratch)
 {
-    if (!check_limit(ctx, names_count(g->name_indexes), UINT32_MAX, "globals", line))
-        return sv_opt_some_t(global_error_t, GLOBAL_ERROR_TOO_MANY);
+    check_limit(ctx, names_count(g->name_indexes), UINT32_MAX, "globals", line);
 
-    sv_str_t name = append_prefix(id, prefix, ctx);
+    sv_str_t name = append_prefix(id, prefix, scratch);
     if (name.chars == NULL)
-        return sv_opt_some_t(global_error_t, GLOBAL_ERROR_OOM);
+        longjmp(*ctx->on_error, 1);
 
     bool existed = false;
-    if (!names_add(&g->name_indexes, name, ctx, &existed, NULL)) {
-        sv_str_deinit(&name, &ctx->alloc);
-        return sv_opt_some_t(global_error_t, GLOBAL_ERROR_OOM);
-    }
-    if (existed) {
-        sv_str_deinit(&name, &ctx->alloc);
-        return sv_opt_some_t(global_error_t, error_redefined(ctx, "Global redefined", id));
-    }
-
-    sv_str_deinit(&name, &ctx->alloc);
-    return sv_opt_none_t(global_error_t);
+    uint32_t index = names_add(&g->name_indexes, name, &existed, ctx, &ctx->alloc);
+    sv_str_deinit(&name, scratch);
+    if (existed)
+        error_redefined(ctx, "Global redefined", id);
+    return index;
 }
 
-sv_opt_t(uint32_t) globals_get(const globals_t g, sv_str_t id, sv_str_t prefix, ctx_t* ctx)
+sv_opt_t(uint32_t) globals_get(const globals_t g, sv_str_t id, sv_str_t prefix, const sv_allocator_t* a)
 {
-    sv_str_t name = append_prefix(id, prefix, ctx);
+    sv_str_t name = append_prefix(id, prefix, a);
     if (name.chars == NULL)
         return sv_opt_none_t(uint32_t);
 
-    sv_opt_t(uint32_t) maybe = names_get(g.name_indexes, name, ctx);
-    sv_str_deinit(&name, &ctx->alloc);
+    sv_opt_t(uint32_t) maybe = names_get(g.name_indexes, name, a);
+    sv_str_deinit(&name, a);
     if (maybe.is_some)
         return maybe;
 
-    return names_get(g.name_indexes, id, ctx);
+    return names_get(g.name_indexes, id, a);
 }

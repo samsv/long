@@ -1,6 +1,7 @@
 #define SV_IMPLEMENTATION
 #include "../src/std/arena.h"
 #include "../src/std/test.h"
+#include "arena.h"
 #include "vector.h"
 #include "string.h"
 #include "error.h"
@@ -20,6 +21,7 @@ int main(void)
 {
     sv_testing_t t = sv_test_default;
 
+    sv_test_arena(&t);
     sv_test_vector(&t);
     sv_test_string(&t);
     sv_test_error(&t);

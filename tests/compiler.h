@@ -1290,6 +1290,68 @@ static inline void sv_test_compiler_spread(sv_testing_t* t)
    sv_test_run(t, sv_test_compiler_runtime_msg("[1, ..5]", "Line 1: Spread into a list needs a list, got number"));
 }
 
+/* Every allocation failure reports C_ERR_OOM and leaks nothing. */
+static inline void sv_test_compiler_oom(sv_testing_t* t)
+{
+   const char* src =
+      "import mod(\"oom_mod.long\")\n"
+      "fun add(a, b) do a + b end\n"
+      "fun make(n) do fun inner[n](x) do x + n end\ninner end\n"
+      "fun fact(n) | 0 do 1 | k do k * fact(k - 1) end\n"
+      "fun | odd(x) x | even(y) y * 2 end\n"
+      "s = \"a string\"\n"
+      "r = {name: s, size: 2}\n"
+      "m = match (1, 2) | (a, b) when a > 0 do a + b | _ do 0 end\n"
+      "l = [1, 2, ..[3]]\n"
+      "for x in l do x end\n"
+      "a = :atom\n"
+      "add(1, 2) + make(3)(4) + fact(3) + r.size + m + odd(1) + even(2) + mod::v\n";
+   FILE* f = fopen(SV_TEST_PATH, "w");
+   sv_test_run(t, f != NULL && fputs(src, f) != EOF && fclose(f) == 0);
+   f = fopen("build/test/oom_mod.long", "w");
+   sv_test_run(t, f != NULL && fputs("v = 7\n", f) != EOF && fclose(f) == 0);
+
+   int64_t errored = 0;
+   bool completed = false;
+   for (int64_t budget = 0; !completed && budget < 100000; budget++) {
+      sv_test_countdown_t counter = { .remaining = budget };
+      ctx_t ctx = {
+         .alloc = { .vtable = &sv_test_countdown_vtable, .self = &counter },
+         .logger = sv_std_logger,
+         .err = error_init(),
+      };
+      vm_t vm = compile(SV_TEST_PATH, (compile_opts_t){ .max_frames = SV_TEST_MAX_FRAMES }, &ctx);
+      if (vm.fn.chunk.bytecode.arr != NULL) {
+         completed = true;
+         vm_deinit(&vm);
+      } else {
+         sv_test_run_msg(t, ctx.err.error_code == C_ERR_OOM, "budget %lld: error code %d",
+                         (long long)budget, ctx.err.error_code);
+         errored++;
+      }
+      error_free(&ctx.err, &ctx.alloc);
+   }
+   sv_test_run(t, errored > 0);
+   sv_test_run(t, completed);
+}
+
+/* A module imported twice is compiled once; the second import emits nothing. */
+static inline void sv_test_compiler_imports(sv_testing_t* t)
+{
+   FILE* f = fopen("build/test/twice_mod.long", "w");
+   sv_test_run(t, f != NULL && fputs("v = 7\n", f) != EOF && fclose(f) == 0);
+   f = fopen("build/test/empty_mod.long", "w");
+   sv_test_run(t, f != NULL && fclose(f) == 0);
+
+   sv_test_run(t, sv_test_compiler_num(
+      "import a(\"twice_mod.long\")\nimport b(\"twice_mod.long\")\na::v + b::v", 14));
+   sv_test_run(t, sv_test_compiler_num("x = 1\nimport a(\"twice_mod.long\")\nimport b(\"twice_mod.long\")\nx", 1));
+   sv_test_run(t, sv_test_compiler_kind("import a(\"twice_mod.long\")\nimport b(\"twice_mod.long\")", VALUE_NIL));
+   sv_test_run(t, sv_test_compiler_num("import e(\"empty_mod.long\")\n5", 5));
+   sv_test_run(t, sv_test_compiler_num(
+      "do import a(\"twice_mod.long\")\nimport b(\"twice_mod.long\")\n3 end", 3));
+}
+
 static inline void sv_test_compiler(sv_testing_t* t)
 {
    sv_test_compiler_basics(t);
@@ -1316,6 +1378,8 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_errors(t);
    sv_test_compiler_runtime_errors(t);
    sv_test_compiler_error_messages(t);
+   sv_test_compiler_oom(t);
+   sv_test_compiler_imports(t);
 }
 
 #endif

@@ -4,6 +4,7 @@
 #include "../src/std/test.h"
 #include "../src/std/allocator_std.h"
 #include "../src/parser.h"
+#include "../src/std/arena.h"
 #include "string.h"
 
 static inline ctx_t sv_test_parse_ctx(void)
@@ -15,28 +16,54 @@ static inline ctx_t sv_test_parse_ctx(void)
    };
 }
 
+/* False when the parser failed, with the error in ctx->err. */
+static inline bool sv_test_parse(const char* src, ctx_t* ctx, sv_arena_t* arena, sexpr_t* out, bool program)
+{
+   jmp_buf on_error;
+   ctx->on_error = &on_error;
+   arena->error_buffer = &on_error;
+   switch (setjmp(on_error)) {
+      case 1:
+         error_set_oom(&ctx->err, (int)PARSER_ERROR_OOM, 0, &ctx->alloc);
+         /* fallthrough */
+      case 2:
+         ctx->on_error = NULL;
+         arena->error_buffer = NULL;
+         return false;
+   }
+
+   sv_allocator_t a = sv_arena_allocator_init(arena);
+   scanner_t s = scanner_init(sv_str_init(src));
+   *out = program ? parser_program(&s, ctx, &a) : parser_expr(&s, ctx, &a);
+   ctx->on_error = NULL;
+   arena->error_buffer = NULL;
+   return true;
+}
+
 static inline void sv_test_parse_error(sv_testing_t* t, const char* src, int expected_code)
 {
    ctx_t ctx = sv_test_parse_ctx();
-   scanner_t s = scanner_init(sv_str_init(src));
-   sexpr_t e = parser_expr(&s, &ctx);
+   sv_arena_t arena = sv_arena_init(1 << 12, &sv_gpa, NULL);
+   sexpr_t e;
+   bool parsed = sv_test_parse(src, &ctx, &arena, &e, false);
 
-   sv_test_run_msg(t, e.tag == S_ATOM && e.atom.kind == TOKEN_ERROR,
-                   "expected parse error for \"%s\"", src);
+   sv_test_run_msg(t, !parsed, "expected parse error for \"%s\"", src);
    sv_test_run_msg(t, ctx.err.error_code == expected_code, "error code for \"%s\"", src);
    sv_test_run_msg(t, ctx.err.msg.size > 0, "error msg for \"%s\"", src);
    error_free(&ctx.err, &ctx.alloc);
+   sv_arena_deinit(&arena);
 }
 
 static inline void sv_test_parse_ok(sv_testing_t* t, const char* src)
 {
    ctx_t ctx = sv_test_parse_ctx();
-   scanner_t s = scanner_init(sv_str_init(src));
-   sexpr_t e = parser_program(&s, &ctx);
-   sv_test_run_msg(t, ctx.err.error_code == 0, "expected \"%s\" to parse", src);
+   sv_arena_t arena = sv_arena_init(1 << 12, &sv_gpa, NULL);
+   sexpr_t e;
+   bool parsed = sv_test_parse(src, &ctx, &arena, &e, true);
+   sv_test_run_msg(t, parsed && ctx.err.error_code == 0, "expected \"%s\" to parse", src);
    if (ctx.err.msg.size > 0)
       error_free(&ctx.err, &ctx.alloc);
-   sexpr_free(&e, &ctx.alloc);
+   sv_arena_deinit(&arena);
 }
 
 static inline void sv_test_parser_exprs(sv_testing_t* t)
@@ -49,35 +76,28 @@ static inline void sv_test_parser_exprs(sv_testing_t* t)
 static inline void sv_test_parser_program_fn(sv_testing_t* t)
 {
    ctx_t ctx = sv_test_parse_ctx();
+   sv_arena_t arena = sv_arena_init(1 << 12, &sv_gpa, NULL);
+   sexpr_t e;
 
-   scanner_t s = scanner_init(sv_str_init("1 + 1\n2 * 2"));
-   sexpr_t e = parser_program(&s, &ctx);
+   sv_test_run(t, sv_test_parse("1 + 1\n2 * 2", &ctx, &arena, &e, true));
    sv_test_run(t, ctx.err.error_code == 0);
-   sexpr_free(&e, &ctx.alloc);
 
-   scanner_t empty = scanner_init(sv_str_init(""));
-   sexpr_t ep = parser_program(&empty, &ctx);
+   sv_test_run(t, sv_test_parse("", &ctx, &arena, &e, true));
    sv_test_run(t, ctx.err.error_code == 0);
-   sexpr_free(&ep, &ctx.alloc);
 
-   scanner_t bad = scanner_init(sv_str_init("1 + 1\n)"));
-   sexpr_t eb = parser_program(&bad, &ctx);
-   sv_test_run(t, eb.tag == S_ATOM && eb.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, !sv_test_parse("1 + 1\n)", &ctx, &arena, &e, true));
    sv_test_run(t, ctx.err.error_code == (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    error_free(&ctx.err, &ctx.alloc);
 
    ctx.err = (error_t){ 0 };
-   scanner_t commas = scanner_init(sv_str_init("x, y = 1, 2"));
-   sexpr_t ec = parser_program(&commas, &ctx);
-   sv_test_run(t, ec.tag == S_ATOM && ec.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, !sv_test_parse("x, y = 1, 2", &ctx, &arena, &e, true));
    sv_test_run(t, ctx.err.error_code == (int)PARSER_ERROR_UNEXPECTED_TOKEN);
    error_free(&ctx.err, &ctx.alloc);
 
    ctx.err = (error_t){ 0 };
-   scanner_t semis = scanner_init(sv_str_init("x = 1; y = 2;"));
-   sexpr_t es = parser_program(&semis, &ctx);
+   sv_test_run(t, sv_test_parse("x = 1; y = 2;", &ctx, &arena, &e, true));
    sv_test_run(t, ctx.err.error_code == 0);
-   sexpr_free(&es, &ctx.alloc);
+   sv_arena_deinit(&arena);
 }
 
 static inline void sv_test_parser_maps(sv_testing_t* t)
@@ -229,75 +249,62 @@ static inline void sv_test_parser_errors(sv_testing_t* t)
    sv_test_parse_error(t, "x\xC3", (int)SCANNER_ERROR_INVALID_UTF8);
 
    ctx_t ctx = sv_test_parse_ctx();
-   scanner_t s = scanner_init(sv_str_init("if x do\ny end extra"));
-   sexpr_t e = parser_expr(&s, &ctx);
+   sv_arena_t arena = sv_arena_init(1 << 12, &sv_gpa, NULL);
+   sexpr_t e;
+   sv_test_run(t, sv_test_parse("if x do\ny end extra", &ctx, &arena, &e, false));
    sv_test_run(t, ctx.err.error_code == 0);
-   sexpr_free(&e, &ctx.alloc);
 
-   scanner_t msg_s = scanner_init(sv_str_init("(1 + 2"));
-   sexpr_t msg_e = parser_expr(&msg_s, &ctx);
-   sv_test_run(t, msg_e.tag == S_ATOM && msg_e.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, !sv_test_parse("(1 + 2", &ctx, &arena, &e, false));
    sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "')'"));
    sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "line 1"));
    error_free(&ctx.err, &ctx.alloc);
 
-   scanner_t line_s = scanner_init(sv_str_init("1 +\n@"));
-   sexpr_t line_e = parser_expr(&line_s, &ctx);
-   sv_test_run(t, line_e.tag == S_ATOM && line_e.atom.kind == TOKEN_ERROR);
+   sv_test_run(t, !sv_test_parse("1 +\n@", &ctx, &arena, &e, false));
    sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "line 2"));
    error_free(&ctx.err, &ctx.alloc);
+   sv_arena_deinit(&arena);
 }
 
 static inline void sv_test_parser_oom(sv_testing_t* t)
 {
-   ctx_t fail_ctx = {
-      .alloc = sv_test_fail_alloc,
-      .logger = sv_std_logger,
-      .err = { 0 },
-   };
-   scanner_t s = scanner_init(sv_str_init("world(1, 2, 3)"));
-   sexpr_t e = parser_expr(&s, &fail_ctx);
-   sv_test_run(t, e.tag == S_ATOM && e.atom.kind == TOKEN_ERROR);
+   /* An arena that cannot get a block fails the parse as PARSER_ERROR_OOM. */
+   ctx_t fail_ctx = { .alloc = sv_test_fail_alloc, .logger = sv_std_logger, .err = { 0 } };
+   sv_arena_t fail_arena = sv_arena_init(64, &sv_test_fail_alloc, NULL);
+   sexpr_t e;
+   sv_test_run(t, !sv_test_parse("world(1, 2, 3)", &fail_ctx, &fail_arena, &e, false));
    sv_test_run(t, fail_ctx.err.error_code == (int)PARSER_ERROR_OOM);
+   sv_arena_deinit(&fail_arena);
 
    sv_test_countdown_t counter = { .remaining = 3 };
-   sv_allocator_t countdown = {
-      .vtable = &sv_test_countdown_vtable,
-      .self = &counter,
-   };
-   ctx_t cd_ctx = {
-      .alloc = countdown,
-      .logger = sv_std_logger,
-      .err = { 0 },
-   };
-   scanner_t s2 = scanner_init(sv_str_init("f(1 + 2, g(3), [4, 5], x.y |> h())"));
-   sexpr_t e2 = parser_expr(&s2, &cd_ctx);
-   sv_test_run(t, e2.tag == S_ATOM && e2.atom.kind == TOKEN_ERROR);
-   sv_test_run(t, cd_ctx.err.error_code != 0);
+   sv_allocator_t countdown = { .vtable = &sv_test_countdown_vtable, .self = &counter };
+   ctx_t cd_ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = { 0 } };
+   sv_arena_t cd_arena = sv_arena_init(64, &countdown, NULL);
+   sv_test_run(t, !sv_test_parse("f(1 + 2, g(3), [4, 5], x.y |> h())", &cd_ctx, &cd_arena, &e, false));
+   sv_test_run(t, cd_ctx.err.error_code == (int)PARSER_ERROR_OOM);
    error_free(&cd_ctx.err, &cd_ctx.alloc);
+   sv_arena_deinit(&cd_arena);
 
-   /* Sweep a clause list with a guard, a list tail and an open record, so every
-    * allocation on that path is exercised under failure. */
+   /* Small blocks interrupt the parser at every block boundary. */
    int64_t errored = 0;
    int64_t completed = 0;
    for (int64_t budget = 0; budget < 120; budget++) {
       sv_test_countdown_t c = { .remaining = budget };
       sv_allocator_t cd = { .vtable = &sv_test_countdown_vtable, .self = &c };
-      ctx_t ctx = { .alloc = cd, .logger = sv_std_logger, .err = { 0 } };
+      ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = { 0 } };
+      sv_arena_t arena = sv_arena_init(256, &cd, NULL);
 
-      scanner_t sc = scanner_init(sv_str_init(
+      sexpr_t e3;
+      bool parsed = sv_test_parse(
          "match x | (1, a) when a > 0 do a + 1 | [h, ..t] do h | {k: v, ..} do v"
-         " | {k: 1, ..} = r do {k: 2, ..r} | _ do 0 end"));
-      sexpr_t e3 = parser_expr(&sc, &ctx);
-      if (e3.tag == S_ATOM && e3.atom.kind == TOKEN_ERROR)
-         errored++;
-      else
+         " | {k: 1, ..} = r do {k: 2, ..r} | _ do 0 end", &ctx, &arena, &e3, false);
+      if (parsed)
          completed++;
+      else
+         errored++;
 
-      c.remaining = 1000000;
       if (ctx.err.msg.size > 0)
          error_free(&ctx.err, &ctx.alloc);
-      sexpr_free(&e3, &ctx.alloc);
+      sv_arena_deinit(&arena);
    }
    sv_test_run(t, errored > 0);
    sv_test_run(t, completed > 0);
@@ -316,11 +323,12 @@ static inline void sv_test_parser_comments(sv_testing_t* t)
 
    /* Comment lines still count, so the error lands on line 4. */
    ctx_t ctx = sv_test_parse_ctx();
-   scanner_t s = scanner_init(sv_str_init("# one\n# two\n1 +\n@"));
-   sexpr_t e = parser_expr(&s, &ctx);
-   sv_test_run(t, e.tag == S_ATOM && e.atom.kind == TOKEN_ERROR);
+   sv_arena_t arena = sv_arena_init(1 << 12, &sv_gpa, NULL);
+   sexpr_t e;
+   sv_test_run(t, !sv_test_parse("# one\n# two\n1 +\n@", &ctx, &arena, &e, false));
    sv_test_run(t, sv_str_cstr_in(ctx.err.msg, "line 4"));
    error_free(&ctx.err, &ctx.alloc);
+   sv_arena_deinit(&arena);
 }
 
 static inline void sv_test_parser_newlines(sv_testing_t* t)
