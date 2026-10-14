@@ -78,6 +78,7 @@ typedef enum {
     C_ERR_NOT_IMPLEMENTED,
     C_ERR_JUMP_TOO_LONG,
     C_ERR_LIMIT_EXCEEDED,
+    C_ERR_FILE,
 } compiler_error_kind;
 
 #endif

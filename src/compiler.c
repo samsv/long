@@ -1,6 +1,7 @@
 #define SV_ARENA_IMPLEMENTATION
 #include "std/arena.h"
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -112,26 +113,44 @@ static void compiler_abort(compiler_t* c, ctx_t* ctx)
     thm_deinit(c->atoms, &ctx->alloc);
 }
 
-static char* read_file(const char* path, const sv_allocator_t* a)
+_Noreturn static void compiler_file_error(ctx_t* ctx, const char* path, int64_t line, int err)
+{
+    char msg[FILENAME_MAX + 96];
+    if (line > 0)
+        snprintf(msg, sizeof(msg), "Cannot read file '%s' at line %" PRId64 ": %s", path, line, strerror(err));
+    else
+        snprintf(msg, sizeof(msg), "Cannot read file '%s': %s", path, strerror(err));
+    compiler_error(ctx, C_ERR_FILE, msg);
+}
+
+/* Reads the whole file into a buffer from `a`, or fails the compilation. */
+static char* read_file(ctx_t* ctx, const char* path, int64_t line, const sv_allocator_t* a)
 {
     FILE* file = fopen(path, "r");
-    if (file == NULL) {
-        return NULL;
-    }
+    if (file == NULL)
+        compiler_file_error(ctx, path, line, errno);
 
     fseek(file, 0L, SEEK_END);
-    size_t fileSize = ftell(file);
+    long size = ftell(file);
+    if (size < 0) {
+        int err = errno;
+        fclose(file);
+        compiler_file_error(ctx, path, line, err);
+    }
     rewind(file);
 
-    char* buffer = sv_malloc(a, fileSize + 1);
+    char* buffer = sv_malloc(a, (size_t)size + 1);
     if (buffer == NULL) {
-        return NULL;
+        fclose(file);
+        compiler_oom(ctx, line);
     }
-    size_t bytesRead = fread(buffer, sizeof(char), fileSize, file);
-    if (bytesRead < fileSize) {
-        return NULL;
+    size_t read = fread(buffer, sizeof(char), (size_t)size, file);
+    if (read < (size_t)size) {
+        int err = errno;
+        fclose(file);
+        compiler_file_error(ctx, path, line, err);
     }
-    buffer[bytesRead] = '\0';
+    buffer[read] = '\0';
 
     fclose(file);
     return buffer;
@@ -1453,9 +1472,7 @@ static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx
             compiler_error(ctx, C_ERR_IMPORT_CICLE, "Import cicle detected");
         module_put(&c->modules.to_be_compiled_modules, full_path, value_nil, line, ctx);
 
-        char* source_code = read_file(import_full_path, c->scratch);
-        if (source_code == NULL)
-            compiler_oom(ctx, line);
+        char* source_code = read_file(ctx, import_full_path, line, c->scratch);
 
         const char* current_path = c->current_path;
         c->current_path = import_full_path;
@@ -1631,9 +1648,7 @@ static vm_t compile_guarded(const char** files, int64_t count, compile_opts_t op
 
     bool has_value = false;
     for (int64_t i = 0; i < count; i++) {
-        char* source_code = read_file(files[i], scratch);
-        if (source_code == NULL)
-            compiler_oom(ctx, 0);
+        char* source_code = read_file(ctx, files[i], 0, scratch);
         if (has_value)
             emit(c, ctx, OP_POP, 0);
         c->current_path = files[i];

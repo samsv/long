@@ -1352,6 +1352,23 @@ static inline void sv_test_compiler_imports(sv_testing_t* t)
       "do import a(\"twice_mod.long\")\nimport b(\"twice_mod.long\")\n3 end", 3));
 }
 
+/* A file that cannot be read names the resolved path and the line of the import. */
+static inline void sv_test_compiler_missing_files(sv_testing_t* t)
+{
+   sv_test_run(t, sv_test_compiler_err("import m(\"missing_mod.long\")") == C_ERR_FILE);
+   sv_test_run(t, sv_test_compiler_err_msg("import m(\"missing_mod.long\")",
+      "Cannot read file 'build/test/missing_mod.long' at line 1: No such file or directory"));
+   sv_test_run(t, sv_test_compiler_err_msg("x = 1\nimport m(\"missing_mod.long\")\nx",
+      "Cannot read file 'build/test/missing_mod.long' at line 2: No such file or directory"));
+
+   ctx_t ctx = { .alloc = sv_gpa, .logger = sv_std_logger, .err = error_init() };
+   vm_t vm = compile("build/test/missing.long", (compile_opts_t){ .max_frames = SV_TEST_MAX_FRAMES }, &ctx);
+   sv_test_run(t, vm.fn.chunk.bytecode.arr == NULL && ctx.err.error_code == C_ERR_FILE);
+   sv_test_run(t, sv_str_comp(ctx.err.msg,
+      sv_str_init("Cannot read file 'build/test/missing.long': No such file or directory")));
+   error_free(&ctx.err, &sv_gpa);
+}
+
 static inline void sv_test_compiler(sv_testing_t* t)
 {
    sv_test_compiler_basics(t);
@@ -1380,6 +1397,7 @@ static inline void sv_test_compiler(sv_testing_t* t)
    sv_test_compiler_error_messages(t);
    sv_test_compiler_oom(t);
    sv_test_compiler_imports(t);
+   sv_test_compiler_missing_files(t);
 }
 
 #endif
