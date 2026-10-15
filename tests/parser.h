@@ -112,7 +112,7 @@ static inline void sv_test_parser_maps(sv_testing_t* t)
    sv_test_parse_error(t, "%{1, 2}", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "%{1: }", PARSER_ERROR_UNEXPECTED_TOKEN);
    sv_test_parse_error(t, "%{1: 2", PARSER_ERROR_EOF);
-   sv_test_parse_error(t, "% 1", SCANNER_ERROR_UNKNOWN_TOKEN);
+   sv_test_parse_error(t, "% 1", PARSER_ERROR_UNEXPECTED_TOKEN);
 }
 
 static inline void sv_test_parser_match(sv_testing_t* t)

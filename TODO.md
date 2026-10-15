@@ -12,8 +12,8 @@
     - ✅ Global Names on VM;
     - ✅ Call Closure from C;
 ✅ Atoms
+✅ Map, mapf
 STDLib
 String escapes
 Non linear patterns
-Map, mapf, reduce
 Line Table on VM

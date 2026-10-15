@@ -1,0 +1,26 @@
+fun fib(n)
+| (n) when n < 2 do n
+| (n) do fib(n - 1) + fib(n - 2)
+end
+
+fib(10)
+|> println()
+
+fun fizz_buzz(n) do
+    ret = match n
+    | n when n % 3 == 0 and n % 5 == 0 do "fizzbuzz"
+    | n when n % 3 == 0 do "fizz"
+    | n when n % 5 == 0 do "buzz"
+    | n do n
+    end
+
+    println(ret)
+
+    if n > 1 do
+        fizz_buzz(n - 1) #tail recursion
+    else
+        nil
+    end
+end
+
+fizz_buzz(100)
