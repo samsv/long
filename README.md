@@ -94,3 +94,78 @@ build/long my_file.long
 ### Static Library
 To create a static library run `make static`, then clone this repository as an dependency for your project. You can include the `compiler.h`
 and `vm.h` headers in your application to start running lóng from your application.
+
+## Embedding
+Take the sample code on how embedding is done
+```c
+#define SV_IMPLEMENTATION
+#include "long/src/compiler.h"
+#include "long/src/value.h"
+#include "long/src/std/allocator_std.h"
+
+int main(void)
+{
+    // the allocator we will be using
+    const sv_allocator_t* a = &sv_gpa;
+
+    // path of the scripts to compile
+    const char** scripts = { "my_script_1.long", "my_script_2.long" };
+
+    // native functions we wish to insert in the interpreter
+    #define NATIVES_COUNT 1
+    native_fn_t natives[NATIVES_COUNT] = {
+        { .arity = 1, .name = "long_fn_name", .fn = my_func },
+    };
+
+    // compiler options
+    compile_opts_t compiler_opts = COMPILER_DEFAULT_OPTS;
+    compiler_opts.native_funs = natives;
+    compiler_opts.native_count = NATIVES_COUNT;
+
+    ctx_t ctx = {
+        .alloc = *a,
+        .logger = sv_std_logger,
+    };
+
+    // compile files and run
+    vm_t vm = compile_files(scripts, size, compiler_opts, &ctx);
+    sv_opt_t(error_t) err = vm_run(&vm);
+
+    // got an error
+    if (err.is_some) {
+        printf("Error: msg %.*s", (int)err.value.msg.size, err.value.msg.chars);
+        exit(1);
+    }
+
+    // call a function from the script and get its result
+    // we first define the args
+    value_t args[2] = {
+        { .kind = VALUE_NUMBER, .number = 1 },
+        { .kind = VALUE_NUMBER, .number = 2 },
+    };
+
+    value_t ret;
+    const char* script_path = "my_script_1.long";
+
+    // then we have two options: the first is to call the function by name
+    {
+        ret = vm_call_name(&vm, args, 2, sv_str_init("my_fun"), script_path);
+    }
+
+    // option 2 is to get the function index and then calling it. This is faster if you want to call the same function many times
+    {
+        // get the function index in the vm globals table
+        sv_opt_t(uint32_t) fn_idx = globals_get(vm.globals_names_to_index, sv_str_init("my_fun"), script_path, a);
+        // and we then call it
+        ret = vm_call(&vm, fn_idx.value, args, 2);
+    }
+
+    if (IS_ERR(ret)) {
+        error_t merr = AS_ERR(ret);
+        printf("Error: msg %.*s", (int)merr.msg.size, merr.msg.chars);
+        exit(1);
+    }
+
+    return 0;
+}
+```
