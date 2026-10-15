@@ -827,6 +827,7 @@ static void compile_operator(compiler_t* c, operator_kind op, const sexpr_t* arg
         case OPERATOR_MINUS: instruction = n == 1 ? OP_NEGATE : OP_SUB; break;
         case OPERATOR_SLASH: instruction = OP_DIV; break;
         case OPERATOR_STAR: instruction = OP_MUL; break;
+        case OPERATOR_PERCENT: instruction = OP_MOD; break;
         case OPERATOR_EQUAL: compile_equal(c, args, n, line, ctx); return;
         case OPERATOR_EQUAL_EQUAL: compile_binary_op(c, OP_EQUALS, "comparison", args, n, line, ctx); return;
         case OPERATOR_BANG_EQUAL: compile_binary_op(c, OP_NOT_EQUALS, "comparison", args, n, line, ctx); return;

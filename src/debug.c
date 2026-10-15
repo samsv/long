@@ -27,6 +27,7 @@ static const char* op_name(vm_instructions op)
         case OP_SUB: return "sub";
         case OP_MUL: return "mul";
         case OP_DIV: return "div";
+        case OP_MOD: return "mod";
         case OP_EQUALS: return "equals";
         case OP_NOT_EQUALS: return "not_equals";
         case OP_GREATER: return "greater";
@@ -196,6 +197,7 @@ void print_chunk(chunk_t chunk)
             case OP_SUB:
             case OP_MUL:
             case OP_DIV:
+            case OP_MOD:
             case OP_EQUALS:
             case OP_NOT_EQUALS:
             case OP_GREATER:

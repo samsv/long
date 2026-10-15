@@ -4,6 +4,7 @@
 #include "std/logger.h"
 #include "value.h"
 #include "ctx.h"
+#include <math.h>
 
 static void arr_remove(value_arr* arr, const sv_allocator_t* a)
 {
@@ -335,6 +336,16 @@ break; }
                 RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&v, a),
                       "Invalid operand for '-': %s", TYPE_NAME(v));
             value_t res = {.kind = VALUE_NUMBER, .number = -v.number};
+            TRY_PUSH_STACK(res);
+            break;
+        }
+        case OP_MOD: {
+            value_t v2 = sv_vec_pop(stack);
+            value_t v1 = sv_vec_pop(stack);
+            if (!IS_NUMBER(v1) || !IS_NUMBER(v2))
+                RAISE(VM_ERR_OP_UNSUPPORTED_ARGS, value_free(&v1, a); value_free(&v2, a),
+                      "Invalid operands for '%%': %s and %s", TYPE_NAME(v1), TYPE_NAME(v2));
+            value_t res = {.kind = VALUE_NUMBER, .number = fmod(v1.number, v2.number)};
             TRY_PUSH_STACK(res);
             break;
         }

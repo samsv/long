@@ -355,9 +355,7 @@ token_t scanner_next(scanner_t* s, ctx_t* ctx)
         case '%':
             if (next_char_if_eq(s, '{'))
                 return token_of(s, TOKEN_PERCENT_BRACE);
-            next_codepoint(s);
-            return slice_error_token(s, ctx, SCANNER_ERROR_UNKNOWN_TOKEN,
-                                     "Unknown token", initial_i);
+            return operator_of(s, OPERATOR_PERCENT);
         case '|':
             if (next_char_if_eq(s, '>'))
                 return operator_of(s, OPERATOR_PIPE_FORWARD);
