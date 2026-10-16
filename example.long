@@ -24,3 +24,8 @@ fun fizz_buzz(n) do
 end
 
 fizz_buzz(100)
+
+import math("math")
+
+math::sin(10)
+|> println()

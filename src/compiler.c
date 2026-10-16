@@ -1,3 +1,4 @@
+#include "modules/math.h"
 #define SV_ARENA_IMPLEMENTATION
 #include "std/arena.h"
 #include <assert.h>
@@ -1449,6 +1450,7 @@ static void module_put(transient_hashmap_t* t, sv_str_t key, value_t value, int6
         compiler_oom(ctx, line);
 }
 
+
 /* Compiles the module unless it already is, and binds its alias. Returns whether it was compiled now. */
 static bool compile_import(compiler_t* c, const sexpr_t* args, int64_t line, ctx_t* ctx)
 {
@@ -1584,9 +1586,9 @@ static void compile_sexpr(compiler_t* c, sexpr_t sexpr, bool is_tail, ctx_t* ctx
     compile_cons(c, sexpr.cons.arr, sexpr.cons.size, is_tail, ctx);
 }
 
-static void add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
+static void add_native_fn(compiler_t* c, native_fn_t fn, sv_str_t prefix, ctx_t* ctx)
 {
-    globals_add(&c->globals, sv_str_init(fn.name), sv_str_init(""), 0, ctx, c->scratch);
+    globals_add(&c->globals, sv_str_init(fn.name), prefix, 0, ctx, c->scratch);
     value_t fn_val = value_init_native(fn, &ctx->alloc);
     if (fn_val.obj.cell == NULL)
         compiler_oom(ctx, 0);
@@ -1596,6 +1598,14 @@ static void add_native_fn(compiler_t* c, native_fn_t fn, ctx_t* ctx)
         value_free(&fn_val, &ctx->alloc);
         compiler_oom(ctx, 0);
     }
+}
+
+static void add_native_mod(compiler_t* c, native_module_t mod, ctx_t* ctx)
+{
+    sv_str_t mod_name = sv_str_init(mod.name);
+    for (int64_t i = 0; i < mod.native_count; i++)
+        add_native_fn(c, mod.native_fns[i], mod_name, ctx);
+    module_put(&c->modules.compiled_modules, mod_name, value_nil, 0, ctx);
 }
 
 vm_t compile(const char* base_path, compile_opts_t opts, ctx_t* ctx)
@@ -1642,10 +1652,22 @@ static vm_t compile_guarded(const char** files, int64_t count, compile_opts_t op
         { .arity = 2, .name = "randi", .fn = ntv_randi },
         { .arity = 2, .name = "randf", .fn = ntv_randf },
     };
+    sv_str_t empty = sv_str_init("");
+    native_fn_t math_fns[] = {
+        { .arity = 1, .name = "sin", .fn = ntvm_sin },
+        { .arity = 1, .name = "cos", .fn = ntvm_cos },
+    };
+    native_module_t native_mods[] = {
+        { .name = "math", .native_fns = math_fns, .native_count = sizeof(math_fns) / sizeof(math_fns[0]) },
+    };
     for (size_t i = 0; i < sizeof(native_fns) / sizeof(native_fns[0]); i++)
-        add_native_fn(c, native_fns[i], ctx);
+        add_native_fn(c, native_fns[i], empty, ctx);
     for (int64_t i = 0; i < opts.native_count; i++)
-        add_native_fn(c, opts.native_funs[i], ctx);
+        add_native_fn(c, opts.native_funs[i], empty, ctx);
+    for (size_t i = 0; i < sizeof(native_mods) / sizeof(native_mods[0]); i++)
+        add_native_mod(c, native_mods[i], ctx);
+    for (int64_t i = 0; i < opts.native_mod_count; i++)
+        add_native_mod(c, opts.native_modules[i], ctx);
 
     bool has_value = false;
     for (int64_t i = 0; i < count; i++) {

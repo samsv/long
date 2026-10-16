@@ -9,7 +9,7 @@ TEST_FLAGS = $(STD) $(WARN) -O0 -g -fno-omit-frame-pointer $(SAN) -DSV_ARENA_POI
 DEBUG_FLAGS = $(STD) $(WARN) -O0 -g -fno-omit-frame-pointer $(SAN) -DSV_ARENA_POISON
 DEPFLAGS = -MMD -MP
 
-LIB_SRC = $(wildcard src/*.c) $(wildcard src/obj/*.c) $(wildcard src/deps/*.c)
+LIB_SRC = $(wildcard src/*.c) $(wildcard src/obj/*.c) $(wildcard src/deps/*.c) $(wildcard src/modules/*.c)
 TEST_SRC = $(wildcard tests/*.c)
 
 LIB_OBJ = $(LIB_SRC:src/%.c=build/release/%.o)

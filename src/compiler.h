@@ -53,8 +53,12 @@ typedef struct compiler_t {
 
 typedef struct {
     int64_t max_frames;
+
     native_fn_t* native_funs;
     int64_t native_count;
+
+    native_module_t* native_modules;
+    int64_t native_mod_count;
 } compile_opts_t;
 
 #define COMPILER_DEFAULT_OPTS (compile_opts_t) { .max_frames = 1000000 }
