@@ -692,6 +692,8 @@ break; }
         ERR_WRONG_ARITY(sv_str_init(fn.name), fn.arity);                                                      \
     vm->ctx.line = LINE();                                                                                    \
     value_t ret = fn.fn(args, arg_count, &vm->ctx);                                                           \
+    TRY_OR(ret.kind != VALUE_OBJ || ret.obj.cell != NULL, value_free(&value, a),                              \
+           "when returning from a native function");                                                          \
     if (IS_ERR(ret)) {                                                                                        \
         /* the error is complete; its value is fresh, so the message moves out of the cell */                 \
         err = AS_ERR(ret);                                                                                    \
